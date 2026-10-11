@@ -186,15 +186,18 @@ esac
 	}
 });
 
-test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1").each([0, 9])(
-	"native reload preserves PID and the gateway after child OOM (startup %is)",
-	async (startupDelay) => {
+test.skipIf(process.env.CLAWDI_TEST_SYSTEMD_COMMAND !== "1").each(["immediate", "held"] as const)(
+	"native reload preserves PID and the gateway after child OOM (startup %s)",
+	async (startup) => {
+		const heldStartup = startup === "held";
 		const root = mkdtempSync(join(tmpdir(), "clawdi-oom-native-"));
 		roots.push(root);
 		const unit = `clawdi-oom-proof-${crypto.randomUUID()}.service`;
 		const unitPath = `/run/systemd/system/${unit}`;
 		const state = join(root, "child-result");
 		const trigger = join(root, "trigger");
+		const starting = join(root, "starting");
+		const ready = join(root, "ready");
 		const fixture = join(root, "gateway.py");
 		writeFileSync(
 			fixture,
@@ -205,7 +208,9 @@ if len(sys.argv) > 1:
         chunks.append(bytearray(1024 * 1024))
         time.sleep(0.005)
     sys.exit(10)
-time.sleep(${startupDelay})
+pathlib.Path('${starting}').touch()
+while ${heldStartup ? "True" : "False"} and not pathlib.Path('${ready}').exists():
+    time.sleep(0.025)
 resident = bytearray(80 * 1024 * 1024)
 notify = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
 notify.connect(os.environ['NOTIFY_SOCKET'].replace('@', '\\0', 1))
@@ -236,10 +241,24 @@ while True:
 			return result.stdout.trim();
 		};
 		const show = (property: string) => run(["show", unit, `--property=${property}`, "--value"]);
+		const until = async (label: string, predicate: () => boolean) => {
+			const deadline = Date.now() + 8_000;
+			while (!predicate()) {
+				if (Date.now() >= deadline) throw new Error(`OOM fixture timed out: ${label}`);
+				await Bun.sleep(50);
+			}
+		};
 		try {
 			run(["daemon-reload"]);
-			run(["start", unit]);
+			run(["start", "--no-block", unit]);
+			await until("Python startup", () => existsSync(starting));
+			if (heldStartup) expect(show("ActiveState")).toBe("activating");
 			const pid = show("MainPID");
+			expect(Number(pid)).toBeGreaterThan(0);
+			// Release held startup when Python reaches its gate, then wait for
+			// native notify readiness before reload or the child OOM deadline.
+			writeFileSync(ready, "start");
+			await until("notify readiness", () => show("ActiveState") === "active");
 			const before = readSystemdUnitSnapshot(paths);
 			commitActivation(paths, before);
 			writeFileSync(
@@ -256,8 +275,8 @@ while True:
 			expect(show("OOMPolicy")).toBe("continue");
 			const cg = join("/sys/fs/cgroup", show("ControlGroup"));
 			expect(readFileSync(join(cg, "memory.oom.group"), "utf8").trim()).toBe("0");
-			// Type=simple reports started before Python imports/resident allocation.
-			// Notify readiness keeps that startup time outside the child OOM deadline.
+			// Type=notify keeps Python imports/resident allocation outside the
+			// child OOM deadline, including startup held at the readiness gate.
 			const oomKills = () =>
 				Number(readFileSync(join(cg, "memory.events"), "utf8").match(/^oom_kill (\d+)$/m)?.[1]);
 			const killsBefore = oomKills();
@@ -286,4 +305,5 @@ while True:
 			runCommandResult("systemctl", ["daemon-reload"]);
 		}
 	},
+	3 * 8_000 + 10_000, // Two startup polls, child OOM deadline, command/cleanup allowance.
 );
