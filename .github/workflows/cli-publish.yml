@@ -13,6 +13,7 @@ concurrency:
 
 env:
   CLI_ARTIFACT_NAME: clawdi-cli-release
+  CLI_FINAL_ARTIFACT_NAME: clawdi-cli-release-final
 
 # This repository builds, verifies, and publishes one immutable artifact.
 # Prereleases publish to beta; stable releases publish to latest.
@@ -190,8 +191,145 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  publish-immutable-artifact-with-oidc:
+  sign-macos-native:
     needs: build-immutable-artifact
+    runs-on: macos-14
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install manifest validation dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Download unsigned CLI release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.CLI_ARTIFACT_NAME }}
+          path: release
+
+      - name: Sign and notarize macOS native CLI archives when credentials are available
+        env:
+          CLI_VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          # Feature branches and previews may not have release credentials. Keep
+          # the unsigned artifact in that case so build and test workflows remain
+          # useful; protected releases use the exact Desktop signing secrets.
+          if [ -z "${CSC_LINK:-}" ] || [ -z "${CSC_KEY_PASSWORD:-}" ] || \
+             [ -z "${APPLE_API_KEY_CONTENT:-}" ] || [ -z "${APPLE_API_KEY_ID:-}" ] || \
+             [ -z "${APPLE_API_ISSUER:-}" ]; then
+            echo "Apple CLI signing secrets are unavailable; retaining unsigned native archives."
+            exit 0
+          fi
+
+          ./apps/desktop/scripts/with-signing-keychain.sh bash -s <<'SIGN'
+          set -euo pipefail
+          umask 077
+          entitlements="$PWD/packages/cli/scripts/macos-cli-entitlements.plist"
+          export APPLE_API_KEY="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          trap 'rm -f "$APPLE_API_KEY"' EXIT
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$APPLE_API_KEY"
+          unset APPLE_API_KEY_CONTENT
+          xcrun notarytool history --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER" > /dev/null
+
+          for target in darwin-x64 darwin-arm64; do
+            asset="clawdi-cli-$target.tar.gz"
+            archive="$PWD/release/$asset"
+            stage="$RUNNER_TEMP/clawdi-cli-$target"
+            zip="$RUNNER_TEMP/clawdi-cli-$target.zip"
+            result="$RUNNER_TEMP/clawdi-cli-$target-notary.json"
+            submit_stderr="$RUNNER_TEMP/clawdi-cli-$target-notary.stderr"
+            log="$RUNNER_TEMP/clawdi-cli-$target-notary-log.json"
+            rm -rf "$stage" "$zip" "$result" "$submit_stderr" "$log"
+            mkdir -p "$stage"
+            tar -xzf "$archive" -C "$stage"
+            cli="$stage/clawdi"
+
+            # Bun documents these hardened-runtime exceptions for compiled
+            # executables because its runtime may JIT and allocate executable memory.
+            codesign --force --options runtime --timestamp \
+              --identifier ai.clawdi.cli --entitlements "$entitlements" \
+              --sign "Developer ID Application" "$cli"
+            codesign --verify --strict --verbose=2 "$cli"
+            signature="$(codesign -dv --verbose=4 "$cli" 2>&1)"
+            printf '%s\n' "$signature" | grep -q '^Authority=Developer ID Application:'
+            printf '%s\n' "$signature" | grep -Eq '^TeamIdentifier=[A-Z0-9]{10}$'
+
+            # Apple documents notarytool for release submissions:
+            # https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution
+            # TN2206 validates standalone command-line binaries with codesign
+            # (its example uses /sbin/md5):
+            # https://developer.apple.com/library/archive/technotes/tn2206/_index.html
+            # Bare executables cannot be stapled. Submit a zip to Apple's
+            # notary service, then retain the signed executable in its tarball.
+            ditto -c -k --keepParent "$cli" "$zip"
+            set +e
+            xcrun notarytool submit "$zip" --wait --timeout 30m --output-format json \
+              --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" > "$result" 2> "$submit_stderr"
+            submit_exit=$?
+            set -e
+            submission_id="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(typeof value.id === "string" ? value.id : "")' "$result" 2>/dev/null || true)"
+            submission_status="$(node -e 'const fs=require("node:fs"); const value=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(typeof value.status === "string" ? value.status : "")' "$result" 2>/dev/null || true)"
+            if [ "$submit_exit" -ne 0 ] || [ "$submission_status" != "Accepted" ] || [ -z "$submission_id" ]; then
+              echo "Apple notarization did not succeed for $asset (status=${submission_status:-unknown}, exit=$submit_exit)." >&2
+              if [ -n "$submission_id" ]; then
+                if ! xcrun notarytool log "$submission_id" --output-format json \
+                  --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" \
+                  --issuer "$APPLE_API_ISSUER" > "$log"; then
+                  echo "Unable to retrieve the Apple notarization log." >&2
+                fi
+                cat "$log" >&2 || true
+              else
+                cat "$result" >&2 || true
+                cat "$submit_stderr" >&2 || true
+              fi
+              exit 1
+            fi
+            xcrun notarytool log "$submission_id" --output-format json \
+              --key "$APPLE_API_KEY" --key-id "$APPLE_API_KEY_ID" \
+              --issuer "$APPLE_API_ISSUER" > "$log"
+            # Gatekeeper's spctl assessment is app-oriented and may reject a
+            # correctly signed bare CLI as “does not seem to be an app”. Keep
+            # it as an informational diagnostic; codesign and notarytool are
+            # the release gates for this standalone executable.
+            if ! spctl --assess --type execute --verbose=4 "$cli"; then
+              echo "spctl informational assessment rejected the bare CLI; codesign and notarytool gates passed." >&2
+            fi
+
+            tar -C "$stage" --owner=0 --group=0 --numeric-owner -czf "$archive" \
+              clawdi egress-addon/clawdi_egress_addon.py skills
+            rm -rf "$stage" "$zip"
+          done
+
+          # Recompute archive hashes only after signing. These are the hashes
+          # consumed by installers, attestations, and release verification.
+          bun run packages/cli/scripts/refresh-native-release-manifest.mjs release "$CLI_VERSION"
+          bun run packages/cli/scripts/check-native-release.mjs release "$CLI_VERSION"
+          SIGN
+
+      - name: Upload final CLI release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.CLI_FINAL_ARTIFACT_NAME }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-immutable-artifact-with-oidc:
+    needs: [build-immutable-artifact, sign-macos-native]
     # npm trusted publishing supports GitHub-hosted runners, not self-hosted runners.
     runs-on: ubuntu-latest
     environment: npm
@@ -233,7 +371,7 @@ jobs:
       - name: Download immutable CLI release artifact
         uses: actions/download-artifact@v8
         with:
-          name: ${{ env.CLI_ARTIFACT_NAME }}
+          name: ${{ env.CLI_FINAL_ARTIFACT_NAME }}
           path: release
 
       - name: Verify release artifact

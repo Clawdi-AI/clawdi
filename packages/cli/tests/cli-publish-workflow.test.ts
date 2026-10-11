@@ -8,6 +8,7 @@ import { parse } from "yaml";
 interface WorkflowJob {
 	if?: string;
 	needs?: unknown;
+	"runs-on"?: string;
 	permissions?: Record<string, string>;
 	steps?: Array<Record<string, unknown>>;
 }
@@ -154,17 +155,20 @@ describe("CLI publish workflow contract", () => {
 
 	test("keeps current-run release decisions inside the protected publish topology", () => {
 		const build = workflowDocument.jobs["build-immutable-artifact"];
+		const sign = workflowDocument.jobs["sign-macos-native"];
 		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
 
 		expect(Object.keys(workflowDocument.jobs)).toEqual([
 			"release-check",
 			"build-immutable-artifact",
+			"sign-macos-native",
 			"publish-immutable-artifact-with-oidc",
 		]);
 		expect(build.permissions).toEqual({ contents: "read" });
 		expect(build.needs).toBe("release-check");
 		expect(build.if).toBe("needs.release-check.outputs.publish == 'true'");
-		expect(publish.needs).toBe("build-immutable-artifact");
+		expect(sign.needs).toBe("build-immutable-artifact");
+		expect(publish.needs).toEqual(["build-immutable-artifact", "sign-macos-native"]);
 		expect(publish.permissions).toEqual({
 			contents: "write",
 			"id-token": "write",
@@ -204,7 +208,7 @@ describe("CLI publish workflow contract", () => {
 		);
 		expect(publishJob).toContain("runs-on: ubuntu-latest");
 		expect(publishJob).not.toContain("vars.CI_RUNNER");
-		expect(workflow).toContain("needs: build-immutable-artifact");
+		expect(workflow).toContain("needs: [build-immutable-artifact, sign-macos-native]");
 		expect(workflow).toContain("environment: npm");
 		expect(workflow).toContain("id-token: write");
 		expect(publishJob).toContain('node-version: "24"');
@@ -218,6 +222,48 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("repository_dispatch");
 		expect(workflow).not.toContain("workflow_run");
 		expect(workflow).not.toContain("repository: Clawdi-AI/");
+	});
+
+	test("signs macOS archives before refreshing hashes and publishing", () => {
+		const sign = workflowDocument.jobs["sign-macos-native"];
+		const signRun = sign.steps?.find((step) =>
+			String(step.name).startsWith("Sign and notarize"),
+		)?.run;
+		expect(sign?.["runs-on"]).toBe("macos-14");
+		expect(typeof signRun).toBe("string");
+		if (typeof signRun !== "string") throw new Error("signing step is missing");
+		for (const secret of [
+			"CSC_LINK",
+			"CSC_KEY_PASSWORD",
+			"APPLE_API_KEY_CONTENT",
+			"APPLE_API_KEY_ID",
+			"APPLE_API_ISSUER",
+		]) {
+			expect(signRun).toContain(secret);
+		}
+		expect(signRun).toContain("with-signing-keychain.sh");
+		expect(signRun).toContain("codesign --force --options runtime --timestamp");
+		expect(signRun).toContain("--identifier ai.clawdi.cli");
+		expect(signRun).toContain("--entitlements");
+		expect(signRun).toContain("xcrun notarytool submit");
+		expect(signRun).toContain("xcrun notarytool log");
+		expect(signRun).toContain("submission_status");
+		expect(signRun).toContain("status=$" + "{submission_status:-unknown}");
+		expect(signRun).toContain("Apple notarization did not succeed");
+		expect(signRun).toContain("notarizing_macos_software_before_distribution");
+		expect(signRun).toContain("TN2206");
+		expect(signRun).toContain("spctl --assess --type execute");
+		expect(signRun).toContain("if ! spctl --assess --type execute");
+		expect(signRun).toContain("informational assessment rejected the bare CLI");
+		expect(signRun.indexOf("xcrun notarytool log")).toBeLessThan(
+			signRun.indexOf("if ! spctl --assess --type execute"),
+		);
+		expect(signRun).toContain("Bare executables cannot be stapled");
+		expect(signRun).toContain("refresh-native-release-manifest.mjs");
+		expect(signRun.indexOf("codesign --force")).toBeLessThan(
+			signRun.indexOf("refresh-native-release-manifest.mjs"),
+		);
+		expect(signRun).toContain("retaining unsigned native archives");
 	});
 
 	test("builds and publishes the same verified tarball exactly once", () => {
@@ -236,7 +282,7 @@ describe("CLI publish workflow contract", () => {
 			"retention-days": 1,
 		});
 		expect(downloadArtifact?.with).toEqual({
-			name: `\${{ env.CLI_ARTIFACT_NAME }}`,
+			name: `\${{ env.CLI_FINAL_ARTIFACT_NAME }}`,
 			path: "release",
 		});
 		expect(publishCommands).toHaveLength(1);

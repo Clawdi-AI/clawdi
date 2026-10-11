@@ -4223,6 +4223,24 @@
 				"variadic": false
 			},
 			{
+				"flags": "--native-bootstrap",
+				"description": "",
+				"hidden": true,
+				"required": false,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
+				"flags": "--min-version <version>",
+				"description": "",
+				"hidden": true,
+				"required": true,
+				"optional": false,
+				"mandatory": false,
+				"variadic": false
+			},
+			{
 				"flags": "--native-activate",
 				"description": "",
 				"hidden": true,

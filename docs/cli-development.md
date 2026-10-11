@@ -25,10 +25,12 @@ bun run --cwd packages/cli test:native-linux-lifecycle:internal
 ```
 
 The lifecycle command exercises the Linux x64 release layout. `build:native`
-itself builds the current host target. The macOS Bun executables are linker
-ad-hoc signed. This repository does not
-claim Developer ID signing, notarization, or browser-download Gatekeeper
-compatibility.
+itself builds the current host target. Release builds sign the macOS binaries
+with the Desktop Developer ID identity and Bun's JIT entitlements, then submit
+a zip containing each executable to `notarytool`. The published asset remains a
+tar archive containing the signed executable; bare executables cannot carry a
+stapled notarization ticket, so release verification uses `codesign`,
+`spctl`, and the `notarytool` submission log.
 
 Read-only local commands (`skill init`, `config *`, `status --json` while
 unauthenticated) work without a backend. Anything that hits the API
@@ -54,6 +56,18 @@ future targets and metadata. Releases generate, attest, and publish only v2;
 release checks enforce the full current target matrix. Installed native CLIs
 ≤0.15.8 can no longer self-update and must reinstall with
 `curl -fsSL https://clawdi.ai/install.sh | sh`. npm installations are unaffected.
+
+Desktop can bootstrap the shared native layout without taking over an npm or
+Homebrew launcher:
+
+```bash
+clawdi update --native-bootstrap --min-version 0.16.6 --json
+```
+
+The `clawdi.nativeBootstrap.v1` envelope reports `installed`,
+`already-current`, `upgraded`, `foreign-owner`, or `failed`, together with the
+selected version and stable launcher path. A foreign launcher is never replaced;
+network or activation failures leave the active version untouched.
 
 Done: `bun run --cwd packages/cli test -- tests/commands/update.test.ts` passes
 in the isolated runner.

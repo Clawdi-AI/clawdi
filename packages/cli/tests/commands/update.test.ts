@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	existsSync,
 	mkdirSync,
 	readFileSync,
 	renameSync,
@@ -20,6 +21,7 @@ import {
 	detectPackageManagerUpdateOwnershipFromPaths,
 	installCommand,
 	maybeAutoUpdate,
+	nativeBootstrap,
 	nativeInstallCommand,
 	runBackgroundUpdateWorker,
 	runInstallerProcess,
@@ -775,6 +777,81 @@ describe("update install", () => {
 			).toEqual(["--native-target", "linux-x64"]);
 		},
 	);
+
+	describe("native bootstrap", () => {
+		it("installs into an empty prefix and reports the stable launcher", async () => {
+			const prefix = join(tmpHome, "bootstrap-prefix");
+			const fixture = createNativeArchive("1.2.4");
+			const result = await nativeBootstrap(
+				{ json: true, minVersion: "1.2.4", nativePrefix: prefix },
+				{
+					nativeIdentity: { version: "1.2.3", target: "linux-x64" },
+					nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v1.2.4",
+					nativeFetcher: testFetcher(async (input) =>
+						String(input).endsWith("clawdi-cli-manifest-v2.txt")
+							? new Response(fixture.manifest)
+							: new Response(fixture.archive),
+					),
+				},
+			);
+			expect(result).toMatchObject({
+				schemaVersion: "clawdi.nativeBootstrap.v1",
+				status: "installed",
+				version: "1.2.4",
+				launcher: join(prefix, "bin", "clawdi"),
+			});
+			expect(process.exitCode).toBe(0);
+		});
+
+		it("keeps an already newer native installation", async () => {
+			const prefix = join(tmpHome, "newer-prefix");
+			seedNativeLauncher(prefix, "9.0.0");
+			let downloaded = false;
+			const result = await nativeBootstrap(
+				{ json: true, minVersion: "1.2.4", nativePrefix: prefix },
+				{
+					nativeIdentity: { version: "1.2.3", target: "linux-x64" },
+					nativeFetcher: testFetcher(async () => {
+						downloaded = true;
+						throw new Error("newer native installs must not download");
+					}),
+				},
+			);
+			expect(result).toMatchObject({ status: "already-current", version: "9.0.0" });
+			expect(downloaded).toBe(false);
+		});
+
+		it("refuses a foreign launcher without touching it", async () => {
+			const prefix = join(tmpHome, "foreign-prefix");
+			const launcher = join(prefix, "bin", "clawdi");
+			mkdirSync(dirname(launcher), { recursive: true });
+			writeFileSync(launcher, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+			const result = await nativeBootstrap(
+				{ json: true, minVersion: "1.2.4", nativePrefix: prefix },
+				{ nativeIdentity: { version: "1.2.3", target: "linux-x64" } },
+			);
+			expect(result).toMatchObject({ status: "foreign-owner", launcher });
+			expect(readFileSync(launcher, "utf8")).toContain("exit 0");
+			expect(process.exitCode).toBe(1);
+		});
+
+		it("reports offline failure and leaves the prefix absent", async () => {
+			const prefix = join(tmpHome, "offline-prefix");
+			const result = await nativeBootstrap(
+				{ json: true, minVersion: "1.2.4", nativePrefix: prefix },
+				{
+					nativeIdentity: { version: "1.2.3", target: "linux-x64" },
+					nativeFetcher: testFetcher(async () => {
+						throw new TypeError("fetch failed");
+					}),
+				},
+			);
+			expect(result).toMatchObject({ status: "failed", launcher: join(prefix, "bin", "clawdi") });
+			expect(result.error).toContain("Could not reach the native release manifest");
+			expect(existsSync(prefix)).toBe(false);
+			expect(process.exitCode).toBe(1);
+		});
+	});
 
 	it("uses safe Windows command vectors for exact npm install and owned executable smoke", async () => {
 		const installs: { command: string; args: string[] }[] = [];
@@ -1970,6 +2047,81 @@ function nativeManifest(version: string, linuxX64Sha: string): string {
 		}),
 		"",
 	].join("\n");
+}
+
+function createNativeArchive(version: string): { archive: Buffer; manifest: string } {
+	const payload = join(tmpHome, `bootstrap-payload-${version}`);
+	const archivePath = join(tmpHome, `bootstrap-${version}.tar.gz`);
+	mkdirSync(join(payload, "egress-addon"), { recursive: true });
+	mkdirSync(join(payload, "skills", "clawdi"), { recursive: true });
+	mkdirSync(join(payload, "skills", "hosted-versions", "1", "clawdi"), {
+		recursive: true,
+	});
+	writeFileSync(join(payload, "clawdi"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+	writeFileSync(join(payload, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
+	writeFileSync(join(payload, "skills", "clawdi", "SKILL.md"), "# skill\n");
+	writeFileSync(
+		join(payload, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"),
+		"# hosted\n",
+	);
+	const tarResult = spawnSync("tar", [
+		"-czf",
+		archivePath,
+		"-C",
+		payload,
+		"clawdi",
+		"egress-addon",
+		"skills",
+	]);
+	expect(tarResult.status).toBe(0);
+	const archive = readFileSync(archivePath);
+	return {
+		archive,
+		manifest: nativeManifest(version, createHash("sha256").update(archive).digest("hex")),
+	};
+}
+
+function seedNativeLauncher(prefix: string, version: string): void {
+	const versionDir = join(prefix, "share", "clawdi", "versions", `${version}-linux-x64`);
+	const launcher = join(prefix, "bin", "clawdi");
+	mkdirSync(join(versionDir, "egress-addon"), { recursive: true });
+	mkdirSync(join(versionDir, "skills", "clawdi"), { recursive: true });
+	mkdirSync(join(versionDir, "skills", "hosted-versions", "1", "clawdi"), {
+		recursive: true,
+	});
+	writeFileSync(
+		join(versionDir, "clawdi"),
+		[
+			"#!/bin/sh",
+			'if [ "$1" = update ] && [ "$2" = --native-identity ]; then',
+			`  printf '%s\\t%s\\n' '${version}' 'linux-x64'`,
+			"else",
+			`  printf '%s\\n' '${version}'`,
+			"fi",
+		].join("\n"),
+		{ mode: 0o755 },
+	);
+	writeFileSync(join(versionDir, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
+	writeFileSync(join(versionDir, "skills", "clawdi", "SKILL.md"), "# skill\n");
+	writeFileSync(
+		join(versionDir, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"),
+		"# hosted\n",
+	);
+	const manifest = nativeManifest(version, "0".repeat(64));
+	writeFileSync(join(versionDir, "clawdi-cli-manifest-v2.txt"), manifest);
+	writeFileSync(
+		join(versionDir, "clawdi-native-install.txt"),
+		[
+			"clawdi.nativeInstall.v1",
+			`version\t${version}`,
+			"target\tlinux-x64",
+			"asset\tclawdi-cli-linux-x64.tar.gz",
+			`sha256\t${"0".repeat(64)}`,
+			"",
+		].join("\n"),
+	);
+	mkdirSync(dirname(launcher), { recursive: true });
+	symlinkSync(`../share/clawdi/versions/${version}-linux-x64/clawdi`, launcher);
 }
 
 function testFetcher(

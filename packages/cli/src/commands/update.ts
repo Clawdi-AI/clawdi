@@ -5,12 +5,14 @@ import {
 	closeSync,
 	constants,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	openSync,
 	readFileSync,
 	realpathSync,
 	rmSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { emit, wantsJson } from "../lib/command-output";
@@ -21,9 +23,20 @@ import {
 	resolveCurrentCliInvocation,
 	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
-import { downloadAndStageNativeRelease } from "../lib/native-activation";
-import type { NativeInstallOwnership } from "../lib/native-distribution";
-import { nativeExecutableName, nativeReleaseBaseUrl } from "../lib/native-release-manifest";
+import {
+	downloadAndStageNativeRelease,
+	readNativeExecutableIdentity,
+} from "../lib/native-activation";
+import {
+	currentNativeCompiledIdentity,
+	detectNativeInstall,
+	type NativeInstallOwnership,
+} from "../lib/native-distribution";
+import {
+	type NativeBuildTarget,
+	nativeExecutableName,
+	nativeReleaseBaseUrl,
+} from "../lib/native-release-manifest";
 import {
 	type PrivateDirectoryLockOptions,
 	PrivateDirectoryLockTimeoutError,
@@ -96,6 +109,39 @@ type ForegroundUpdateRuntime = {
 	nativeReleaseBaseUrl?: string;
 	nativeFetcher?: typeof fetch;
 	nativeDownloadTimeoutMs?: number;
+};
+
+export type NativeBootstrapStatus =
+	| "installed"
+	| "already-current"
+	| "upgraded"
+	| "foreign-owner"
+	| "failed";
+
+export interface NativeBootstrapResult {
+	schemaVersion: "clawdi.nativeBootstrap.v1";
+	status: NativeBootstrapStatus;
+	version: string | null;
+	launcher: string;
+	error?: string;
+}
+
+export interface NativeBootstrapOptions {
+	json?: boolean;
+	minVersion?: string;
+	nativePrefix?: string;
+	nativeVersion?: string;
+	nativeTarget?: string;
+	nativeLockTimeoutMs?: string | number;
+}
+
+type NativeBootstrapRuntime = Pick<
+	ForegroundUpdateRuntime,
+	"nativeReleaseBaseUrl" | "nativeFetcher" | "nativeDownloadTimeoutMs" | "lockOptions"
+> & {
+	platform?: NodeJS.Platform;
+	nativeIdentity?: ReturnType<typeof currentNativeCompiledIdentity>;
+	home?: string;
 };
 
 interface CommandVector {
@@ -394,6 +440,220 @@ export async function update(
 	(json ? process.stderr : process.stdout).write("\n");
 	print(chalk.green(`✓ clawdi v${latest} installed.`));
 	report(true);
+}
+
+/**
+ * Install the published native CLI beside an application-bundled CLI.
+ *
+ * This deliberately does not use the current invocation's update ownership:
+ * the bundled executable is not a native install and must be able to bootstrap
+ * an otherwise empty prefix. The staged executable still performs the normal
+ * identity, manifest, lock, and atomic activation checks.
+ */
+export async function nativeBootstrap(
+	opts: NativeBootstrapOptions = {},
+	runtime: NativeBootstrapRuntime = {},
+): Promise<NativeBootstrapResult> {
+	const identity = runtime.nativeIdentity ?? currentNativeCompiledIdentity();
+	const platform = runtime.platform ?? process.platform;
+	const configuredPrefix = opts.nativePrefix ?? join(runtime.home ?? homedir(), ".local");
+	const prefix = resolve(configuredPrefix);
+	const launcher = nativeLauncherPath(prefix, platform);
+	const emitResult = (result: NativeBootstrapResult): NativeBootstrapResult => {
+		if (result.status === "failed" || result.status === "foreign-owner") process.exitCode = 1;
+		if (wantsJson(opts)) emit(result);
+		else if (result.status === "failed" || result.status === "foreign-owner")
+			console.error(result.error ?? `Native bootstrap ${result.status}.`);
+		else console.log(`${result.status}: ${result.version ?? "unknown"} (${result.launcher})`);
+		return result;
+	};
+
+	if (!isAbsolute(configuredPrefix)) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: null,
+			launcher,
+			error: "Native bootstrap prefix must be absolute.",
+		});
+	}
+	if (!identity) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: null,
+			launcher,
+			error: "Native bootstrap requires a compiled CLI executable.",
+		});
+	}
+	if (platform !== "win32" && platform !== "darwin" && platform !== "linux") {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: identity.version,
+			launcher,
+			error: `Native bootstrap is unsupported on ${platform}.`,
+		});
+	}
+	if (identity.target.startsWith("win32-") !== (platform === "win32")) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: identity.version,
+			launcher,
+			error: "Native bootstrap executable and host platform do not match.",
+		});
+	}
+	if (opts.nativeTarget !== undefined && opts.nativeTarget !== identity.target) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: identity.version,
+			launcher,
+			error: "Native bootstrap target does not match the compiled CLI.",
+		});
+	}
+	const requestedVersions = [opts.minVersion, opts.nativeVersion].filter(
+		(version): version is string => version !== undefined,
+	);
+	if (requestedVersions.some((version) => !isValidSemver(version))) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: identity.version,
+			launcher,
+			error: "Native bootstrap version must be a valid semantic version.",
+		});
+	}
+	const requested = requestedVersions.reduce(
+		(highest, version) => (!highest || compareSemver(version, highest) > 0 ? version : highest),
+		identity.version,
+	);
+	const inspected = inspectNativeLauncher(launcher, identity.target, platform);
+	if (inspected.status === "foreign-owner") {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "foreign-owner",
+			version: inspected.version,
+			launcher,
+			error: `Refusing to replace the non-native launcher at ${launcher}. Move it before bootstrapping Clawdi.`,
+		});
+	}
+	if (inspected.ownership && compareSemver(inspected.ownership.version, requested) >= 0) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "already-current",
+			version: inspected.ownership.version,
+			launcher,
+		});
+	}
+	if (!evaluateHostPolicyForCommand("update").allowed) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: inspected.ownership?.version ?? identity.version,
+			launcher,
+			error: "Native bootstrap is disabled in this runtime.",
+		});
+	}
+
+	const timeoutMs =
+		opts.nativeLockTimeoutMs === undefined ? undefined : Number(opts.nativeLockTimeoutMs);
+	if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0)) {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "failed",
+			version: inspected.ownership?.version ?? identity.version,
+			launcher,
+			error: "Native bootstrap lock timeout must be a non-negative number.",
+		});
+	}
+	const ownership: NativeInstallOwnership = {
+		kind: "native",
+		prefix,
+		versionsRoot: join(prefix, "share", "clawdi", "versions"),
+		versionDir: inspected.ownership?.versionDir ?? "",
+		version: inspected.ownership?.version ?? identity.version,
+		target: identity.target,
+		executable: inspected.ownership?.executable ?? "",
+		launcher,
+	};
+	const result = await runNativeUpdateInstall({
+		automatic: true,
+		current: identity.version,
+		latest: requested,
+		ownership,
+		output: wantsJson(opts) ? "stderr" : "inherit",
+		lockOptions:
+			timeoutMs === undefined ? runtime.lockOptions : { ...runtime.lockOptions, timeoutMs },
+		nativeReleaseBaseUrl: runtime.nativeReleaseBaseUrl,
+		nativeFetcher: runtime.nativeFetcher,
+		nativeDownloadTimeoutMs: runtime.nativeDownloadTimeoutMs,
+	});
+	if (result.status === "installed") {
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: inspected.ownership ? "upgraded" : "installed",
+			version: result.installedVersion,
+			launcher,
+		});
+	}
+	if (result.status === "no_update") {
+		const current = inspectNativeLauncher(launcher, identity.target, platform).ownership;
+		return emitResult({
+			schemaVersion: "clawdi.nativeBootstrap.v1",
+			status: "already-current",
+			version: current?.version ?? inspected.ownership?.version ?? requested,
+			launcher,
+		});
+	}
+	return emitResult({
+		schemaVersion: "clawdi.nativeBootstrap.v1",
+		status: "failed",
+		version: inspected.ownership?.version ?? identity.version,
+		launcher,
+		error:
+			(result.status === "failed" ? result.reason : undefined) ??
+			(result.status === "locked"
+				? "Another native update is already running."
+				: "Native bootstrap failed. No active version was changed."),
+	});
+}
+
+function nativeLauncherPath(prefix: string, platform: NodeJS.Platform): string {
+	return platform === "win32"
+		? join(prefix, "share", "clawdi", "current", "clawdi.exe")
+		: join(prefix, "bin", "clawdi");
+}
+
+function inspectNativeLauncher(
+	launcher: string,
+	target: NativeBuildTarget,
+	platform: NodeJS.Platform,
+):
+	| { status: "missing"; ownership: null; version: null }
+	| { status: "native"; ownership: NativeInstallOwnership; version: string }
+	| { status: "foreign-owner"; ownership: null; version: string | null } {
+	const launcherRoot = platform === "win32" ? dirname(launcher) : launcher;
+	try {
+		if (!lstatSync(launcherRoot).isSymbolicLink()) {
+			return { status: "foreign-owner", ownership: null, version: null };
+		}
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+			return { status: "missing", ownership: null, version: null };
+		}
+		return { status: "foreign-owner", ownership: null, version: null };
+	}
+	const executable = platform === "win32" ? launcher : launcherRoot;
+	const identity = readNativeExecutableIdentity(executable);
+	if (!identity || identity.target !== target) {
+		return { status: "foreign-owner", ownership: null, version: identity?.version ?? null };
+	}
+	const ownership = detectNativeInstall(executable, identity, platform);
+	return ownership
+		? { status: "native", ownership, version: ownership.version }
+		: { status: "foreign-owner", ownership: null, version: identity.version };
 }
 
 function printUnsupportedInstall(version: string): void {
