@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse } from "yaml";
@@ -283,7 +284,142 @@ describe("CLI publish workflow contract", () => {
 			"utf8",
 		);
 		expect(buildScript).toContain('run(resolve(scriptDir, "package-native-release.mjs")');
-		expect(signRun).toContain("retaining unsigned native archives");
+		expect(signRun).not.toContain("exit 0");
+	});
+
+	test("fails before signing or final upload when any release credential is missing", () => {
+		const sign = workflowDocument.jobs["sign-macos-native"];
+		const signStep = sign.steps?.find((step) => String(step.name).startsWith("Sign and notarize"));
+		const run = signStep?.run;
+		if (typeof run !== "string") throw new Error("signing step is missing");
+		expect(signStep?.if).toBeUndefined();
+		expect(signStep?.["continue-on-error"]).toBeUndefined();
+		const credentials = {
+			CSC_LINK: "fixture",
+			CSC_KEY_PASSWORD: "fixture",
+			APPLE_API_KEY_CONTENT: "fixture",
+			APPLE_API_KEY_ID: "fixture",
+			APPLE_API_ISSUER: "fixture",
+		};
+		for (const missing of Object.keys(credentials)) {
+			const result = spawnSync("bash", ["--noprofile", "--norc", "-c", run], {
+				encoding: "utf8",
+				env: { PATH: process.env.PATH, ...credentials, [missing]: "" },
+			});
+			expect(result.status).toBe(1);
+			expect(result.stderr).toContain("credentials are incomplete");
+			expect(result.stdout).toBe("");
+		}
+		const steps = sign.steps ?? [];
+		expect(steps.findIndex((step) => step.uses === "actions/upload-artifact@v7")).toBeGreaterThan(
+			steps.indexOf(signStep ?? {}),
+		);
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+		expect(publish.needs).toContain("sign-macos-native");
+		expect(publish.if).toBeUndefined();
+	});
+
+	test("complete credentials sign both Darwin archives and refresh the actual manifest", () => {
+		const run = workflowDocument.jobs["sign-macos-native"].steps?.find((step) =>
+			String(step.name).startsWith("Sign and notarize"),
+		)?.run;
+		if (typeof run !== "string") throw new Error("signing step is missing");
+		const directory = mkdtempSync(join(tmpdir(), "clawdi-signing-workflow-"));
+		try {
+			const bin = join(directory, "bin");
+			const release = join(directory, "release");
+			const runnerTemp = join(directory, "runner-temp");
+			for (const path of [bin, release, runnerTemp, join(directory, "apps/desktop/scripts")])
+				mkdirSync(path, { recursive: true });
+			symlinkSync(
+				resolve(import.meta.dir, "../../../packages"),
+				join(directory, "packages"),
+				"dir",
+			);
+			writeFileSync(
+				join(directory, "apps/desktop/scripts/with-signing-keychain.sh"),
+				'#!/bin/sh\nexec "$@"\n',
+			);
+			// Apple tooling is unavailable on Linux. Exercise the real shell gates,
+			// archive repacking and manifest checks with only the OS tools replaced.
+			const tools: Record<string, string> = {
+				codesign: `case "$1" in
+  --force) for cli do :; done; printf '\n# signed fixture\n' >> "$cli" ;;
+  -dv) printf 'Authority=Developer ID Application: Fixture\nTeamIdentifier=ABCDE12345\n' >&2 ;;
+esac`,
+				xcrun: `case "$2" in
+  submit) printf '{"id":"fixture-submission","status":"Accepted"}\n' ;;
+  *) printf '{}\n' ;;
+esac`,
+				ditto: "exit 0",
+				spctl: "exit 1",
+			};
+			for (const [name, script] of Object.entries(tools))
+				writeFileSync(join(bin, name), `#!/bin/sh\nset -eu\n${script}\n`, { mode: 0o755 });
+			const targets = [
+				"linux-x64",
+				"linux-arm64",
+				"linux-x64-musl",
+				"linux-arm64-musl",
+				"darwin-x64",
+				"darwin-arm64",
+				"win32-x64",
+				"win32-arm64",
+			];
+			const before = new Map<string, string>();
+			for (const target of targets) {
+				const stage = join(directory, target);
+				for (const file of [
+					target.startsWith("win32") ? "clawdi.exe" : "clawdi",
+					"egress-addon/clawdi_egress_addon.py",
+					"skills/clawdi/SKILL.md",
+					"skills/hosted-versions/1/clawdi/SKILL.md",
+				]) {
+					mkdirSync(resolve(stage, file, ".."), { recursive: true });
+					writeFileSync(join(stage, file), "fixture payload", { mode: 0o755 });
+				}
+				const pack = spawnSync(
+					process.execPath,
+					[resolve(import.meta.dir, "../scripts/package-native-release.mjs"), stage, release],
+					{ encoding: "utf8", env: { ...process.env, CLAWDI_NATIVE_TARGET: target } },
+				);
+				expect(pack.status).toBe(0);
+				before.set(
+					target,
+					createHash("sha256")
+						.update(readFileSync(join(release, `clawdi-cli-${target}.tar.gz`)))
+						.digest("hex"),
+				);
+			}
+			const result = spawnSync("bash", ["--noprofile", "--norc", "-c", run], {
+				cwd: directory,
+				encoding: "utf8",
+				env: {
+					...process.env,
+					PATH: `${bin}:${process.env.PATH ?? ""}`,
+					RUNNER_TEMP: runnerTemp,
+					CLI_VERSION: cliPackage.version,
+					CSC_LINK: "fixture",
+					CSC_KEY_PASSWORD: "fixture",
+					APPLE_API_KEY_CONTENT: "fixture",
+					APPLE_API_KEY_ID: "fixture",
+					APPLE_API_ISSUER: "fixture",
+				},
+			});
+			expect(result.stderr).not.toContain("Error");
+			expect(result.status).toBe(0);
+			expect(result.stdout).toContain("v2: 8 targets");
+			const manifest = readFileSync(join(release, "clawdi-cli-manifest-v2.txt"), "utf8");
+			for (const target of targets) {
+				const digest = createHash("sha256")
+					.update(readFileSync(join(release, `clawdi-cli-${target}.tar.gz`)))
+					.digest("hex");
+				expect(digest === before.get(target)).toBe(!target.startsWith("darwin"));
+				expect(manifest).toContain(`artifact\t${target}\tclawdi-cli-${target}.tar.gz\t${digest}`);
+			}
+		} finally {
+			rmSync(directory, { recursive: true, force: true });
+		}
 	});
 
 	test("keeps every macOS shell step free of GNU-only commands", () => {
