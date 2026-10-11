@@ -33,6 +33,8 @@ type AcceptanceApp = App & {
 		beginUpdate(): void;
 		releaseStop(): void;
 		finishUpdate(): Promise<void>;
+		beginDeferredUpdate(): Promise<void>;
+		failDeferredUpdate(): Promise<void>;
 	};
 };
 mkdirSync(state, { recursive: true });
@@ -66,8 +68,15 @@ try {
 							`
 let releaseStop: (() => void) | undefined;
 let updateFinished: Promise<void> | undefined;
+import { autoUpdater as fixtureNativeUpdater } from 'electron';
+let deferredController: DesktopUpdateController | undefined;
+let deferredInstallation: DesktopUpdateInstallation | undefined;
+let deferredRecovery: Promise<void> | undefined;
+let deferredState: DesktopUpdateState = {status:'idle'};
+let deferredUpdater: InstanceType<typeof electronUpdater.MacUpdater> | undefined;
 const acceptanceApp = app as typeof app & {desktopAcceptance: {
  refreshTrayState: typeof refreshTrayState; beginUpdate(): void; releaseStop(): void; finishUpdate(): Promise<void>;
+ beginDeferredUpdate(): Promise<void>; failDeferredUpdate(): Promise<void>;
 }};
 acceptanceApp.desktopAcceptance = {
  refreshTrayState,
@@ -79,7 +88,36 @@ acceptanceApp.desktopAcceptance = {
    updateFinished = installer.install(false).catch(error=>{if(!error.message.includes('no longer ready')) throw error;});
  },
  releaseStop(){if (!releaseStop) throw new Error('Update was not started'); releaseStop();},
- finishUpdate(){if (!updateFinished) throw new Error('Update was not started'); return updateFinished;}
+ finishUpdate(){if (!updateFinished) throw new Error('Update was not started'); return updateFinished;},
+ async beginDeferredUpdate() {
+   if (!deferredUpdater) {
+     deferredUpdater = new electronUpdater.MacUpdater(undefined, {
+       version:'1.0.0', name:'deferred-error-fixture', isPackaged:true,
+       appUpdateConfigPath:'unused', userDataPath:app.getPath('userData'), baseCachePath:app.getPath('cache'),
+       whenReady:async()=>undefined, relaunch:()=>{throw new Error('Unexpected relaunch');},
+       quit:()=>{throw new Error('Unexpected quit');}, onQuit:()=>undefined
+     });
+     deferredUpdater.logger = null;
+     deferredController = new DesktopUpdateController({policy:{enabled:true,channel:'stable'}, updater:deferredUpdater,
+       onStateChange:state=>{deferredState=state;}, onUpdateReady:()=>undefined,
+       onInstallError:()=>{deferredRecovery=deferredInstallation?.recoverAfterFailure();}});
+     deferredInstallation = new DesktopUpdateInstallation({platform:'win32', mutations,
+       isReady:()=>deferredState.status==='ready', stopBackgroundServices:async()=>{await cli.stopDaemon(); return true;},
+       restoreBackgroundServices:()=>cli.restartDaemon(), install:()=>deferredController?.installDownloadedUpdate()??false});
+     deferredController.start();
+   }
+   deferredUpdater.emit('checking-for-update');
+   deferredUpdater.emit('update-available',{version:'1.1.0'});
+   deferredUpdater.emit('update-downloaded',{version:'1.1.0'});
+   await deferredInstallation?.install(false);
+   if (!mutations.blocked) throw new Error('Install retry was not accepted');
+ },
+ async failDeferredUpdate() {
+   fixtureNativeUpdater.emit('error',new Error('Squirrel validation failed after quitAndInstall returned'));
+   await deferredRecovery;
+   if (mutations.blocked || deferredState.status!=='error') throw new Error('Deferred install failed to recover');
+   deferredController?.stop();
+ }
 };`,
 					}));
 				},
@@ -380,6 +418,40 @@ export function useSession(){return {session:null};}
 				true,
 				"Failure must restore sync and mutation admission",
 			);
+			// Real MacUpdater returns while Squirrel is pending. Emit its error in
+			// the next IPC turn, then exercise production Connect and sign-out.
+			await application.evaluate(async ({ app }) =>
+				(app as AcceptanceApp).desktopAcceptance.beginDeferredUpdate(),
+			);
+			await assert.rejects(
+				welcome.evaluate(() => window.clawdiConnect?.connectAgents([{ type: "codex" }])),
+				/preparing an update/,
+			);
+			await application.evaluate(async ({ app }) =>
+				(app as AcceptanceApp).desktopAcceptance.failDeferredUpdate(),
+			);
+			await welcome.evaluate(() => window.clawdiConnect?.connectAgents([{ type: "codex" }]));
+			assert.equal(existsSync(join(state, "sync")), true);
+			await application.evaluate(async ({ app }) => {
+				const handle = (app as AcceptanceApp).desktopAcceptance;
+				await handle.beginDeferredUpdate();
+				await handle.failDeferredUpdate();
+			});
+			await welcome.getByRole("button", { name: "Open dashboard", exact: false }).click();
+			dashboard = await waitForDashboard();
+			await dashboard.getByRole("button", { name: "User menu", exact: true }).click();
+			const recoveredWindow = application.waitForEvent("window");
+			await dashboard
+				.getByRole("menuitem", { name: "Sign out", exact: true })
+				.click({ noWaitAfter: true })
+				.catch((error) => {
+					if (!dashboard.isClosed()) throw error;
+				});
+			welcome = await recoveredWindow;
+			await assertLocalSignOut(welcome);
+			await welcome.getByRole("button", { name: "Sign in", exact: true }).click();
+			await welcome.getByRole("button", { name: /Connect/ }).click();
+			await welcome.getByRole("heading", { name: "Agents Connected" }).waitFor();
 		}
 		await welcome.getByRole("button", { name: "Open dashboard", exact: false }).click();
 		dashboard = await waitForDashboard();

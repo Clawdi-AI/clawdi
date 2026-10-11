@@ -30,9 +30,8 @@
     nsExec::ExecToStack '"$INSTDIR\resources\native\clawdi.exe" uninstall --yes'
     Pop $0
     Pop $1
-    nsExec::ExecToStack 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\support\windows-cli-path.ps1" -Action Remove -BinPath "$LOCALAPPDATA\Clawdi\bin" -LauncherPath "$LOCALAPPDATA\Clawdi\bin\clawdi.cmd"'
-    Pop $0
-    Pop $1
+    ; Desktop cleanup owns launcher/PATH removal too: KEEPCLI preserves only
+    ; a marked shim targeting an ownership-verified shared native CLI.
     ; Registered by app.setAsDefaultProtocolClient("clawdi-desktop") on launch.
     DeleteRegKey HKCU "Software\Classes\clawdi-desktop"
   ${endif}

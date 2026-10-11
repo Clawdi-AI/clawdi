@@ -59,7 +59,7 @@ function activate(next: string): void {
 			join(root, `fixture-${next}${process.platform === "win32" ? ".exe" : ""}`),
 			join(directory, file),
 		);
-	writeFixtureNativeMetadata(directory, next);
+	writeFixtureNativeMetadata(directory, next, "desktop");
 	if (process.platform === "win32") {
 		const current = dirname(launcher);
 		const staging = `${current}.next`;
@@ -88,6 +88,9 @@ function installUnit(): void {
 }
 
 switch (args.slice(0, 2).join(" ")) {
+	case "--version":
+		console.log(version);
+		break;
 	case "update --native-identity":
 		console.log(`${version}\t${process.platform}-${process.arch}`);
 		break;
@@ -95,7 +98,10 @@ switch (args.slice(0, 2).join(" ")) {
 		console.log(
 			JSON.stringify({
 				schemaVersion: "clawdi.capabilities.v1",
-				capabilities: { updateMode: native ? "local-self-update" : "desktop-managed" },
+				capabilities: {
+					updateMode: native ? "local-self-update" : "desktop-managed",
+					commands: ["uninstall"],
+				},
 			}),
 		);
 		break;
@@ -199,6 +205,18 @@ switch (args.slice(0, 2).join(" ")) {
 		break;
 	case "daemon restart":
 	case "setup --agent":
+		break;
+	case "auth desktop-sign-out":
+		console.log(JSON.stringify({ schemaVersion: "clawdi.desktopSignOut.v1", status: "revoked" }));
+		break;
+	case "uninstall --yes":
+		rmSync(unit, { force: true });
+		rmSync(auth, { force: true });
+		if (process.env.CLAWDI_UNINSTALL_KEEP_CLI !== "1")
+			rmSync(join(prefix, "share", "clawdi"), { recursive: true, force: true });
+		console.log(
+			JSON.stringify({ schemaVersion: "clawdi.uninstall.v1", status: "completed", steps: [] }),
+		);
 		break;
 	default:
 		throw new Error("Unexpected native CLI e2e command.");

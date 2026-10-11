@@ -7,7 +7,7 @@ export interface DesktopCleanupActions {
 	prepare(): Promise<void>;
 	revokeSessions(): Promise<void>;
 	uninstallCli(removeCli: boolean): Promise<void>;
-	removeCliCommand(): void;
+	removeCliCommand(removeCli: boolean): void | Promise<void>;
 	clearData(): Promise<void>;
 	removeLoginItem(): void;
 }
@@ -82,7 +82,7 @@ export async function cleanupDesktop(
 	await step("Stop app activity", actions.prepare);
 	await step("Revoke Desktop sign-in", actions.revokeSessions);
 	await step("Remove local services and integrations", () => actions.uninstallCli(removeCli));
-	await step("Remove Desktop CLI launcher", actions.removeCliCommand);
+	await step("Remove Desktop CLI launcher", () => actions.removeCliCommand(removeCli));
 	await step("Remove login item", actions.removeLoginItem);
 	await step("Clear local app data", actions.clearData);
 	return failed;

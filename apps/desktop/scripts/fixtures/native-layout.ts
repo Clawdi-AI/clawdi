@@ -7,7 +7,11 @@ import {
 } from "../../../../packages/cli/src/lib/native-release-manifest";
 
 /** Fake release metadata for resolver tests; never used as a real release. */
-export function writeFixtureNativeMetadata(directory: string, version: string): void {
+export function writeFixtureNativeMetadata(
+	directory: string,
+	version: string,
+	installedBy?: "desktop",
+): void {
 	const target = nativeBuildTargetForPlatform();
 	if (!target) throw new Error("Unsupported native CLI fixture target.");
 	const manifest = `clawdi.nativeRelease.v2\nversion\t${version}\nartifact\t${target}\t${nativeAssetName(target)}\t${"a".repeat(64)}\n`;
@@ -16,5 +20,5 @@ export function writeFixtureNativeMetadata(directory: string, version: string): 
 	writeFileSync(join(directory, "skills", "clawdi", "SKILL.md"), "# Fixture\n");
 	writeFileSync(join(directory, "egress-addon", "clawdi_egress_addon.py"), "# Fixture\n");
 	writeFileSync(join(directory, "clawdi-cli-manifest-v2.txt"), manifest);
-	writeNativeInstallIdentity(directory, { version, target }, manifest);
+	writeNativeInstallIdentity(directory, { version, target }, manifest, installedBy);
 }

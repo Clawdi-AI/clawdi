@@ -40,6 +40,6 @@ describe("desktop update state", () => {
 		expect(canCheckForDesktopUpdate({ status: "error" })).toBe(true);
 		expect(canCheckForDesktopUpdate(downloading)).toBe(false);
 		expect(reduceDesktopUpdateState(downloading, { type: "check" })).toBe(downloading);
-		expect(reduceDesktopUpdateState(ready, { type: "error" })).toBe(ready);
+		expect(reduceDesktopUpdateState(ready, { type: "error" })).toEqual({ status: "error" });
 	});
 });

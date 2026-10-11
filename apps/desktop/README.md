@@ -528,9 +528,13 @@ cleanup for session revocation, login item removal, profile/partition/cache/log
 removal and owned launcher cleanup. Upgrade uninstall excludes this entry and
 preserves user data. An old installed uninstaller gains this hook only after
 installing a version that contains it.
+On Windows, keeping the shared native CLI also keeps its marked terminal launcher
+and PATH entry after native ownership validation. Launchers targeting the bundled
+app are removed with the app; foreign commands remain untouched.
 
 Update preparation closes mutation admission and drains accepted operations.
 Connect/auth, sign-out, menu mutations and uninstall share that guard. Windows
 then stops sync to release executable locks; failed installation restores sync
-and reopens admission. Successful quit installation keeps admission closed;
+and reopens admission, including native updater errors after `quitAndInstall`
+has returned. Successful quit installation keeps admission closed;
 sync resumes when the updated Desktop next launches.

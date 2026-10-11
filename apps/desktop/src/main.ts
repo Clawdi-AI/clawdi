@@ -363,6 +363,11 @@ async function initializeUpdates(): Promise<void> {
 			runAsync("offer the downloaded update", maybePromptForUpdate());
 		},
 		onUpdateAvailable: (version) => showUpdateNotification(version, false),
+		onInstallError: () =>
+			runAsync(
+				"recover from update installation failure",
+				updateInstallation?.recoverAfterFailure() ?? Promise.resolve(),
+			),
 	});
 	updateInstallation = new DesktopUpdateInstallation({
 		platform: process.platform,
@@ -1398,7 +1403,7 @@ function desktopCleanupActions(): DesktopCleanupActions {
 		},
 		revokeSessions: revokeDashboardSessions,
 		uninstallCli: (removeCli) => cli.uninstall(removeCli),
-		removeCliCommand: () => cli.removeDesktopCommand(),
+		removeCliCommand: (removeCli) => cli.removeDesktopCommand(removeCli),
 		removeLoginItem: () => setDesktopLaunchAtLogin(app, false),
 		clearData: async () => {
 			for (const window of BrowserWindow.getAllWindows()) window.destroy();

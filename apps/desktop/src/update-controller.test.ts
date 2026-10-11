@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { join } from "node:path";
+import { runCommand } from "./command-runner";
 import { DesktopMutations } from "./mutations";
 import { DesktopUpdateController, type DesktopUpdater } from "./update-controller";
 import { DesktopUpdateInstallation } from "./update-install";
@@ -50,6 +52,12 @@ async function download(f: ReturnType<typeof fixture>) {
 }
 
 describe("Desktop updater", () => {
+	test("real MacUpdater quitAndInstall returns, then native error recovers admission and retry", async () => {
+		const result = await runCommand(process.execPath, [
+			join(import.meta.dir, "../scripts/fixtures/mac-update-error.ts"),
+		]);
+		expect(result.stdout).toContain("recovery, Windows restore, mutations and retry passed");
+	});
 	test("notifies once per downloaded version; installs only when ready with default restart", async () => {
 		const f = fixture();
 		expect(f.controller.installDownloadedUpdate()).toBe(false);

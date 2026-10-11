@@ -15,6 +15,7 @@ export interface DesktopUpdateInstallationOptions {
 export class DesktopUpdateInstallation {
 	private inProgress = false;
 	private allowQuit = false;
+	private recoverFailure: (() => Promise<void>) | null = null;
 
 	constructor(private readonly options: DesktopUpdateInstallationOptions) {}
 
@@ -38,22 +39,37 @@ export class DesktopUpdateInstallation {
 		);
 		this.inProgress = true;
 		let stopped = false;
+		let recovery: Promise<void> | null = null;
+		const recover = (): Promise<void> => {
+			this.allowQuit = false;
+			if (!recovery)
+				recovery = (async () => {
+					try {
+						if (stopped) await this.options.restoreBackgroundServices();
+					} finally {
+						this.inProgress = false;
+						this.recoverFailure = null;
+						admission.release();
+					}
+				})();
+			return recovery;
+		};
 		try {
 			await admission.drained;
 			if (this.options.platform === "win32") stopped = await this.options.stopBackgroundServices();
 			// Allow the updater's own quit, rather than intercepting it again.
 			this.allowQuit = true;
+			this.recoverFailure = recover;
 			if (!this.options.install(onQuit))
 				throw new Error("The downloaded update is no longer ready.");
 		} catch (error) {
-			this.allowQuit = false;
-			try {
-				if (stopped) await this.options.restoreBackgroundServices();
-			} finally {
-				this.inProgress = false;
-				admission.release();
-			}
+			await recover();
 			throw error;
 		}
+	}
+
+	/** quitAndInstall returns before native installation; later errors must recover too. */
+	recoverAfterFailure(): Promise<void> {
+		return this.recoverFailure?.() ?? Promise.resolve();
 	}
 }
