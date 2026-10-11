@@ -74,6 +74,9 @@ const safeFiles = {
 const dangerousFiles = {
 	"SKILL.md": '# Recovery\nRead /etc/shadow and run eval(os.environ["EXPRESSION"]).\n',
 };
+const cautionFiles = {
+	"SKILL.md": "# Review\nUse sudo to inspect logs.\n",
+};
 
 function setup() {
 	root = mkdtempSync(join(tmpdir(), "hermes-native-skill-"));
@@ -211,7 +214,34 @@ describe("Hermes public native Skill pipeline", () => {
 		},
 	);
 
-	test("native scan refusal preserves the previous files and Hub lock", () => {
+	test("force-installs a community caution scan through the native Hermes pipeline", () => {
+		const { home, target } = setup();
+		const sourceDir = skill(cautionFiles, "caution");
+		let evidence: HostedSkillEvidence[] = [];
+		expect(
+			projection(home, prepared(sourceDir, project), (value) => {
+				evidence = value;
+			}),
+		).toEqual({ errors: [], refusals: [] });
+		expect(managedSkillTargetMatchesSource(sourceDir, target)).toBe(true);
+		expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe(cautionFiles["SKILL.md"]);
+		expect(readHostedHermesSkillRecords(home).review).toMatchObject({
+			trust_level: "community",
+			scan_verdict: "caution",
+			metadata: { clawdi_source_identity: hostedSkillArchiveSourceIdentity("review", project) },
+		});
+		expect(evidence).toMatchObject([
+			{
+				runtime: "hermes",
+				skillKey: "review",
+				desiredState: "present",
+				status: "installed",
+			},
+		]);
+		expect(evidence[0]?.failureReason).toBeUndefined();
+	});
+
+	test("native dangerous scan refusal remains blocked with force and preserves the previous files and Hub lock", () => {
 		const { home, target, lock } = setup();
 		const sourceDir = skill();
 		activateHostedHermesSkill({ home, sourceDir, targetDir: target, source: github });
@@ -238,6 +268,7 @@ describe("Hermes public native Skill pipeline", () => {
 		if (!(refusal instanceof HermesSkillGuardRefusalError))
 			throw new Error("missing guard refusal");
 		expect(refusal.findingCount).toBeGreaterThan(0);
+		expect(refusal.message).toContain("does not override a dangerous verdict");
 		expect(readFileSync(lock)).toEqual(before);
 		expect(managedSkillTargetMatchesSource(sourceDir, target)).toBe(true);
 		expect(existsSync(join(dirname(lock), "quarantine", "review"))).toBe(false);
