@@ -5,9 +5,11 @@ import {
 	agentSkillStateKey,
 	agentSkillsHaveRetryableInstallFailure,
 	agentSurfaceCopy,
+	fetchAgentProjectSkills,
 	identityFor,
 	workspaceSkillInstallCopy,
 } from "@clawdi/shared/view";
+import { useQuery } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -18,6 +20,7 @@ import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCard, HeroCardSkeleton } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
+import { useCloudProjects } from "@/components/projects/projects-surface";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { NativeList } from "@/components/ui/native-list";
@@ -28,8 +31,7 @@ import { useWorkspaceSkillChanges } from "@/hosted/agents/workspace-skill-change
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
-import { useCloudSkills } from "@/pages/dashboard/skills/page";
-import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader, useHeaderSearch } from "@/platform/navigation/native-header";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
@@ -75,10 +77,37 @@ function AgentLibrarySkills({
 	const read = useAccountRead();
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
-	const { agentExtensions: client } = useMobileApi();
+	const { agentExtensions: client, cloud } = useMobileApi();
 	const [search, setSearch] = useState("");
 	const [accepted, setAccepted] = useState(false);
-	const library = useCloudSkills(undefined, search);
+	const projects = useCloudProjects();
+	const workspaceIds = (projects.data ?? [])
+		.filter((project) => project.kind === "workspace")
+		.map((project) => project.id);
+	const library = useQuery({
+		queryKey: accountQueryKey(scope, "library-picker-skills", workspaceIds.join(","), search),
+		enabled: scope.isReady && Boolean(projects.data),
+		retry: false,
+		queryFn: ({ signal }) =>
+			read(async (lease) => {
+				const skills = await fetchAgentProjectSkills(workspaceIds, (projectId, page, pageSize) =>
+					cloud.listSkills(
+						{
+							project_id: projectId,
+							page,
+							page_size: pageSize,
+							q: search || undefined,
+						},
+						lease,
+					),
+				);
+				return Array.from(
+					new Map(
+						skills.filter((skill) => skill.authority === "cloud").map((skill) => [skill.id, skill]),
+					).values(),
+				);
+			}, signal),
+	});
 	const inventory = useAgentDesiredSkills(id);
 	// GitHub workspace uninstalls reuse the install sheet's journal; the browse sheet has none.
 	const changes = useWorkspaceSkillChanges(deploymentId);
@@ -92,7 +121,10 @@ function AgentLibrarySkills({
 	});
 	const refresh = () => {
 		void inventory.refetch();
-		if (browse) void library.refetch();
+		if (browse) {
+			void projects.refetch();
+			void library.refetch();
+		}
 		if (deploymentId) {
 			void changes.inventory.refetch();
 			void changes.deployment.refetch();
@@ -121,13 +153,10 @@ function AgentLibrarySkills({
 			},
 		});
 	};
-	const items = Array.from(
-		new Map(
-			(library.data?.pages.flatMap((page) => page.items) ?? [])
-				.filter((item) => item.authority === "cloud")
-				.map((item) => [item.id, item]),
-		).values(),
-	);
+	const items = library.data ?? [];
+	const libraryError = projects.error ?? library.error;
+	const libraryIsError = projects.isError || library.isError;
+	const libraryIsPending = projects.isPending || library.isPending;
 	const headerSearch = useHeaderSearch({
 		value: search,
 		onChange: setSearch,
@@ -153,13 +182,10 @@ function AgentLibrarySkills({
 					options={{ ...sheetCancelHeaderOptions, headerSearchBarOptions: headerSearch }}
 				/>
 				<NativeList
-					data={library.isError ? [] : items}
+					data={libraryIsError ? [] : items}
 					keyExtractor={(item) => item.id}
-					refreshing={library.isRefetching}
-					onRefresh={() => void library.refetch()}
-					hasMore={library.hasNextPage}
-					loadingMore={library.isFetching}
-					onLoadMore={() => void library.fetchNextPage()}
+					refreshing={projects.isRefetching || library.isRefetching}
+					onRefresh={refresh}
 					header={
 						<>
 							<NativeSegments
@@ -191,9 +217,9 @@ function AgentLibrarySkills({
 						</>
 					}
 					empty={
-						library.isError ? (
-							<ApiErrorPanel error={library.error} onRetry={() => void library.refetch()} />
-						) : library.isPending ? (
+						libraryIsError ? (
+							<ApiErrorPanel error={libraryError} onRetry={refresh} />
+						) : libraryIsPending ? (
 							<HeroCardSkeleton />
 						) : (
 							<EmptyState title={t("workspaceSkills.noMatches")} />
