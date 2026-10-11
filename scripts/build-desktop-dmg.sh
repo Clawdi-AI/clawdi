@@ -18,6 +18,7 @@ hdiutil info -plist > "$retry_root/before.plist"
 build_dmg() {
 	node "$repo_root/apps/desktop/node_modules/electron-builder/cli.js" \
 		--projectDir "$repo_root/apps/desktop" \
+		--config.afterPack="$repo_root/apps/desktop/scripts/after-pack.mjs" \
 		--prepackaged "$repo_root/apps/desktop/release/$bundle/Clawdi.app" \
 		--mac dmg "--$arch" --publish never
 }
