@@ -37,7 +37,10 @@ import {
 	observeComponents,
 	persistComponentActivations,
 } from "./component-observation";
-import { gcFileBrowserCompanionCandidates } from "./file-browser-companion";
+import {
+	gcFileBrowserCompanionCandidates,
+	prefetchFileBrowserAsset,
+} from "./file-browser-companion";
 import * as hermesConfig from "./hermes-config";
 import type {
 	PreparedHostedAgentPlugin,
@@ -6243,6 +6246,39 @@ del list_profile_names
 			"bundle-token",
 		);
 		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN")).toBeNull();
+	});
+
+	test("claim uses the SHA-verified anonymous Files candidate without downloading again", () => {
+		const paths = tempRuntimePaths();
+		const binary = "#!/bin/sh\nprintf 'test File Browser'\n";
+		const manifest = fileBrowserManifest(paths, { generation: 1, binary });
+		const companion = manifest.companions?.filebrowser;
+		if (!companion) throw new Error("Files fixture is missing");
+		const downloadRoot = join(paths.runRoot, "anonymous-download");
+		mkdirSync(downloadRoot, { recursive: true });
+		writeFileSync(join(downloadRoot, "binary"), binary);
+		writeFileSync(
+			join(downloadRoot, "curl"),
+			`#!/bin/sh\nwhile [ "$1" != -o ]; do shift; done\ncp '${downloadRoot}/binary' "$2"\n`,
+			{ mode: 0o755 },
+		);
+		process.env.PATH = `${downloadRoot}:${process.env.PATH}`;
+		prefetchFileBrowserAsset(paths, companion.assets.amd64);
+		const candidate = fileBrowserBinaryPath(paths, binary);
+		const before = statSync(candidate);
+		const result = convergeRuntimeManifest(fileBrowserManifestLoad(manifest), paths, {
+			fileBrowserInstallOptions: {
+				serviceIsolation: testFileBrowserServiceIsolation,
+				download: () => {
+					throw new Error("claim tried to download a prefetched Files asset");
+				},
+			},
+			fileBrowserReadinessProbe: () => true,
+			systemdApply: fileBrowserApplyHooks(),
+		});
+		expect(result.installErrors).toEqual([]);
+		expect(statSync(candidate).ino).toBe(before.ino);
+		expect(readFileSync(candidate, "utf8")).toBe(binary);
 	});
 
 	test("installs the pinned Files companion post-boot and reconverges idempotently", () => {

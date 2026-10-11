@@ -113,7 +113,9 @@ class ClawdiEgressAddon:
 
     def tls_clienthello(self, data: Any) -> None:
         server_name = normalize_host(getattr(data.client_hello, "sni", "") or "")
-        if not server_name or not self.should_intercept_sni(server_name):
+        if self.snapshot_claimed and (
+            not server_name or not self.should_intercept_sni(server_name)
+        ):
             data.ignore_connection = True
 
     def request(self, flow: Any) -> None:
