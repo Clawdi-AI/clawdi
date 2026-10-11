@@ -3,6 +3,7 @@
 import { detailLayoutClasses, memoryDetailClasses } from "@clawdi/shared/ui";
 
 import {
+	LIBRARY_COPY,
 	MEMORY_CATEGORY_COLORS,
 	memoryDisplayName,
 	memoryRecallLabel,
@@ -194,7 +195,7 @@ export default function MemoryDetailPage({
 								<span>
 									{memory.source_machine_name
 										? `Learned on ${memory.source_machine_name}`
-										: "Learned from a session"}
+										: LIBRARY_COPY.learnedFromSession}
 								</span>
 								{memory.source_session_id ? (
 									<>

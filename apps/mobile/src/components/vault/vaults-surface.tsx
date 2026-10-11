@@ -384,7 +384,7 @@ function VaultCreate({ projectId }: { projectId?: string }) {
 						<WebText recipe={vaultsSurfaceClasses.error}>{copy.nameTaken}</WebText>
 					) : null}
 				</WebView>
-				{action.error ? <ApiErrorPanel error={action.error} /> : null}
+				{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				<WebView recipe={vaultsSurfaceClasses.form}>
 					<Button
 						variant="ghost"

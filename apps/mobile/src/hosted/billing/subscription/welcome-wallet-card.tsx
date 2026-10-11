@@ -2,6 +2,7 @@ import { welcomeWalletCardClasses as styles } from "@clawdi/shared/ui";
 import {
 	welcomeWalletCopy as copy,
 	formatUsdExact,
+	nextBillingCursor,
 	WELCOME_GRANT_RECHECK_INTERVAL_MS,
 	WELCOME_GRANT_TIMEOUT_MS,
 	welcomeWalletDescription,
@@ -20,7 +21,6 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
-import { nextBillingCursor } from "@/hosted/billing/format";
 import { useWallet } from "@/hosted/billing/hooks";
 import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useMobileApi } from "@/lib/api-provider";

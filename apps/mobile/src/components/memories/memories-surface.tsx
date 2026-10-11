@@ -327,7 +327,7 @@ function MemoryEditor({ id: editing }: { id?: string }) {
 							</Select>
 						</WebView>
 					) : null}
-					{action.error ? <ApiErrorPanel error={action.error} /> : null}
+					{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 					<WebView recipe={memoriesSurfaceClasses.section}>
 						<Button
 							variant="ghost"

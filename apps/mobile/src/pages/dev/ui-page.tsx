@@ -6,6 +6,7 @@ import {
 	pageHeaderClasses,
 } from "@clawdi/shared/ui";
 import {
+	API_ERROR_COPY,
 	FRAMEWORK_BRAND_ICON_IDS,
 	identityFor,
 	PROVIDER_BRAND_ICON_IDS,
@@ -374,8 +375,8 @@ function Gallery() {
 					<Alert icon={Settings} title={t("projects.title")}>
 						{t("projects.description")}
 					</Alert>
-					<Alert variant="destructive" icon={TriangleAlert} title={t("composite.errorTitle")}>
-						{t("composite.serviceError")}
+					<Alert variant="destructive" icon={TriangleAlert} title={API_ERROR_COPY.errorTitle}>
+						{API_ERROR_COPY.serviceError}
 					</Alert>
 					<EmptyState
 						title={t("projects.empty")}

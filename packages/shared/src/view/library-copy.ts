@@ -39,6 +39,13 @@ export const LIBRARY_COPY = {
 		"Add an agent from Overview first, then link this project here or from the agent's Projects section.",
 	loadAgentsFailed: "Couldn't load agents",
 	updateAgentsFailed: "Couldn't update agent access",
+	agentProjectsDescription: "Choose the projects this agent can use.",
+	loadProjectsFailed: "Couldn't load projects",
+	updateProjectLinkFailed: "Couldn't update project link",
+	loadDestinationsFailed: "Couldn't load destinations",
+	checkExistingKeysFailed: "Couldn't check existing keys",
+	loadVaultCatalogFailed: "Couldn't load vault catalog",
+	learnedFromSession: "Learned from a session",
 	projectBundleDescription:
 		"Keep reusable skills and vault access together, then link the whole project to any agent that needs it.",
 	projectSkillsDescription: "Reusable instructions that belong to this project.",

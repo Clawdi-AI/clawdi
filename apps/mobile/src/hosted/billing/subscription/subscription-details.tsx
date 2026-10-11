@@ -2,12 +2,14 @@ import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";
 import { transactionsSectionClasses } from "@clawdi/shared/ui";
 import {
 	computeSubscriptionActionCopy as actionCopy,
+	billingErrorCopy,
 	billingTermLabel,
 	computeSubscriptionCancellationCopy,
 	computeSubscriptionCancellationSuccessCopy,
 	computeSubscriptionCancelTitle,
 	computeSubscriptionLifecycle,
 	computeSubscriptionPlanLabel,
+	formatCurrencyCents,
 	formatShortDate,
 	pendingComputePlanSlug,
 	resolveComputeSubscriptionActions,
@@ -26,9 +28,7 @@ import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { formatDate } from "@/hooks/cloud-inventory";
 import type { Subscription } from "@/hosted/billing/format";
-import { subscriptionPrice } from "@/hosted/billing/format";
 import { AddCreditsAction } from "@/hosted/billing/store/add-credits";
 import { StoreSubscriptionPanel } from "@/hosted/billing/store/compute-store";
 import { creditPrice } from "@/hosted/billing/store/store-presentation";
@@ -37,7 +37,8 @@ import {
 	useSubscriptionAgent,
 } from "@/hosted/billing/subscription/compute-subscription-card";
 import { useMobileApi } from "@/lib/api-provider";
-import { type Translator, useI18n } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
+import { requestFailure } from "@/lib/request-failure";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import {
@@ -57,35 +58,27 @@ function BillingFact({ label, value }: { label: string; value: string }) {
 		</WebView>
 	);
 }
-function subscriptionRecovery(item: Subscription, t: Translator) {
-	return computeSubscriptionRecoveryPresentation(
-		item,
-		{ label: item.status, tone: "neutral" },
-		{
-			updating: t("billing.updating"),
-			processing: t("billing.processing"),
-			unpaid: t("billing.unpaid"),
-			actionRequired: t("billing.actionRequired"),
-			pastDue: t("billing.pastDue"),
-			paymentProcessing: t("billing.paymentProcessing"),
-			attention: t("billing.attention"),
-			awaitingPayment: t("billing.awaitingPayment"),
-			support: t("billing.support"),
-			ended: t("billing.ended"),
-			paymentAttention: t("billing.paymentAttention"),
-		},
-	);
+/** Web's recovery reading: the lifecycle badge unless a payment or command state overrides it. */
+function subscriptionRecovery(item: Subscription) {
+	const lifecycle = computeSubscriptionLifecycle(item);
+	return {
+		lifecycle,
+		...computeSubscriptionRecoveryPresentation(item, {
+			label: lifecycle.badgeLabel,
+			tone: lifecycle.badgeTone,
+		}),
+	};
 }
 function SubscriptionRecovery({ item }: { item: Subscription }) {
 	const t = useI18n();
 	const surfaces = useStoreSurfaces();
-	const recovery = subscriptionRecovery(item, t);
+	const recovery = subscriptionRecovery(item);
 	const recoveryAction = recovery.recoveryTarget
 		? storeRecoveryAction(surfaces, recovery.recoveryTarget)
 		: null;
 	return (
 		<AppView className="gap-2">
-			{recovery.status.label !== item.status ? (
+			{recovery.status.label !== recovery.lifecycle.badgeLabel ? (
 				<Text
 					accessibilityRole={recovery.hasPaymentIssue ? "alert" : undefined}
 					className="text-foreground"
@@ -94,10 +87,7 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
 				</Text>
 			) : null}
 			{recovery.schedule?.at ? (
-				<BillingFact
-					label={t("billing.retries")}
-					value={formatDate(recovery.schedule.at) ?? t("billing.unknown")}
-				/>
+				<BillingFact label={t("billing.retries")} value={formatShortDate(recovery.schedule.at)} />
 			) : recovery.schedule?.fallback ? (
 				<Text className="text-muted-foreground">{recovery.schedule.fallback}</Text>
 			) : null}
@@ -131,7 +121,6 @@ function SubscriptionRecovery({ item }: { item: Subscription }) {
  * purchases; plan changes keep their existing path.
  */
 function SubscriptionActions({ item }: { item: Subscription }) {
-	const t = useI18n();
 	const surfaces = useStoreSurfaces();
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
@@ -157,7 +146,7 @@ function SubscriptionActions({ item }: { item: Subscription }) {
 				actions: item.actions,
 			},
 			management: { action: "hidden", target: null, unavailableReason: null },
-			recoveryTarget: subscriptionRecovery(item, t).recoveryTarget,
+			recoveryTarget: subscriptionRecovery(item).recoveryTarget,
 		}),
 	);
 	if (!compute || actions.length === 0) return null;
@@ -249,13 +238,18 @@ function SubscriptionActions({ item }: { item: Subscription }) {
 				</AppView>
 			) : null}
 			{action.error && running ? (
-				<Text accessibilityRole="alert" className="text-destructive">
-					{running === "resume"
-						? actionCopy.resumeFailed
-						: running === "cancel_scheduled_change"
-							? actionCopy.cancelScheduledChangeFailed
-							: actionCopy.cancelFailed}
-				</Text>
+				<AppView accessibilityRole="alert">
+					<Text className="font-medium text-destructive">
+						{running === "resume"
+							? actionCopy.resumeFailed
+							: running === "cancel_scheduled_change"
+								? actionCopy.cancelScheduledChangeFailed
+								: actionCopy.cancelFailed}
+					</Text>
+					<Text className="text-muted-foreground">
+						{billingErrorCopy(requestFailure(action.failure))}
+					</Text>
+				</AppView>
 			) : null}
 		</AppView>
 	);
@@ -290,8 +284,11 @@ export function SubscriptionDetails({
 			<BillingFact
 				label={t("billing.price")}
 				value={
-					(creditUnits ? creditPrice(item, t("store.credits")) : subscriptionPrice(item)) ??
-					t("billing.unknown")
+					(creditUnits
+						? creditPrice(item, t("store.credits"))
+						: item.price_cents == null
+							? null
+							: formatCurrencyCents(item.price_cents, item.currency)) ?? t("billing.unknown")
 				}
 			/>
 			<BillingFact label={t("billing.term")} value={billingTermLabel(item.billing_term_months)} />
@@ -309,7 +306,7 @@ export function SubscriptionDetails({
 			/>
 			<BillingFact
 				label={t("billing.periodEnd")}
-				value={formatDate(item.current_period_end) ?? t("billing.unknown")}
+				value={formatShortDate(item.current_period_end)}
 			/>
 			{item.funding_source === "wallet" ? (
 				<Text>{t(cardBilling ? "billing.walletNotice" : "store.walletNotice")}</Text>

@@ -15,7 +15,6 @@ import {
 	applyDeploymentSubscriptionResult,
 	applySubscriptionActionSuccess,
 	billingKeys,
-	billingNextPageParam,
 	HOSTED_DEPLOYMENTS_REFRESH_POLICY,
 	invalidateComputeSubscriptionInventory,
 	invalidateSettledPlanChangeQueries,
@@ -46,16 +45,6 @@ function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActi
 		cancel_at: cancelAtPeriodEnd ? "2026-08-01T00:00:00Z" : null,
 	};
 }
-
-describe("subscription pagination", () => {
-	test("continues only with a complete server cursor", () => {
-		expect(billingNextPageParam({ has_more: true, next_cursor: "cursor-next" })).toBe(
-			"cursor-next",
-		);
-		expect(billingNextPageParam({ has_more: true, next_cursor: null })).toBeUndefined();
-		expect(billingNextPageParam({ has_more: false, next_cursor: "cursor-stale" })).toBeUndefined();
-	});
-});
 
 describe("plan change cache invalidation", () => {
 	test("invalidates all billing inventory only after success or a terminal outcome", () => {

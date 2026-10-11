@@ -11,11 +11,14 @@
 
 import { hostedCheckoutSends } from "@clawdi/shared/api";
 import {
+	billingErrorCopy,
 	DEPLOY_SESSION_EXPIRED_RECOVERY,
 	type DeploySubmissionContext,
 	type DeploySubmissionErrorPresentation,
 	deploySubmissionErrorCopy,
 	deploySubmissionRecoveryCopy,
+	INSUFFICIENT_WALLET_BALANCE_CODE,
+	type RequestFailure,
 } from "@clawdi/shared/view";
 import { toast } from "sonner";
 import type {
@@ -301,9 +304,6 @@ export function billingQueryRetry(failureCount: number, error: unknown): boolean
  * `backend/app/v2/compute/routes.py`). Key on that code, never on free-form
  * message text from an upstream gateway.
  */
-export const INSUFFICIENT_WALLET_BALANCE_CODE = "insufficient_wallet_balance";
-export const FUNDING_AUTHORITY_INCONSISTENT_CODE = "funding_authority_inconsistent";
-
 export function isInsufficientBalanceError(error: unknown): boolean {
 	if (!(error instanceof BillingApiError)) return false;
 	if (error.status !== 403 && error.status !== 402) return false;
@@ -318,68 +318,28 @@ export function isPaymentMethodRequiredError(error: unknown): boolean {
 	);
 }
 
+/** Web's reading of a billing-client failure for the shared billing copy. */
+function billingRequestFailure(error: unknown): RequestFailure {
+	if (error instanceof BillingNetworkError) return { kind: error.kind };
+	if (error instanceof BillingApiError) {
+		const code = billingErrorDetail(error)?.code;
+		return {
+			kind: "response",
+			status: error.status,
+			code: typeof code === "string" ? code : null,
+			detail: error.detail,
+		};
+	}
+	return { kind: error instanceof Error ? "error" : "unknown" };
+}
+
 /**
  * Turn an API error into a single user-facing sentence. Hides backend
  * internals; normalizes balance exhaustion to the product narrative.
  */
 export function normalizeBillingError(error: unknown): string {
 	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
-	if (isInsufficientBalanceError(error)) {
-		return "Your wallet balance is too low. Top up or turn on auto-reload to keep Clawdi AI and Cloud Agents running.";
-	}
-	if (error instanceof BillingNetworkError) {
-		return error.kind === "timeout"
-			? "This is taking longer than usual. Check your connection and try again."
-			: "We couldn't reach the billing service. Check your connection and try again.";
-	}
-	if (isAuthError(error)) {
-		return "Your session expired. Sign in again to continue.";
-	}
-	if (isServerError(error)) {
-		return "The billing request couldn’t be completed right now. Try again in a moment.";
-	}
-	if (error instanceof BillingApiError) {
-		const code = billingErrorDetail(error)?.code;
-		if (code === FUNDING_AUTHORITY_INCONSISTENT_CODE) {
-			return "Billing for this subscription needs review. Contact support before making changes.";
-		}
-		if (code === "open_refund_debt") {
-			return "Top up your wallet to continue. New funds will first settle the outstanding balance.";
-		}
-		if (code === "deploy_request_funding_conflict") {
-			return "This agent is already linked to another payment.";
-		}
-		if (code === "idempotency_key_reused") {
-			return "This request conflicts with an earlier submission. Review the details and try again.";
-		}
-		if (code === "checkout_attempt_expired") {
-			return "This checkout has expired. Try again to open a new checkout.";
-		}
-		if (code === "checkout_payment_pending") {
-			return "Your subscription is updating. Check again shortly.";
-		}
-		if (code === "checkout_reconciliation_required") {
-			return "We couldn't confirm your previous checkout. Contact support before starting another payment.";
-		}
-		if (code === "checkout_target_reserved") {
-			return "A checkout is already open for this agent. Continue with the same subscription choice.";
-		}
-		if (typeof code === "string") {
-			return "The billing request couldn't be completed. Refresh and try again.";
-		}
-		// A bare snake_case token is an internal error code, not product copy.
-		if (/^[a-z0-9_]+$/.test(error.detail)) {
-			if (error.detail === "payment_method_required") {
-				return "Add a payment method and try again.";
-			}
-			return "The billing request couldn't be completed. Review the details and try again.";
-		}
-		return "The billing request couldn't be completed. Review the details and try again.";
-	}
-	if (error instanceof Error) {
-		return "The billing request couldn't be completed. Try again.";
-	}
-	return "Couldn't complete the request. Try again.";
+	return billingErrorCopy(billingRequestFailure(error));
 }
 
 /**

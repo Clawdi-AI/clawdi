@@ -1,7 +1,9 @@
-import { computeSubscriptionsRecoveryRefetchInterval } from "@clawdi/shared/view";
+import {
+	computeSubscriptionsRecoveryRefetchInterval,
+	nextBillingCursor,
+} from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { useIsFocused } from "expo-router/react-navigation";
-import { nextBillingCursor } from "@/hosted/billing/format";
 import { useMobileApi } from "@/lib/api-provider";
 import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";

@@ -1,3 +1,5 @@
+import { BILLING_ERROR_CODE_COPY } from "./billing-error-copy";
+
 export type DeploySubmissionContext =
 	| "card_checkout"
 	| "included_creation"
@@ -45,7 +47,7 @@ export function deploySubmissionRecoveryCopy({
 	code: unknown;
 	detail?: string | null;
 }): string | null {
-	if (code === "open_refund_debt") return "Top up your wallet before trying again.";
+	if (code === "open_refund_debt") return BILLING_ERROR_CODE_COPY.open_refund_debt;
 	if (code === "deploy_request_funding_conflict") {
 		return "This agent request is already linked to a different payment flow.";
 	}

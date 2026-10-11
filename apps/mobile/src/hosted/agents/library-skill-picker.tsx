@@ -186,7 +186,7 @@ function AgentLibrarySkills({
 							) : null}
 							{closeError ? <ApiErrorPanel error={closeError} /> : null}
 							{action.error ? (
-								<ApiErrorPanel error={action.error} title={t("workspaceSkills.updateError")} />
+								<ApiErrorPanel error={action.failure} title={t("workspaceSkills.updateError")} />
 							) : null}
 						</>
 					}
@@ -329,7 +329,7 @@ function AgentLibrarySkills({
 			{changes.journal}
 			{accepted ? <AppText>{t("agentExtensions.accepted")}</AppText> : null}
 			{action.error ? (
-				<ApiErrorPanel error={action.error} title={t("workspaceSkills.updateError")} />
+				<ApiErrorPanel error={action.failure} title={t("workspaceSkills.updateError")} />
 			) : null}
 			{inventory.data?.removal_failures?.length ? (
 				<AppText accessibilityRole="alert">{t("agentExtensions.removalFailed")}</AppText>

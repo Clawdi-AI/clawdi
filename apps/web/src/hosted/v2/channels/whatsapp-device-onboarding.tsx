@@ -1,5 +1,6 @@
 "use client";
 
+import { whatsappOnboardingCopy } from "@clawdi/shared/view";
 import {
 	Bot,
 	CheckCircle2,
@@ -520,7 +521,7 @@ export function WhatsAppSessionState({
 	return (
 		<div className="space-y-3">
 			{session.qr ? (
-				<PairingQrCode value={session.qr} label="WhatsApp linked-device QR code" />
+				<PairingQrCode value={session.qr} label={whatsappOnboardingCopy.qrLabel} />
 			) : (
 				<CenteredState icon={<Spinner className="size-6" />} title="Refreshing QR code…" />
 			)}

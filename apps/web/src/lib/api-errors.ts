@@ -1,4 +1,4 @@
-import { ACCOUNT_SUSPENDED_CODE } from "@clawdi/shared/view";
+import { apiErrorCopy, isAccountSuspendedFailure, type RequestFailure } from "@clawdi/shared/view";
 import { toast } from "sonner";
 
 /**
@@ -76,7 +76,7 @@ export function isApiAuthError(error: unknown): boolean {
 }
 
 export function isAccountSuspendedError(error: unknown): boolean {
-	return error instanceof ApiError && error.status === 401 && error.code === ACCOUNT_SUSPENDED_CODE;
+	return isAccountSuspendedFailure(apiRequestFailure(error));
 }
 
 /** True not-found from the API. Transport failures must not collapse to 404 UI. */
@@ -94,35 +94,27 @@ export function isApiNetworkError(error: unknown): boolean {
 	return error instanceof ApiNetworkError;
 }
 
+/** Web's reading of a cloud-api failure for the shared error copy. */
+function apiRequestFailure(error: unknown): RequestFailure {
+	if (error instanceof ApiNetworkError) return { kind: error.kind };
+	if (error instanceof ApiError) {
+		return {
+			kind: "response",
+			status: error.status,
+			code: error.code,
+			detail: formatApiError(error.detail),
+		};
+	}
+	return { kind: error instanceof Error ? "error" : "unknown" };
+}
+
 /**
  * Turn a cloud-api error into a single user-facing sentence. Hides backend
  * internals (raw 5xx/gateway bodies), reads a 401 as a re-auth prompt, and
  * hides internal error codes while passing user-facing sentences through.
  */
 export function normalizeApiError(error: unknown): string {
-	if (error instanceof ApiNetworkError) {
-		return error.kind === "timeout"
-			? "This is taking longer than usual. Check your connection and try again."
-			: "We couldn't reach the service. Check your connection and try again.";
-	}
-	if (error instanceof ApiError) {
-		if (isAccountSuspendedError(error)) {
-			return "Your account has been deactivated and can no longer access Clawdi.";
-		}
-		if (error.status === 401) {
-			return "Your session expired. Sign in again to continue.";
-		}
-		if (error.status >= 500 || error.status === 429) {
-			return "The service is having trouble right now. Try again in a moment.";
-		}
-		const message = formatApiError(error.detail);
-		// A bare snake_case token is an internal code, not product copy.
-		if (/^[a-z0-9_]+$/.test(message)) {
-			return "The request couldn't be completed. Review the details and try again.";
-		}
-		return message;
-	}
-	return "Couldn't complete the request. Try again.";
+	return apiErrorCopy(apiRequestFailure(error));
 }
 
 /**

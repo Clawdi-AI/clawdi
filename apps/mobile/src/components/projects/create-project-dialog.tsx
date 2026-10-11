@@ -79,7 +79,7 @@ export function AgentCreateProjectScreen() {
 						placeholder={copy.descriptionPlaceholder}
 					/>
 				</WebView>
-				{action.error ? <ApiErrorPanel title={copy.error} error={action.error} /> : null}
+				{action.error ? <ApiErrorPanel title={copy.error} error={action.failure} /> : null}
 				<WebView recipe={styles.form} className="flex-row justify-end gap-2">
 					<Button disabled={!name.trim() || action.busy || !agentId} onPress={() => void submit()}>
 						<Icon as={Plus} />

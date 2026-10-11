@@ -15,11 +15,13 @@ import {
 	agentOverviewCopy,
 	agentOverviewSummary,
 	agentSectionAvailableDuringSetup,
+	agentSurfaceCopy,
 	aiBindingCopy,
 	canRetryInitialDeployment,
 	computeStatusDetailsCopy,
 	type DeploymentStatus,
 	deploymentAwaitingRuntimeUi,
+	deploymentLifecycleConfirmCopy,
 	deploymentProvisioningPath,
 	formatShortDate,
 	hostedDeploymentSetupInProgress,
@@ -1885,7 +1887,7 @@ function FilesFrame({ deploymentId, url }: { deploymentId: string; url: string }
 			{bootstrap === "error" ? (
 				<EmptyState
 					icon={FolderOpen}
-					title="Files couldn't be opened"
+					title={agentSurfaceCopy.filesCouldnTBeOpened}
 					description="We couldn't authenticate your Files session. Refresh the page and try again."
 				/>
 			) : bootstrap === "pending" ? (
@@ -3350,7 +3352,7 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 	return (
 		<SettingsSection
 			title="Language & timezone"
-			description="Language and time zone used by this agent."
+			description={agentSurfaceCopy.languageAndTimeZoneUsedByThisAgent}
 		>
 			<div className="flex w-full flex-col gap-4">
 				<LiveNote>Changes apply to this agent.</LiveNote>
@@ -3754,7 +3756,10 @@ function ComputeSettingsSections({
 				/>
 			</SettingsSection>
 
-			<SettingsSection title="Agent controls" description="Restart, stop, or start this agent.">
+			<SettingsSection
+				title="Agent controls"
+				description={agentSurfaceCopy.restartStopOrStartThisAgent}
+			>
 				<ComputeStatusDetails
 					deployment={deployment}
 					failure={deploymentFailurePresentation(deployment)}
@@ -3763,9 +3768,9 @@ function ComputeSettingsSections({
 				/>
 				<div className="flex flex-wrap gap-2.5">
 					<ConfirmAction
-						title="Restart agent?"
-						description={<p>This restarts the whole agent.</p>}
-						confirmLabel="Restart agent"
+						title={deploymentLifecycleConfirmCopy.restart.title}
+						description={<p>{deploymentLifecycleConfirmCopy.restart.description}</p>}
+						confirmLabel={deploymentLifecycleConfirmCopy.restart.confirmLabel}
 						onConfirm={() => runAction(() => runLifecycleAction("restart"))}
 					>
 						<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
@@ -3779,14 +3784,9 @@ function ComputeSettingsSections({
 					</ConfirmAction>
 					{primaryLifecycleAction === "stop" ? (
 						<ConfirmAction
-							title="Stop agent?"
-							description={
-								<p>
-									This pauses its browser tools, terminal, sessions, and channels until you start it
-									again.
-								</p>
-							}
-							confirmLabel="Stop agent"
+							title={deploymentLifecycleConfirmCopy.stop.title}
+							description={<p>{deploymentLifecycleConfirmCopy.stop.description}</p>}
+							confirmLabel={deploymentLifecycleConfirmCopy.stop.confirmLabel}
 							onConfirm={() => runAction(() => runLifecycleAction("stop"))}
 						>
 							<Button
@@ -3821,7 +3821,7 @@ function ComputeSettingsSections({
 
 			<SettingsSection
 				title="Danger zone"
-				description="Permanently delete this agent."
+				description={agentSurfaceCopy.permanentlyDeleteThisAgent}
 				variant="destructive"
 			>
 				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">

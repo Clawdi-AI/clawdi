@@ -247,7 +247,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 				}
 			/>
 			{action.error ? (
-				<ApiErrorPanel error={action.error} title={agentSurfaceCopy.couldnTUpdatePlugin} />
+				<ApiErrorPanel error={action.failure} title={agentSurfaceCopy.couldnTUpdatePlugin} />
 			) : null}
 			{accepted ? <AppText>{t("agentExtensions.accepted")}</AppText> : null}
 			{inventory.isError || catalog.isError ? (

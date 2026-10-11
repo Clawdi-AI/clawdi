@@ -276,7 +276,7 @@ export function ProviderOAuthFlow({
 			ready={ready}
 			online={online}
 			busy={action.busy}
-			error={action.error}
+			error={action.failure}
 			accountReady={scope.isReady}
 			configured={Boolean(provider || providers)}
 			reconnecting={Boolean(provider)}

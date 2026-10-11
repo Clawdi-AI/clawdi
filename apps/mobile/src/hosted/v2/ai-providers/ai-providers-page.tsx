@@ -218,7 +218,7 @@ function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 					{t(valid.value ? "providers.valid" : "providers.invalid")}
 				</Text>
 			) : null}
-			{action.error ? <ApiErrorPanel error={action.error} title={t("providers.failed")} /> : null}
+			{action.error ? <ApiErrorPanel error={action.failure} title={t("providers.failed")} /> : null}
 		</WebView>
 	);
 }

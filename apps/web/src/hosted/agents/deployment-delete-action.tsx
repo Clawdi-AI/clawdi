@@ -2,6 +2,7 @@
 
 import {
 	agentDisplayName,
+	deploymentDeleteCopy,
 	deploymentDeleteSubscriptionPolicy,
 	formatShortDate,
 } from "@clawdi/shared/view";
@@ -22,7 +23,6 @@ import { buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
 import type { DeploymentDeleteRequest, HostedDeployment } from "@/hosted/billing/contracts";
-import { computeSubscriptionCancellationCopy } from "@/hosted/billing/subscription/subscription-utils";
 import { cn } from "@/lib/utils";
 
 type DeleteSubscriptionChoice = DeploymentDeleteRequest["subscription_choice"];
@@ -77,14 +77,15 @@ export function HostedDeploymentDeleteAction({
 		}
 	}
 
-	const keepDescription = `Keep subscription — it becomes available to choose for a future agent.${
-		periodEnd === "—" ? "" : ` Valid through ${periodEnd}.`
-	}`;
-	const cancelDescription = computeSubscriptionCancellationCopy({
+	const copy = deploymentDeleteCopy({
+		name,
+		choice,
+		offerChoice,
+		storeNotice,
+		cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end),
 		isTrial: subscription?.status === "trialing",
 		periodEndLabel: periodEnd === "—" ? null : periodEnd,
-		hasRetainedDeployment: false,
-	}).description;
+	});
 
 	return (
 		<AlertDialog
@@ -98,39 +99,29 @@ export function HostedDeploymentDeleteAction({
 			<AlertDialogTrigger render={children} />
 			<AlertDialogContent data-hosted="true">
 				<AlertDialogHeader>
-					<AlertDialogTitle>{`Delete ${name}?`}</AlertDialogTitle>
-					<AlertDialogDescription>
-						This permanently deletes the agent and its saved data. This can’t be undone.
-					</AlertDialogDescription>
+					<AlertDialogTitle>{copy.title}</AlertDialogTitle>
+					<AlertDialogDescription>{copy.warning}</AlertDialogDescription>
 				</AlertDialogHeader>
 
-				{offerChoice ? (
+				{copy.choices.length > 0 ? (
 					<fieldset className="grid gap-2" disabled={pending}>
 						<legend className="sr-only">Subscription handling</legend>
-						<DeleteChoice
-							checked={choice === "keep_subscription"}
-							onChange={() => setChoice("keep_subscription")}
-							title="Delete agent"
-							description={keepDescription}
-						/>
-						<DeleteChoice
-							checked={choice === "cancel_subscription"}
-							onChange={() => setChoice("cancel_subscription")}
-							title="Delete agent and cancel subscription"
-							description={cancelDescription}
-						/>
+						{copy.choices.map((option) => (
+							<DeleteChoice
+								key={option.value}
+								checked={choice === option.value}
+								onChange={() => setChoice(option.value)}
+								title={option.title}
+								description={option.description}
+							/>
+						))}
 					</fieldset>
-				) : storeNotice ? (
-					<p className="text-sm text-muted-foreground">{storeNotice}</p>
-				) : subscription?.cancel_at_period_end ? (
-					<p className="text-sm text-muted-foreground">
-						The subscription is already scheduled to stop at period end; deleting the agent does not
-						undo that cancellation.
-					</p>
+				) : copy.notice ? (
+					<p className="text-sm text-muted-foreground">{copy.notice}</p>
 				) : null}
 
 				<AlertDialogFooter>
-					<AlertDialogCancel disabled={pending}>Go back</AlertDialogCancel>
+					<AlertDialogCancel disabled={pending}>{copy.dismissLabel}</AlertDialogCancel>
 					<AlertDialogAction
 						onClick={(event) => {
 							event.preventDefault();
@@ -140,11 +131,7 @@ export function HostedDeploymentDeleteAction({
 						className={buttonVariants({ variant: "destructive" })}
 					>
 						{pending ? <Spinner /> : null}
-						{offerChoice && choice === "keep_subscription"
-							? "Delete agent (keep subscription)"
-							: offerChoice
-								? "Delete agent and cancel subscription"
-								: "Delete agent"}
+						{copy.confirmLabel}
 					</AlertDialogAction>
 				</AlertDialogFooter>
 			</AlertDialogContent>

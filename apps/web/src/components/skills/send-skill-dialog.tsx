@@ -5,6 +5,7 @@ import {
 	skillFormCopy as copy,
 	displayProjectName,
 	identityFor,
+	LIBRARY_COPY,
 	sendSkillTitle,
 } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -228,7 +229,7 @@ export function SendSkillDialog({
 							onRetry={() => {
 								if (projectsQuery.error) void projectsQuery.refetch();
 							}}
-							title="Couldn't load destinations"
+							title={LIBRARY_COPY.loadDestinationsFailed}
 						/>
 					) : null}
 					<DialogFooter>

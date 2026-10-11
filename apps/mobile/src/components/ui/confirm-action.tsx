@@ -1,4 +1,5 @@
 import { confirmActionClasses } from "@clawdi/shared/ui";
+import { API_ERROR_COPY } from "@clawdi/shared/view";
 import { BottomSheet } from "@expo/ui/community/bottom-sheet";
 import { useIsFocused } from "expo-router/react-navigation";
 import {
@@ -60,7 +61,7 @@ function NativeConfirmAction({
 		createNativeConfirmation((request, confirm, cancel, failed) => {
 			Alert.alert(
 				request.title,
-				`${request.description}${failed ? `\n\n${t("composite.genericError")}` : ""}`,
+				`${request.description}${failed ? `\n\n${API_ERROR_COPY.genericError}` : ""}`,
 				[
 					{ text: request.cancelLabel, style: "cancel", onPress: cancel },
 					{

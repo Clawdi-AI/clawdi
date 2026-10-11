@@ -7,6 +7,7 @@ import {
 } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
+	agentSurfaceCopy,
 	compareAgentEnvironments,
 	displayProjectName,
 	identityFor,
@@ -587,8 +588,7 @@ export default function ProjectDetailPage({
 		isWorkspace && focus === "skills"
 			? {
 					title: "Skills",
-					description:
-						"Skills available in this agent's workspace. Skills synced from the agent are read-only.",
+					description: agentSurfaceCopy.skillsAvailableInThisAgentSWorkspace,
 					icon:
 						focusedResourceIdentity && FocusedResourceIcon ? (
 							<IconChip tint={focusedResourceIdentity.tint}>

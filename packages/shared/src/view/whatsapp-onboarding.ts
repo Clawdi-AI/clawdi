@@ -23,6 +23,7 @@ export const whatsappOnboardingCopy = {
 	phoneWarning:
 		"A phone cannot scan a QR shown on the same phone. Open Clawdi on a computer, or use the pairing-code fallback below.",
 	fallback: "Can't scan? Use a pairing code",
+	qrLabel: "WhatsApp linked-device QR code",
 	requestCode: "Get pairing code",
 } as const;
 
