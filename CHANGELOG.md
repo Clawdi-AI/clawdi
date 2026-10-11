@@ -49,6 +49,11 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.8
+
+- **Native CLI releases:** macOS native CLI releases are signed with Clawdi's Apple Developer ID and notarized.
+- **Desktop native CLI:** Desktop can bootstrap and safely activate the shared native CLI while preserving user-owned launchers and existing installations.
+
 ### CLI 0.16.7
 
 - **Hermes skill sync:** Skills Guard refusals are reported as `guard_blocked`,
