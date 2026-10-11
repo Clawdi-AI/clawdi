@@ -114,7 +114,7 @@ export default function SettingsMenuPage() {
 								"/settings/usage",
 								BarChart3,
 								t("usageParity.nav"),
-								t(surfaces.creditUnits ? "store.usageSummary" : "usageParity.navSummary"),
+								t("usageParity.navSummary"),
 							),
 						],
 					},

@@ -9,6 +9,7 @@ interface WorkflowDocument {
 }
 
 interface WorkflowStep {
+	if?: string;
 	id?: string;
 	name?: string;
 	uses?: string;
@@ -78,31 +79,29 @@ describe("Docker build workflow contract", () => {
 		expect(selection?.run).toContain("DOCKER_BUILD_LOAD=1");
 	});
 
-	test("initializes the shared builder before every Docker build action without replacing it", () => {
+	test("initializes exactly one builder before every Docker build action", () => {
 		for (const { name, workflow } of workflows) {
 			for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
 				const steps = job.steps ?? [];
 				const context = `${name}:${jobName}`;
-				expect(
-					steps.some((step) => step.uses?.startsWith("docker/setup-buildx-action@")),
-					context,
-				).toBe(false);
 				for (const [index, step] of steps.entries()) {
 					if (!isDockerBuildAction(step)) continue;
-					const mirror = steps.findIndex(
-						(candidate) => candidate.uses === "./.github/actions/setup-docker-hub-mirror",
+					const builders = steps.filter(
+						(candidate) =>
+							candidate.uses === "./.github/actions/setup-docker-hub-mirror" ||
+							candidate.uses?.startsWith("docker/setup-buildx-action@"),
 					);
-					expect(mirror, context).toBeGreaterThanOrEqual(0);
-					expect(mirror, context).toBeLessThan(index);
+					expect(builders, context).toHaveLength(1);
+					const builder = builders[0];
+					if (!builder) throw new Error(`${context} has no builder`);
+					expect(steps.indexOf(builder), context).toBeLessThan(index);
 				}
 			}
 		}
 	});
 
 	test.each([
-		["backend-ci.yml", "sidecar", "Kamal 2.12 render contract"],
 		["clean-test-runner-ci.yml", "docker-runner", "Clean runner CI profile"],
-		["client-ci.yml", "whatsapp-native-e2e", "Test stock OpenClaw and Hermes WhatsApp plugins"],
 		["cli-systemd-e2e.yml", "privileged-systemd-e2e", "Test systemd command failure boundaries"],
 		[
 			"hermes-upstream-contract.yml",
@@ -119,6 +118,40 @@ describe("Docker build workflow contract", () => {
 			);
 			expect(mirror).toBeGreaterThanOrEqual(0);
 			expect(mirror).toBeLessThan(steps.findIndex((step) => step.name === containerStep));
+		},
+	);
+
+	test.each([
+		["backend-ci.yml", "sidecar", "Kamal 2.12 render contract"],
+		["client-ci.yml", "whatsapp-native-e2e", "Test stock OpenClaw and Hermes WhatsApp plugins"],
+	])(
+		"uses direct authenticated Hub pulls before building in %s:%s",
+		(name, jobName, containerStep) => {
+			const workflow = workflows.find((entry) => entry.name === name)?.workflow;
+			const steps = workflow?.jobs?.[jobName]?.steps ?? [];
+			const login = steps.findIndex((step) => step.uses === "docker/login-action@v4");
+			const builder = steps.findIndex((step) =>
+				step.uses?.startsWith("docker/setup-buildx-action@"),
+			);
+			expect(login).toBeGreaterThanOrEqual(0);
+			expect(login).toBeLessThan(builder);
+			expect(builder).toBeLessThan(steps.findIndex((step) => step.name === containerStep));
+			expect(steps[login]).toMatchObject({
+				if: "env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''",
+				with: {
+					username: `\${{ env.DOCKERHUB_USERNAME }}`,
+					password: `\${{ env.DOCKERHUB_TOKEN }}`,
+				},
+			});
+			expect(steps[builder]?.with?.["buildkitd-config-inline"]).toBeUndefined();
+			expect(steps.some((step) => step.uses === "./.github/actions/setup-docker-hub-mirror")).toBe(
+				false,
+			);
+			if (jobName === "sidecar") {
+				const selection = steps.findIndex((step) => step.run?.includes("BUILDX_BUILDER="));
+				expect(steps[selection]?.env?.BUILDER).toBe(`\${{ steps.buildx.outputs.name }}`);
+				expect(selection).toBeLessThan(steps.findIndex((step) => step.name === containerStep));
+			}
 		},
 	);
 

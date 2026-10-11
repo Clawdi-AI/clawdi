@@ -18,6 +18,9 @@ inputs:
   bun-version:
     description: Optional Bun version override (defaults to the root packageManager)
     required: false
+  windows-filters:
+    description: Optional space-separated workspace filters for Windows installs (Bun --filter)
+    required: false
 
 runs:
   using: composite
@@ -41,4 +44,12 @@ runs:
     - name: Install dependencies on Windows
       if: runner.os == 'Windows'
       shell: pwsh
-      run: bun install --frozen-lockfile
+      env:
+        BUN_INSTALL_FILTERS: ${{ inputs.windows-filters }}
+      # https://bun.com/docs/pm/filter#bun-install-and-bun-outdated
+      run: |
+        $installArgs = @('install', '--frozen-lockfile')
+        foreach ($filter in ($env:BUN_INSTALL_FILTERS -split '\s+')) {
+          if ($filter) { $installArgs += @('--filter', $filter) }
+        }
+        bun @installArgs

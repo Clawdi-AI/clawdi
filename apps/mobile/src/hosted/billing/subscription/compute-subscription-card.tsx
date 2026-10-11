@@ -20,9 +20,7 @@ import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import type { Subscription } from "@/hosted/billing/format";
 import { StoreSubscriptionNotice } from "@/hosted/billing/store/compute-store";
-import { creditPrice } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 /** The Agent tile a subscription funds; like Web, its current name wins over the billing row's. */
 export function useSubscriptionAgent(item: Subscription) {
@@ -46,7 +44,6 @@ export function ComputeSubscriptionCard({
 	storeNotice?: boolean;
 }) {
 	const t = useI18n();
-	const { creditUnits } = useStoreSurfaces();
 	const agent = useSubscriptionAgent(item);
 	const identity = agentIdentity({
 		name: agent?.name ?? item.agent_name,
@@ -77,13 +74,6 @@ export function ComputeSubscriptionCard({
 				billingTermMonths: item.billing_term_months,
 				scheduleVerb: lifecycle.dateVerb,
 				scheduleAt: lifecycle.dateAt,
-				...(creditUnits
-					? {
-							formatPrice: (cents: number, currency: string) =>
-								creditPrice({ price_cents: cents, currency }, t("store.credits")) ??
-								t("billing.unknown"),
-						}
-					: {}),
 			});
 	return (
 		<EntityCardChassis variant="compact" className={webView(styles.notices)}>

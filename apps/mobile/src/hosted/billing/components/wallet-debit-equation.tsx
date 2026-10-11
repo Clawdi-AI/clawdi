@@ -1,6 +1,7 @@
 import { walletDebitEquationClasses as styles } from "@clawdi/shared/ui";
 import {
 	walletDebitEquationCopy as copy,
+	formatUsdExact,
 	type WalletDebitSummary,
 	walletDebitEquationLabel,
 } from "@clawdi/shared/view";
@@ -17,29 +18,19 @@ function EquationValue({ label, amount }: { label: string; amount: string }) {
 	);
 }
 
-/** Web's balance − debit = after equation; `format` renders USD or store credits. */
-export function WalletDebitEquation({
-	debit,
-	format,
-}: {
-	debit: WalletDebitSummary;
-	format: (usd: string) => string;
-}) {
+/** Web's balance − debit = after equation. */
+export function WalletDebitEquation({ debit }: { debit: WalletDebitSummary }) {
 	return (
-		<WebView
-			recipe={styles.root}
-			accessible
-			accessibilityLabel={walletDebitEquationLabel(debit, format)}
-		>
-			<EquationValue label={copy.balanceBefore} amount={format(debit.balanceBeforeUsd)} />
+		<WebView recipe={styles.root} accessible accessibilityLabel={walletDebitEquationLabel(debit)}>
+			<EquationValue label={copy.balanceBefore} amount={formatUsdExact(debit.balanceBeforeUsd)} />
 			<WebText recipe={styles.operator} importantForAccessibility="no">
 				−
 			</WebText>
-			<EquationValue label={copy.exactDebit} amount={format(debit.debitAmountUsd)} />
+			<EquationValue label={copy.exactDebit} amount={formatUsdExact(debit.debitAmountUsd)} />
 			<WebText recipe={styles.operator} importantForAccessibility="no">
 				=
 			</WebText>
-			<EquationValue label={copy.balanceAfter} amount={format(debit.balanceAfterUsd)} />
+			<EquationValue label={copy.balanceAfter} amount={formatUsdExact(debit.balanceAfterUsd)} />
 		</WebView>
 	);
 }

@@ -1,37 +1,7 @@
 import type { StoreComputeReconcileResponse } from "@clawdi/shared/api";
-import { formatCents, formatUsdExact } from "@clawdi/shared/view";
 import type { TranslationKey } from "@/lib/i18n/en";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import type { PurchaseErrorCode } from "@/platform/store/store-error";
-
-/** One credit is one Wallet USD. Converts our own `$1,234.56` display into credit units. */
-function creditDisplay(usdDisplay: string, unit: string): string {
-	return usdDisplay === "—" ? usdDisplay : `${usdDisplay.replace("$", "")} ${unit}`;
-}
-
-/** Exact decimal Wallet USD as credits, e.g. `42.50 credits`. */
-export function formatCredits(usd: string, unit: string): string {
-	return creditDisplay(formatUsdExact(usd), unit);
-}
-
-export function formatCreditCents(cents: number, unit: string): string {
-	return creditDisplay(formatCents(cents), unit);
-}
-
-/** Wallet credits are USD-denominated; other currencies have no credit equivalent. */
-export function creditPrice(
-	item: { price_cents?: number | null; currency: string },
-	unit: string,
-): string | null {
-	const cents = item.price_cents;
-	if (cents == null || !Number.isSafeInteger(cents) || cents < 0) return null;
-	return item.currency.toLowerCase() === "usd" ? formatCreditCents(cents, unit) : null;
-}
-
-/** Signed transaction amount from the shared presentation, as credits. */
-export function signedCredits(signedUsdDisplay: string, unit: string): string {
-	return creditDisplay(signedUsdDisplay, unit);
-}
 
 export type StoreNotice = Readonly<{
 	key: TranslationKey;

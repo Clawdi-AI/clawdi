@@ -13,7 +13,7 @@ for (const args of [
 		"electron-builder",
 		`--config.afterPack=${resolve(root, "scripts/after-pack.mjs")}`,
 		...(platform === "darwin"
-			? ["--mac", "dmg", "zip"]
+			? ["--mac", "zip"]
 			: platform === "win32"
 				? ["--win", "nsis"]
 				: ["--linux", "AppImage", "deb", "rpm"]),
@@ -29,4 +29,14 @@ for (const args of [
 		stderr: "inherit",
 	});
 	if ((await child.exited) !== 0) throw new Error(`Desktop packaging failed: ${args.join(" ")}`);
+}
+
+// Reuse the packaged app so only hdiutil's DMG work can be retried.
+if (platform === "darwin") {
+	const child = Bun.spawn(["bash", resolve(root, "../../scripts/build-desktop-dmg.sh"), arch], {
+		cwd: root,
+		stdout: "inherit",
+		stderr: "inherit",
+	});
+	if ((await child.exited) !== 0) throw new Error("Desktop DMG packaging failed");
 }

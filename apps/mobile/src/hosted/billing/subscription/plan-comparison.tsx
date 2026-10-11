@@ -14,7 +14,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Icon } from "@/components/ui/icon";
 import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { formatCreditCents } from "@/hosted/billing/store/store-presentation";
 import { useI18n } from "@/lib/i18n";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
@@ -23,7 +22,7 @@ type Plan = DeployComponents["schemas"]["V2PlanResponse"];
 export function PlanComparison({ plans }: { plans: Plan[] }) {
 	const t = useI18n();
 	const [term, setTerm] = useState(1);
-	const { creditUnits } = useStoreSurfaces();
+	const { cardBilling } = useStoreSurfaces();
 	const {
 		basic,
 		performance,
@@ -34,11 +33,7 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 		basicPrice,
 		performancePrice,
 		sharedPricingUnavailable,
-	} = computePlanComparisonView(
-		plans,
-		term,
-		creditUnits ? (cents) => formatCreditCents(cents, t("store.credits")) : undefined,
-	);
+	} = computePlanComparisonView(plans, term);
 
 	return (
 		<SettingsSection
@@ -78,7 +73,7 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 					const price = kind === "basic" ? basicPrice : performancePrice;
 					// Card trials have no store purchase equivalent.
 					const trial =
-						price && offer && !creditUnits
+						price && offer && cardBilling
 							? cardTrialPricePresentation(price.primary, offer.card_trial_period_days)
 							: null;
 					return (

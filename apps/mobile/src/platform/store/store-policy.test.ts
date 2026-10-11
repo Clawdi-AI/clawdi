@@ -39,12 +39,11 @@ describe("store build surfaces", () => {
 		).toBe(true);
 	});
 
-	test("store builds hide card-only surfaces and always show credits, even when unavailable", () => {
+	test("store builds hide card-only surfaces and always show Add credits, even when unavailable", () => {
 		for (const available of [true, false])
 			expect(storeSurfaces(true, available)).toEqual({
 				cardBilling: false,
 				addCredits: true,
-				creditUnits: true,
 			});
 	});
 
@@ -52,13 +51,11 @@ describe("store build surfaces", () => {
 		expect(storeSurfaces(false, false)).toEqual({
 			cardBilling: true,
 			addCredits: false,
-			creditUnits: false,
 		});
 		// Only a debug build with a usable store flow (Test Store) gets the Paywall entry.
 		expect(storeSurfaces(false, true)).toEqual({
 			cardBilling: true,
 			addCredits: true,
-			creditUnits: false,
 		});
 	});
 

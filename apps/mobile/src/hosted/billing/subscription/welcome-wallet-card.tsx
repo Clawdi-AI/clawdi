@@ -22,12 +22,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Text } from "@/components/ui/text";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { useWallet } from "@/hosted/billing/hooks";
-import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { useMobileApi } from "@/lib/api-provider";
-import { useI18n } from "@/lib/i18n";
 import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 /**
  * Web's welcome + signup-grant feedback under the first-agent onboarding card. It reads
@@ -35,11 +32,9 @@ import { useStoreSurfaces } from "@/platform/store/store-provider";
  * minute while the app is in the foreground before offering a manual refresh.
  */
 export function WelcomeWalletCard() {
-	const t = useI18n();
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
 	const read = useAccountRead();
-	const surfaces = useStoreSurfaces();
 	const [checkStartedAt, setCheckStartedAt] = useState(() => Date.now());
 	const [timedOut, setTimedOut] = useState(false);
 	// Same keys as the Wallet page, so both screens share one cache entry.
@@ -106,11 +101,7 @@ export function WelcomeWalletCard() {
 			</Card>
 		);
 	if (!wallet.data) return null;
-	const grantAmount = grant
-		? surfaces.creditUnits
-			? formatCredits(grant.amount, t("store.credits"))
-			: formatUsdExact(grant.amount)
-		: null;
+	const grantAmount = grant ? formatUsdExact(grant.amount) : null;
 	const state = { grantApplied, grantPending, grantCheckTimedOut: timedOut, grantAmount };
 	return (
 		<Card key="loaded" className={webView(styles.card)}>

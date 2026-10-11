@@ -52,13 +52,11 @@ import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
-import { formatCredits } from "@/hosted/billing/store/store-presentation";
 import { ProviderIcon } from "@/hosted/v2/ai-providers/provider-icon";
 import { useProviderInventory } from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 type UsageRangeSelection = { days: UsageRangeDays; onChange: (days: UsageRangeDays) => void };
 type SavedProviders = NonNullable<ReturnType<typeof useProviderInventory>["data"]>["providers"];
@@ -96,14 +94,6 @@ function useManagedModelCatalog() {
 		retry: false,
 		staleTime: 5 * 60_000,
 	});
-}
-
-/** Wallet USD, shown as credits in store builds like the rest of the Wallet. */
-function useUsageAmount() {
-	const t = useI18n();
-	const surfaces = useStoreSurfaces();
-	return (usd: string) =>
-		surfaces.creditUnits ? formatCredits(usd, t("store.credits")) : formatUsdExact(usd);
 }
 
 /** Web settings "AI Usage" panel (hosted/billing/usage/usage-page.tsx), read-only. */
@@ -276,7 +266,6 @@ function UsageSummaryView({
 	isRetrying: boolean;
 	onRetry: () => void;
 }) {
-	const amount = useUsageAmount();
 	const missingSections = unavailableUsageSections(usage);
 	const totals =
 		!missingSections.has("totals") && usage.total_usd !== null && usage.total_requests !== null
@@ -324,7 +313,7 @@ function UsageSummaryView({
 				<WebView recipe={styles.summary} accessibilityLabel={copy.summary}>
 					<WebView recipe={styles.summaryCell}>
 						<WebText recipe={styles.summaryLabel}>{copy.spend}</WebText>
-						<WebText recipe={styles.summaryValue}>{amount(totals.usd)}</WebText>
+						<WebText recipe={styles.summaryValue}>{formatUsdExact(totals.usd)}</WebText>
 					</WebView>
 					<WebView recipe={styles.summaryCellNext}>
 						<WebText recipe={styles.summaryLabel}>{copy.requests}</WebText>
@@ -414,7 +403,7 @@ function UsageSummaryView({
 										{model.requests.toLocaleString()}
 									</WebText>
 									<WebText recipe={cn(styles.spendCell, styles.numericColumn)}>
-										{amount(model.amount_usd)}
+										{formatUsdExact(model.amount_usd)}
 									</WebText>
 								</AppView>
 							);
@@ -427,7 +416,6 @@ function UsageSummaryView({
 }
 
 function DailyUsageChart({ days }: { days: readonly UsageDayBreakdown[] }) {
-	const amount = useUsageAmount();
 	const { peak, total } = dailyUsageTotals(days);
 	const firstDay = days[0];
 	const lastDay = days.at(-1);
@@ -435,11 +423,11 @@ function DailyUsageChart({ days }: { days: readonly UsageDayBreakdown[] }) {
 		<AppView
 			accessible
 			accessibilityRole="image"
-			accessibilityLabel={dailySpendLabel(days, amount(total))}
+			accessibilityLabel={dailySpendLabel(days, formatUsdExact(total))}
 		>
 			<WebView recipe={styles.chartPeakRow}>
 				<WebText recipe={styles.chartPeak}>
-					{copy.peak} {amount(peak)}
+					{copy.peak} {formatUsdExact(peak)}
 				</WebText>
 			</WebView>
 			<WebView recipe={styles.chartBars}>
