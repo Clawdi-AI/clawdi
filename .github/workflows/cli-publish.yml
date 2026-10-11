@@ -233,7 +233,7 @@ jobs:
             exit 0
           fi
 
-          ./apps/desktop/scripts/with-signing-keychain.sh bash -s <<'SIGN'
+          bash ./apps/desktop/scripts/with-signing-keychain.sh bash -s <<'SIGN'
           set -euo pipefail
           umask 077
           entitlements="$PWD/packages/cli/scripts/macos-cli-entitlements.plist"
