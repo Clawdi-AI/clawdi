@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DesktopCliCompatibilityError } from "./cli-compat";
 import { CommandCancelledError, runCommand } from "./command-runner";
 
 const testRoots: string[] = [];
@@ -11,6 +12,20 @@ afterEach(() => {
 });
 
 describe("desktop command cancellation", () => {
+	test("preserves the safe Desktop update message when progress uses an unknown major", async () => {
+		await expect(
+			runCommand(
+				process.execPath,
+				["-e", 'process.stderr.write("progress\\n"); setInterval(() => {}, 1000)'],
+				{
+					timeoutMs: 5_000,
+					onStderrLine: () => {
+						throw new DesktopCliCompatibilityError();
+					},
+				},
+			),
+		).rejects.toThrow("Update Clawdi Desktop");
+	});
 	test("streams complete UTF-8 progress lines before the child exits", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-desktop-progress-"));
 		testRoots.push(root);

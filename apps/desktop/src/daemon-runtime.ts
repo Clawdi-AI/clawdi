@@ -6,12 +6,15 @@ export function desktopDaemonReconciliationAction(input: {
 	authenticated: boolean;
 	alreadyReconciled: boolean;
 	isAppImage: boolean;
+	isNativeCli?: boolean;
 	liveRuntimeMismatch: boolean;
 }): "install" | null {
 	if (!input.installed || !input.authenticated || input.alreadyReconciled) return null;
-	// A stopped AppImage unit still points at the previous immutable runtime.
+	// A stopped AppImage or newly selected native unit may still point at the
+	// previous bundled runtime and carry Desktop's update suppression.
 	// Rebind it once without trying to infer its ExecStart from stale health.
-	return (input.isAppImage && !input.supervisorRunning) || input.liveRuntimeMismatch
+	return ((input.isAppImage || input.isNativeCli) && !input.supervisorRunning) ||
+		input.liveRuntimeMismatch
 		? "install"
 		: null;
 }

@@ -406,7 +406,11 @@ export function ConnectApp({ bridge }: { bridge: ClawdiDesktopConnectBridge }) {
 
 			{stage === "error" ? (
 				<Page
-					title="Couldn't Finish Setup"
+					title={
+						failure?.includes("Update Clawdi Desktop")
+							? "Update Clawdi Desktop"
+							: "Couldn't Finish Setup"
+					}
 					footer={
 						<Button variant="outline" onClick={() => void load()}>
 							<RefreshCw data-icon="inline-start" /> Try again

@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import type {
 	DesktopAgentConnection,
@@ -13,8 +14,24 @@ import type {
 } from "@clawdi/shared/desktop";
 import { isDesktopAgentType } from "@clawdi/shared/desktop";
 import type { App } from "electron";
+import {
+	detectNativeInstall,
+	type NativeCompiledIdentity,
+} from "../../../packages/cli/src/lib/native-distribution";
+import { isNativeBuildTarget } from "../../../packages/cli/src/lib/native-release-manifest";
 import { activateAppImageRuntime, pruneAppImageRuntimes } from "./appimage-runtime";
-import { managedAppImageCliCommandTarget } from "./cli-command";
+import { managedAppImageCliCommandTarget, removeDesktopCliSymlink } from "./cli-command";
+import {
+	assertCompatibleCliSchema,
+	DESKTOP_MIN_CLI_VERSION,
+	DesktopCliCompatibilityError,
+	DesktopCliError,
+	meetsDesktopCliMinimum,
+	nativeLauncherPath,
+} from "./cli-compat";
+
+export { DesktopCliError } from "./cli-compat";
+
 import {
 	CommandCancelledError,
 	type CommandOptions,
@@ -45,10 +62,7 @@ const LOGGED_CLI_COMMANDS = new Set([
 	"config set",
 ]);
 
-interface NativeIdentity {
-	version: string;
-	target: string;
-}
+type NativeIdentity = NativeCompiledIdentity;
 
 type AuthenticationResult =
 	| { status: "authenticated"; user: { id: string; email?: string } }
@@ -64,10 +78,15 @@ export class DesktopCliService {
 		private readonly application: Pick<App, "isPackaged" | "getAppPath" | "getPath" | "getVersion">,
 		private readonly execute: typeof runCommand = runCommand,
 		private readonly resourcesPath = process.resourcesPath,
+		// Use the same home authority as the CLI bootstrap/installers. On
+		// Windows Electron's known-folder API may ignore USERPROFILE overrides.
+		private readonly home = homedir(),
 	) {}
 
 	private authentication: AuthenticationOperation | null = null;
 	private cliPath: string | null = null;
+	private cliSource: "native" | "bundled" | null = null;
+	private cliResolution: Promise<string> | null = null;
 	private runtimeRoot: string | null = null;
 	private runtimeReconciled = false;
 	private runtimeVersion: string | null = null;
@@ -75,10 +94,9 @@ export class DesktopCliService {
 	private nativeIdentity: Promise<NativeIdentity> | null = null;
 
 	async bootstrapState(): Promise<DesktopBootstrapState> {
-		const cli = this.cli();
-		const identity = await this.identity(cli);
+		const cli = await this.resolveCli();
+		const { identity, doctor } = await this.runtimeState(cli);
 		const auth = await this.authState(cli);
-		const doctor = await this.doctorState(cli, identity.version);
 		return {
 			platform: requireDesktopPlatform(),
 			cli: { status: "ready", version: identity.version },
@@ -89,8 +107,8 @@ export class DesktopCliService {
 
 	/** Called only after startup orchestration verifies this account's registrations. */
 	async reconcileDaemonRuntime(verifiedAccountId: string): Promise<boolean> {
-		const cli = this.cli();
-		const identity = await this.identity(cli);
+		const cli = await this.resolveCli();
+		const { identity, doctor } = await this.runtimeState(cli);
 		if (this.runtimeVersion !== null && this.runtimeVersion !== identity.version) {
 			this.runtimeReconciled = false;
 		}
@@ -99,7 +117,6 @@ export class DesktopCliService {
 		if (!auth.authenticated || auth.user?.id !== verifiedAccountId) {
 			throw new Error("Sign-in changed during runtime recovery.");
 		}
-		const doctor = await this.doctorState(cli, identity.version);
 		if (
 			desktopDaemonReconciliationAction({
 				installed: doctor.installed,
@@ -107,6 +124,7 @@ export class DesktopCliService {
 				authenticated: auth.authenticated,
 				alreadyReconciled: this.runtimeReconciled,
 				isAppImage: this.isAppImage(),
+				isNativeCli: this.cliSource === "native",
 				liveRuntimeMismatch: doctor.needsRuntimeRefresh,
 			}) === "install"
 		) {
@@ -154,7 +172,7 @@ export class DesktopCliService {
 		session: DesktopWebSession | null = null,
 	): Promise<DesktopDashboardSession> {
 		try {
-			const result = await this.runJson(this.cli(), [
+			const result = await this.runJson(await this.resolveCli(), [
 				"auth",
 				"desktop-session",
 				"--json",
@@ -184,7 +202,8 @@ export class DesktopCliService {
 			)
 				throw new Error("Invalid Desktop session.");
 			return { status: "ticket", ticket: result.ticket, accountId: result.accountId };
-		} catch {
+		} catch (error) {
+			if (error instanceof DesktopCliCompatibilityError) throw error;
 			// Never propagate native stdout/stderr from credential-bearing commands.
 			throw new Error("Couldn't create a Desktop session. Sign in again from Clawdi.");
 		}
@@ -192,7 +211,7 @@ export class DesktopCliService {
 
 	async revokeDashboardSession(sessionId: string): Promise<void> {
 		try {
-			const result = await this.runJson(this.cli(), [
+			const result = await this.runJson(await this.resolveCli(), [
 				"auth",
 				"desktop-sign-out",
 				"--session-id",
@@ -201,13 +220,14 @@ export class DesktopCliService {
 			]);
 			if (result.schemaVersion !== "clawdi.desktopSignOut.v1" || result.status !== "revoked")
 				throw new Error("Invalid Desktop sign-out response.");
-		} catch {
+		} catch (error) {
+			if (error instanceof DesktopCliCompatibilityError) throw error;
 			throw new Error("Couldn't revoke the Desktop session. Try signing out again.");
 		}
 	}
 
 	async logout(): Promise<void> {
-		const cli = this.cli();
+		const cli = await this.resolveCli();
 		try {
 			await this.run(cli, ["daemon", "uninstall"], { timeoutMs: 60_000 });
 		} finally {
@@ -216,7 +236,7 @@ export class DesktopCliService {
 	}
 
 	async detectAgents(): Promise<DesktopDetectedAgent[]> {
-		const cli = this.cli();
+		const cli = await this.resolveCli();
 		const result = await this.runJson(cli, ["agent", "detect", "--json"]);
 		if (result.schemaVersion !== "clawdi.agentDetection.v1" || !Array.isArray(result.agents))
 			throw new Error("Clawdi returned invalid agent detection data.");
@@ -224,7 +244,7 @@ export class DesktopCliService {
 	}
 
 	async listReconnectableAgents(): Promise<DesktopReconnectCandidate[]> {
-		const result = await this.runJson(this.cli(), ["agent", "reconnect", "--json"]);
+		const result = await this.runJson(await this.resolveCli(), ["agent", "reconnect", "--json"]);
 		if (
 			result.schemaVersion !== "clawdi.agentReconnectCandidates.v1" ||
 			!Array.isArray(result.agents)
@@ -286,7 +306,7 @@ export class DesktopCliService {
 	}
 
 	async restartDaemon(): Promise<void> {
-		await this.run(this.cli(), ["daemon", "restart"], { timeoutMs: 60_000 });
+		await this.run(await this.resolveCli(), ["daemon", "restart"], { timeoutMs: 60_000 });
 	}
 
 	async installDaemon(): Promise<void> {
@@ -296,13 +316,17 @@ export class DesktopCliService {
 			try {
 				const userData = this.application.getPath("userData");
 				const launcherTarget = managedAppImageCliCommandTarget({
-					home: this.application.getPath("home"),
+					home: this.home,
 					userData,
 				});
 				const protectedVersions = launcherTarget
 					? new Set([basename(dirname(launcherTarget))])
 					: undefined;
-				await pruneAppImageRuntimes(userData, this.application.getVersion(), protectedVersions);
+				await pruneAppImageRuntimes(
+					userData,
+					this.cliSource === "native" ? null : this.application.getVersion(),
+					protectedVersions,
+				);
 			} catch (error) {
 				console.warn("Could not remove an old Desktop runtime", error);
 			}
@@ -310,16 +334,16 @@ export class DesktopCliService {
 	}
 
 	async stopDaemon(): Promise<void> {
-		await this.run(this.cli(), ["daemon", "stop"], { timeoutMs: 60_000 });
+		await this.run(await this.resolveCli(), ["daemon", "stop"], { timeoutMs: 60_000 });
 	}
 
 	async uninstallDaemon(): Promise<void> {
-		await this.run(this.cli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
+		await this.run(await this.resolveCli(), ["daemon", "uninstall"], { timeoutMs: 60_000 });
 	}
 
 	/** Project folders excluded from sync (`clawdi config get excludeProjects`). */
 	async listExcludedProjects(): Promise<string[]> {
-		const result = await this.runJson(this.cli(), ["config", "list", "--json"]);
+		const result = await this.runJson(await this.resolveCli(), ["config", "list", "--json"]);
 		const values = isRecord(result.values) ? result.values : null;
 		const entry = values && isRecord(values.excludeProjects) ? values.excludeProjects : null;
 		if (
@@ -348,20 +372,26 @@ export class DesktopCliService {
 			paths.length > 0
 				? ["config", "set", "excludeProjects", paths.join(",")]
 				: ["config", "unset", "excludeProjects"];
-		await this.run(this.cli(), args, { timeoutMs: 20_000 });
+		await this.run(await this.resolveCli(), args, { timeoutMs: 20_000 });
 		return this.listExcludedProjects();
 	}
 
 	async shellCommandTarget(): Promise<string> {
-		return realpathSync(this.isAppImage() ? await this.prepareDaemonCli() : this.cli());
+		const cli = await this.prepareDaemonCli();
+		return this.cliSource === "native" ? cli : realpathSync(cli);
 	}
 
 	async pruneUnusedAppImageRuntimes(): Promise<void> {
 		if (!this.isAppImage()) return;
 		await pruneAppImageRuntimes(
 			this.application.getPath("userData"),
-			this.application.getVersion(),
+			this.cliSource === "native" ? null : this.application.getVersion(),
 		);
+	}
+
+	async usesNativeCli(): Promise<boolean> {
+		await this.resolveCli();
+		return this.cliSource === "native";
 	}
 
 	private async performAuthentication(
@@ -370,7 +400,7 @@ export class DesktopCliService {
 	): Promise<AuthenticationResult> {
 		try {
 			const args = ["auth", "login", "--desktop"];
-			const result = await this.runJson(this.cli(), args, {
+			const result = await this.runJson(await this.resolveCli(), args, {
 				signal,
 				timeoutMs: OAUTH_TIMEOUT_MS,
 				onStderrLine: (line) => {
@@ -380,7 +410,9 @@ export class DesktopCliService {
 					} catch {
 						return;
 					}
-					if (!isRecord(value) || value.schemaVersion !== "clawdi.desktopLogin.progress.v1") return;
+					if (!isRecord(value)) return;
+					assertCompatibleCliSchema(value.schemaVersion, "clawdi.desktopLogin.progress.v1");
+					if (value.schemaVersion !== "clawdi.desktopLogin.progress.v1") return;
 					const verificationUri = readString(value.verificationUri);
 					const userCode = readString(value.userCode);
 					const expiresAt = readString(value.expiresAt);
@@ -419,9 +451,70 @@ export class DesktopCliService {
 		}
 	}
 
-	private cli(): string {
-		this.cliPath ??= this.resolveBundledCli();
-		return this.runtimeRoot ? join(this.runtimeRoot, "clawdi") : this.cliPath;
+	private async resolveCli(): Promise<string> {
+		this.cliResolution ??= this.selectCli();
+		const cli = await this.cliResolution;
+		return this.runtimeRoot ? join(this.runtimeRoot, "clawdi") : cli;
+	}
+
+	private async selectCli(): Promise<string> {
+		const platform = requireDesktopPlatform();
+		const home = this.home;
+		const launcher = nativeLauncherPath(platform, home);
+		if (await this.usableNativeCli(launcher)) {
+			this.cliSource = "native";
+			return launcher;
+		}
+		this.cliPath = this.resolveBundledCli();
+		try {
+			if (platform !== "win32") {
+				removeDesktopCliSymlink({
+					home,
+					userData: this.application.getPath("userData"),
+					bundledCli: this.cliPath,
+				});
+			}
+			const result = await this.runJson(
+				this.cliPath,
+				["update", "--native-bootstrap", "--min-version", DESKTOP_MIN_CLI_VERSION, "--json"],
+				{ timeoutMs: 3 * 60_000 },
+			);
+			if (
+				result.schemaVersion === "clawdi.nativeBootstrap.v1" &&
+				(result.status === "installed" ||
+					result.status === "already-current" ||
+					result.status === "upgraded") &&
+				(await this.usableNativeCli(launcher))
+			) {
+				this.cliSource = "native";
+				return launcher;
+			}
+		} catch (error) {
+			if (error instanceof DesktopCliCompatibilityError) throw error;
+			// Bootstrap returns nonzero for foreign-owner and failed. Neither
+			// changes the selected launcher; retry only on the next app launch.
+			console.warn("Native CLI bootstrap unavailable; using bundled runtime this session");
+		}
+		this.cliSource = "bundled";
+		return this.cliPath;
+	}
+
+	private async usableNativeCli(launcher: string): Promise<boolean> {
+		if (!existsSync(launcher)) return false;
+		try {
+			const identity = await this.readIdentity(launcher);
+			if (!meetsDesktopCliMinimum(identity.version)) return false;
+			if (!detectNativeInstall(launcher, identity)) return false;
+			const result = await this.runJson(launcher, ["capabilities", "--json"]);
+			return (
+				result.schemaVersion === "clawdi.capabilities.v1" &&
+				isRecord(result.capabilities) &&
+				result.capabilities.updateMode === "local-self-update"
+			);
+		} catch (error) {
+			if (error instanceof DesktopCliCompatibilityError) throw error;
+			return false;
+		}
 	}
 
 	private isAppImage(): boolean {
@@ -431,6 +524,8 @@ export class DesktopCliService {
 	}
 
 	private async prepareDaemonCli(): Promise<string> {
+		const cli = await this.resolveCli();
+		if (this.cliSource === "native") return cli;
 		if (this.isAppImage()) {
 			this.cliPath ??= this.resolveBundledCli();
 			this.runtimeRoot = await activateAppImageRuntime(
@@ -439,18 +534,19 @@ export class DesktopCliService {
 				this.application.getVersion(),
 			);
 		}
-		return this.cli();
+		return this.resolveCli();
 	}
 
-	private expectedDaemonCli(): string {
-		const path = this.isAppImage()
-			? join(
-					this.application.getPath("userData"),
-					"runtimes",
-					this.application.getVersion(),
-					"clawdi",
-				)
-			: this.cli();
+	private expectedDaemonCli(cli: string): string {
+		const path =
+			this.isAppImage() && this.cliSource === "bundled"
+				? join(
+						this.application.getPath("userData"),
+						"runtimes",
+						this.application.getVersion(),
+						"clawdi",
+					)
+				: cli;
 		return existsSync(path) ? realpathSync(path) : resolve(path);
 	}
 
@@ -494,6 +590,8 @@ export class DesktopCliService {
 		const [version, target, extra] = result.stdout.trim().split("\t");
 		if (
 			!version ||
+			!target ||
+			!isNativeBuildTarget(target) ||
 			target !== `${process.platform}-${process.arch}` ||
 			extra ||
 			!/^\d+\.\d+\.\d+(?:[-+].+)?$/.test(version)
@@ -508,6 +606,7 @@ export class DesktopCliService {
 		try {
 			result = await this.runJson(cli, ["auth", "status", "--json"]);
 		} catch (cause) {
+			if (cause instanceof DesktopCliCompatibilityError) throw cause;
 			throw new DesktopCliError("Couldn't read the local sign-in state.", { cause });
 		}
 		if (result.schemaVersion !== "clawdi.authStatus.v1")
@@ -521,6 +620,20 @@ export class DesktopCliService {
 		return { authenticated, user: user?.id ? user : null };
 	}
 
+	private async runtimeState(cli: string) {
+		// The stable launcher may advance between identity and doctor. Retry
+		// that pair once, without bootstrapping or pinning the old executable.
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const identity = await this.identity(cli);
+			try {
+				return { identity, doctor: await this.doctorState(cli, identity.version) };
+			} catch (error) {
+				if (!(error instanceof CliVersionChangedError) || attempt === 1) throw error;
+			}
+		}
+		throw new CliVersionChangedError("The Clawdi CLI changed during startup. Try again.");
+	}
+
 	private async doctorState(
 		cli: string,
 		version: string,
@@ -528,8 +641,10 @@ export class DesktopCliService {
 		DesktopBootstrapState["daemon"] & { needsRuntimeRefresh: boolean; supervisorRunning: boolean }
 	> {
 		const result = await this.runJson(cli, ["daemon", "doctor", "--json"]);
-		if (result.schemaVersion !== "clawdi.daemonDoctor.v2" || result.cli_version !== version)
-			throw new Error("Clawdi doctor returned an unexpected CLI version.");
+		if (result.schemaVersion !== "clawdi.daemonDoctor.v2")
+			throw new Error("Clawdi returned invalid daemon data.");
+		if (result.cli_version !== version)
+			throw new CliVersionChangedError("Clawdi doctor returned an unexpected CLI version.");
 		const installed = result.singleton_unit_installed === true;
 		const agents = Array.isArray(result.agents) ? result.agents : [];
 		const running =
@@ -554,7 +669,7 @@ export class DesktopCliService {
 			installed,
 			running,
 			supervisorRunning: result.singleton_unit_running === true,
-			needsRuntimeRefresh: needsDaemonRuntimeRefresh(version, this.expectedDaemonCli(), daemons),
+			needsRuntimeRefresh: needsDaemonRuntimeRefresh(version, this.expectedDaemonCli(cli), daemons),
 		};
 	}
 
@@ -571,6 +686,8 @@ export class DesktopCliService {
 			throw new Error("Clawdi returned invalid structured output.");
 		}
 		if (!isRecord(value)) throw new Error("Clawdi returned invalid structured output.");
+		const schema = CLI_SCHEMAS[args.slice(0, 2).join(" ")];
+		if (schema) assertCompatibleCliSchema(value.schemaVersion, schema);
 		return value;
 	}
 
@@ -588,10 +705,11 @@ export class DesktopCliService {
 			const result = await this.execute(cli, args, {
 				...opts,
 				env: {
-					...process.env,
-					CLAWDI_NO_AUTO_UPDATE: "1",
-					...(this.runtimeRoot ? { CLAWDI_DESKTOP_RUNTIME: this.runtimeRoot } : {}),
-					CLAWDI_NO_UPDATE_CHECK: "1",
+					...cliEnvironment(
+						process.env,
+						cli === nativeLauncherPath(process.platform, this.home),
+						this.runtimeRoot,
+					),
 					...(this.application.isPackaged
 						? {
 								CLAWDI_API_URL: PRODUCTION_CLOUD_API_URL,
@@ -613,7 +731,38 @@ export class DesktopCliService {
 	}
 }
 
-export class DesktopCliError extends Error {}
+class CliVersionChangedError extends DesktopCliError {}
+
+const CLI_SCHEMAS: Record<string, string> = {
+	"capabilities --json": "clawdi.capabilities.v1",
+	"update --native-bootstrap": "clawdi.nativeBootstrap.v1",
+	"auth status": "clawdi.authStatus.v1",
+	"auth desktop-session": "clawdi.desktopSession.v1",
+	"auth desktop-sign-out": "clawdi.desktopSignOut.v1",
+	"auth login": "clawdi.desktopLogin.v1",
+	"agent detect": "clawdi.agentDetection.v1",
+	"agent reconnect": "clawdi.agentReconnectCandidates.v1",
+	"config list": "clawdi.config.v1",
+	"daemon doctor": "clawdi.daemonDoctor.v2",
+};
+
+export function cliEnvironment(
+	inherited: NodeJS.ProcessEnv,
+	native: boolean,
+	runtimeRoot: string | null = null,
+): NodeJS.ProcessEnv {
+	const env = { ...inherited };
+	if (native) {
+		delete env.CLAWDI_NO_AUTO_UPDATE;
+		delete env.CLAWDI_NO_UPDATE_CHECK;
+		delete env.CLAWDI_DESKTOP_RUNTIME;
+	} else {
+		env.CLAWDI_NO_AUTO_UPDATE = "1";
+		env.CLAWDI_NO_UPDATE_CHECK = "1";
+		if (runtimeRoot) env.CLAWDI_DESKTOP_RUNTIME = runtimeRoot;
+	}
+	return env;
+}
 
 function runtimeStartError(cause: unknown): DesktopCliError {
 	const code = isRecord(cause) ? readString(cause.code) : null;
