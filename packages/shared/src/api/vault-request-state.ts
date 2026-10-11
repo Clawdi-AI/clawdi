@@ -52,3 +52,12 @@ export function safeVaultRequestUrl(value: string): string | null {
 		? url.href
 		: null;
 }
+
+export function vaultRequestsRefetchInterval(
+	rows:
+		| readonly Pick<components["schemas"]["VaultSecretRequestStatus"], "status">[]
+		| null
+		| undefined,
+): number | false {
+	return rows?.some((row) => row.status === "pending") ? 10_000 : false;
+}

@@ -9,7 +9,9 @@ import {
 	agentOverviewCopy,
 	agentSurfaceCopy,
 	agentToolSectionCopy,
+	billingRecoveryRefetchIntervalFor,
 	canRetryInitialDeployment,
+	computeStatusDetailsCopy,
 	deploymentAwaitingRuntimeUi,
 	deploymentFailurePresentation,
 	deploymentFilesUrl,
@@ -29,11 +31,13 @@ import {
 	runtimeConsolePresentation,
 	type SettlingTracker,
 	SUPPORT_EMAIL,
+	shortestRefetchInterval,
 	shouldShowInitialDeploymentProgress,
 	stoppedAgentDescription,
 } from "@clawdi/shared/view";
 import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Redirect, useRouter } from "expo-router";
+import { useIsFocused } from "expo-router/react-navigation";
 import FolderOpen from "lucide-react-native/icons/folder-open";
 import MonitorPlay from "lucide-react-native/icons/monitor-play";
 import { useEffect, useRef, useState } from "react";
@@ -63,11 +67,7 @@ import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { StartComputeAction } from "@/hosted/agents/start-compute-action";
 import { StoreUpgradeAction } from "@/hosted/billing/store/compute-store";
-import {
-	DEPLOYMENT_POLL_WINDOW_MS,
-	deploymentNeedsPolling,
-	operationIdFromName,
-} from "@/hosted/deployment-status";
+import { operationIdFromName } from "@/hosted/deployment-status";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -112,7 +112,7 @@ function DeploymentDetail({
 	const read = useAccountRead();
 	const router = useRouter();
 	const t = useI18n();
-	const [startedAt, setStartedAt] = useState(Date.now);
+	const focused = useIsFocused();
 	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
 	const [, setPollEpoch] = useState(0);
 	useEffect(() => {
@@ -120,14 +120,14 @@ function DeploymentDetail({
 		const unsubscribeFocus = focusManager.subscribe(refresh);
 		const unsubscribeOnline = onlineManager.subscribe(refresh);
 		const timer = setInterval(() => {
-			if (focusManager.isFocused() && onlineManager.isOnline()) refresh();
+			if (focused && focusManager.isFocused() && onlineManager.isOnline()) refresh();
 		}, 10_000);
 		return () => {
 			unsubscribeFocus();
 			unsubscribeOnline();
 			clearInterval(timer);
 		};
-	}, [startedAt]);
+	}, [focused]);
 	const query = useQuery({
 		queryKey: accountQueryKey(scope, "deployment", deploymentId ?? "missing"),
 		queryFn: ({ signal }) =>
@@ -138,14 +138,18 @@ function DeploymentDetail({
 		enabled: scope.isReady && Boolean(hosted && deploymentId),
 		retry: false,
 		refetchInterval: (q) => {
-			if (!focusManager.isFocused() || !onlineManager.isOnline() || q.state.error) return false;
+			if (!focused || !focusManager.isFocused() || !onlineManager.isOnline() || q.state.error)
+				return false;
 			const polling = deploymentPollingState(
 				q.state.data ? [q.state.data] : undefined,
 				trackers.current,
 				Date.now(),
 			);
 			trackers.current = polling.trackers;
-			return polling.refetchInterval;
+			return shortestRefetchInterval(
+				polling.refetchInterval,
+				billingRecoveryRefetchIntervalFor(q.state.data ? [q.state.data] : undefined, deploymentId),
+			);
 		},
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
@@ -175,7 +179,11 @@ function DeploymentDetail({
 		enabled: scope.isReady && Boolean(hosted && operationId),
 		retry: false,
 		refetchInterval: (q) =>
-			focusManager.isFocused() && onlineManager.isOnline() && !q.state.error && !q.state.data?.done
+			focused &&
+			focusManager.isFocused() &&
+			onlineManager.isOnline() &&
+			!q.state.error &&
+			!q.state.data?.done
 				? deploymentPollingState(
 						deployment ? [deployment] : undefined,
 						trackers.current,
@@ -392,7 +400,6 @@ function DeploymentDetail({
 				transitioning={Boolean(activeOperation && !activeOperation.done)}
 				onAccepted={async (result) => {
 					setAccepted(result);
-					setStartedAt(Date.now());
 					await refreshResources();
 				}}
 				onAbsent={async () => {
@@ -407,7 +414,6 @@ function DeploymentDetail({
 							label={t("deployments.refresh")}
 							disabled={query.isFetching || operation.isFetching}
 							onPress={() => {
-								setStartedAt(Date.now());
 								void query.refetch();
 								if (operationId) void operation.refetch();
 							}}
@@ -438,16 +444,17 @@ function DeploymentDetail({
 								key={operation.data.name}
 								operation={operation.data}
 								onRequested={async () => {
-									setStartedAt(Date.now());
 									await operation.refetch();
 									await query.refetch();
 								}}
 							/>
 						) : null}
-						{deployment &&
-						deploymentNeedsPolling(deployment) &&
-						Date.now() - startedAt >= DEPLOYMENT_POLL_WINDOW_MS ? (
-							<AppText>{t("deployments.timeout")}</AppText>
+						{transition === "timed_out" || transition === "escalated" ? (
+							<AppText>
+								{transition === "escalated"
+									? computeStatusDetailsCopy.stuck
+									: computeStatusDetailsCopy.slow}
+							</AppText>
 						) : null}
 					</>
 				}

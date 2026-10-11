@@ -49,6 +49,7 @@ import {
 	subscriptionSourceCopy,
 	supportedTimezones,
 	timezoneLabel,
+	upsertAuthoritativeDeployment,
 	type WalletDebitSummary,
 	walletDebitShortfallUsd,
 	walletDeployAmountPresentation,
@@ -485,12 +486,12 @@ function CreationForm() {
 		if (!current(owns)) return;
 		if (deployment.resource.id !== deploymentId || !deployment.agent_id)
 			throw new Error("Agent identity unavailable");
-		cache.setQueryData(
-			accountQueryKey(scope, "deployments"),
-			(existing: (typeof deployment)[] | undefined) => [
-				...(existing ?? []).filter((item) => item.resource.id !== deploymentId),
-				deployment,
-			],
+		const deploymentsKey = accountQueryKey(scope, "deployments");
+		// Cancel a list read started before acceptance before seeding the committed Agent.
+		await cache.cancelQueries({ queryKey: deploymentsKey, exact: true });
+		if (!current(owns)) return;
+		cache.setQueryData(deploymentsKey, (existing: (typeof deployment)[] | undefined) =>
+			upsertAuthoritativeDeployment(existing, deployment),
 		);
 		void cache.invalidateQueries({ queryKey: accountQueryKey(scope, "cloud-agents") });
 		if (journal && storageKey) {

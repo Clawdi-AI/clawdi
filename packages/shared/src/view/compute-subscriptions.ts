@@ -14,6 +14,23 @@ const COMPUTE_PERFORMANCE_SLUG = "compute_performance";
 
 export { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG };
 
+export const COMPUTE_BILLING_RECOVERY_POLL_MS = 30_000;
+
+export function computeSubscriptionsRecoveryRefetchInterval(
+	items:
+		| readonly Pick<ComputeSubscriptionListItem, "actions" | "recovery_blocked_reason">[]
+		| null
+		| undefined,
+): number | false {
+	return items?.some(
+		(subscription) =>
+			subscription.actions?.command_state != null ||
+			subscription.recovery_blocked_reason === "payment_pending",
+	)
+		? COMPUTE_BILLING_RECOVERY_POLL_MS
+		: false;
+}
+
 export type ResolvedBillingOffer = {
 	offer: BillingOffer;
 	billingTermMonths: number;

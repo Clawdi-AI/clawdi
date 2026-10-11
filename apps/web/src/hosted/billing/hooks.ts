@@ -1,6 +1,12 @@
 "use client";
 
 import {
+	billingRecoveryRefetchIntervalFor,
+	computeSubscriptionsRecoveryRefetchInterval,
+	reconcileDeploymentSnapshots,
+	shortestRefetchInterval,
+} from "@clawdi/shared/view";
+import {
 	keepPreviousData,
 	type QueryClient,
 	replaceEqualDeep,
@@ -35,8 +41,6 @@ import { isComputeSubscriptionActionUnconfirmed } from "@/hosted/billing/subscri
 import {
 	deploymentAwaitingRuntimeUi,
 	deploymentPollingState,
-	deploymentStatusFromResource,
-	isTransitionalStatus,
 	type SettlingTracker,
 } from "@/hosted/deployment-status";
 import { eventStreamFallbackInterval } from "@/lib/event-stream-refresh";
@@ -219,15 +223,9 @@ export function useSubscriptions() {
 		retry: billingQueryRetry,
 		refetchIntervalInBackground: false,
 		refetchInterval: (query) =>
-			query.state.data?.pages.some((page) =>
-				page.items?.some(
-					(subscription) =>
-						subscription.actions?.command_state != null ||
-						subscription.recovery_blocked_reason === "payment_pending",
-				),
-			)
-				? BILLING_RECOVERY_POLL_INTERVAL_MS
-				: false,
+			computeSubscriptionsRecoveryRefetchInterval(
+				query.state.data?.pages.flatMap((page) => page.items ?? []),
+			),
 	});
 }
 
@@ -397,74 +395,18 @@ export function useUsage(
 
 // ── Deployments ────────────────────────────────────────────────────────────────
 
-const BILLING_RECOVERY_POLL_INTERVAL_MS = 30_000;
-
 /** Foreground polling is a bridge for live updates; no background polling. */
 export const HOSTED_DEPLOYMENTS_REFRESH_POLICY = {
 	refetchIntervalInBackground: false,
 	refetchOnWindowFocus: true,
 } as const;
 
-export function reconcileDeploymentSnapshots(
-	previous: readonly HostedDeployment[] | undefined,
-	incoming: HostedDeployment[],
-): HostedDeployment[] {
-	const previousById = new Map(
-		(previous ?? []).map((deployment) => [deployment.resource.id, deployment]),
-	);
-	const reconciled = incoming.map((deployment) => {
-		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
-		if (acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) {
-			if (
-				deployment.accepted_operation?.name === acceptedOperation.name ||
-				deployment.resource.metadata.generation > acceptedOperation.metadata.targetGeneration
-			) {
-				return deployment;
-			}
-			return { ...deployment, accepted_operation: acceptedOperation };
-		}
-		if (deployment.accepted_operation) return deployment;
-		if (!acceptedOperation) return deployment;
-
-		const resourceStatus = deployment.resource.status;
-		const status = deploymentStatusFromResource(resourceStatus);
-		const failure = resourceStatus === null ? null : resourceStatus.failure;
-		const operationApplies = isTransitionalStatus(status)
-			? true
-			: status.kind === "failed" &&
-				failure !== null &&
-				failure !== undefined &&
-				failure.observedGeneration >= acceptedOperation.metadata.targetGeneration;
-		return operationApplies ? { ...deployment, accepted_operation: acceptedOperation } : deployment;
-	});
-	return replaceEqualDeep(previous, reconciled) as HostedDeployment[];
-}
-
 function reconcileDeploymentQueryData(previous: unknown, incoming: unknown): unknown {
 	if (!Array.isArray(incoming)) return incoming;
-	return reconcileDeploymentSnapshots(Array.isArray(previous) ? previous : undefined, incoming);
-}
-
-export function billingRecoveryRefetchIntervalFor(
-	deployments: readonly HostedDeployment[] | undefined,
-	targetId: string | null | undefined,
-): number | false {
-	const target = targetId?.toLowerCase();
-	if (!target) return false;
-	const deployment = (deployments ?? []).find((candidate) => {
-		const matchesTarget =
-			candidate.resource.id.toLowerCase() === target || candidate.agent_id.toLowerCase() === target;
-		return matchesTarget;
-	});
-	if (deployment?.start_action === "wait") return BILLING_RECOVERY_POLL_INTERVAL_MS;
-	const subscription = deployment?.commercial_display?.compute_subscription;
-	if (!subscription) return false;
-	return subscription.payment_state === "past_due" ||
-		subscription.payment_state === "requires_action" ||
-		subscription.actions?.command_state != null ||
-		subscription.recovery_blocked_reason === "payment_pending"
-		? BILLING_RECOVERY_POLL_INTERVAL_MS
-		: false;
+	return replaceEqualDeep(
+		previous,
+		reconcileDeploymentSnapshots(Array.isArray(previous) ? previous : undefined, incoming),
+	);
 }
 
 export function useHostedDeployments({
@@ -515,15 +457,6 @@ export function useHostedDeployments({
 	}, [deploymentPolling.trackers]);
 
 	return { ...query, deploymentTransitions: deploymentPolling.transitions };
-}
-
-function shortestRefetchInterval(...intervals: readonly (number | false)[]): number | false {
-	let shortest: number | false = false;
-	for (const interval of intervals) {
-		if (typeof interval !== "number") continue;
-		shortest = typeof shortest === "number" ? Math.min(shortest, interval) : interval;
-	}
-	return shortest;
 }
 
 export function useResolveDeploymentRequest() {

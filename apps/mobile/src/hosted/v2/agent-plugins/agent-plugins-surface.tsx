@@ -2,6 +2,7 @@ import {
 	agentPluginActionState,
 	agentPluginComponentSummary,
 	agentPluginMatches,
+	agentPluginRefetchInterval,
 	buildAgentPluginInventory,
 	type components,
 	pluginDisplayName,
@@ -26,7 +27,7 @@ import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";
 import { Text as AppText } from "@/components/ui/text";
 import { WebView } from "@/components/ui/web-layout";
-import { canPollDeployment } from "@/hosted/deployment-status";
+import { useDashboardDeployments } from "@/hooks/use-dashboard-agents";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
@@ -59,7 +60,6 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 	const [search, setSearch] = useState("");
 	const [category, setCategory] = useState("");
 	const [accepted, setAccepted] = useState(false);
-	const [startedAt, setStartedAt] = useState(Date.now);
 	const focused = useIsFocused();
 	const catalog = useQuery({
 		queryKey: accountQueryKey(scope, "plugin-catalog"),
@@ -67,27 +67,15 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 		retry: false,
 		queryFn: ({ signal }) => read((lease) => client.catalog(lease), signal),
 	});
-	const deployments = useQuery({
-		queryKey: accountQueryKey(scope, "deployments"),
-		enabled: Boolean(hosted && scope.isReady),
-		retry: false,
-		queryFn: ({ signal }) =>
-			read((lease) => {
-				if (!hosted) throw new Error(agentSurfaceCopy.unavailable);
-				return hosted.listDeployments(lease);
-			}, signal),
-	});
+	const deployments = useDashboardDeployments();
 	const inventory = useQuery<components["schemas"]["AgentPluginDesiredStateListResponse"]>({
 		queryKey: accountQueryKey(scope, "agent-plugins", id),
 		enabled: Boolean(id && scope.isReady),
 		retry: false,
 		queryFn: ({ signal }) => read((lease) => client.listPlugins(id, lease), signal),
 		refetchInterval: (query) =>
-			focused &&
-			!query.state.error &&
-			query.state.data?.plugins.some((item) => item.convergence === "not_observed") &&
-			canPollDeployment(startedAt, Date.now(), focusManager.isFocused(), onlineManager.isOnline())
-				? 5000
+			focused && !query.state.error && focusManager.isFocused() && onlineManager.isOnline()
+				? agentPluginRefetchInterval(query.state.data?.plugins, new Date())
 				: false,
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: false,
@@ -106,7 +94,6 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 	const disabled =
 		action.busy || !id || inventory.isError || !inventory.data || inventory.isFetching;
 	const refresh = () => {
-		setStartedAt(Date.now());
 		void inventory.refetch();
 		void catalog.refetch();
 		if (hosted) void deployments.refetch();
@@ -124,7 +111,6 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 			});
 			if (!current()) return;
 			setAccepted(true);
-			setStartedAt(Date.now());
 			await inventory.refetch();
 		});
 	const remove = (name: string) => {

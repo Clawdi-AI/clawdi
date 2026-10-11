@@ -1,3 +1,4 @@
+import { upsertAuthoritativeDeployment } from "@clawdi/shared/view";
 import type { QueryClient } from "@tanstack/react-query";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
@@ -11,21 +12,6 @@ export type AcceptedDeploymentNavigate = (options: {
 type AcceptedDeploymentRequestResolver = (
 	deployRequestId: string,
 ) => Promise<{ deploymentId: string }>;
-
-function upsertAuthoritativeDeployment(
-	deployments: readonly HostedDeployment[] | undefined,
-	authoritative: HostedDeployment,
-): HostedDeployment[] {
-	if (!deployments) return [authoritative];
-	const deploymentId = authoritative.resource.id;
-	const existingIndex = deployments.findIndex(
-		(deployment) => deployment.resource.id === deploymentId,
-	);
-	if (existingIndex === -1) return [...deployments, authoritative];
-	return deployments.map((deployment, index) =>
-		index === existingIndex ? authoritative : deployment,
-	);
-}
 
 async function hydrateAcceptedDeployment({
 	deploymentId,

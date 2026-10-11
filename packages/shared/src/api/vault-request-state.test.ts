@@ -1,5 +1,9 @@
 import { expect, test } from "bun:test";
-import { buildVaultSecretRequest, safeVaultRequestUrl } from "./vault-request-state";
+import {
+	buildVaultSecretRequest,
+	safeVaultRequestUrl,
+	vaultRequestsRefetchInterval,
+} from "./vault-request-state";
 
 const identity = { id: "vault-id", slug: "vault-slug" };
 test("secret request preserves exact case and validates names and expiry before transmission", () => {
@@ -44,4 +48,17 @@ test("request sharing accepts only HTTPS fragment capability links", () => {
 		"javascript:alert(1)",
 	])
 		expect(safeVaultRequestUrl(invalid)).toBeNull();
+});
+
+test("secret requests keep polling until no row awaits input", () => {
+	type Row = NonNullable<Parameters<typeof vaultRequestsRefetchInterval>[0]>[number];
+	for (const [rows, expected] of [
+		[undefined, false],
+		[[], false],
+		[[{ status: "pending" }], 10_000],
+		[[{ status: "supplied" }, { status: "pending" }], 10_000],
+		[[{ status: "supplied" }, { status: "expired" }, { status: "conflict" }], false],
+	] satisfies [Row[] | undefined, number | false][]) {
+		expect(vaultRequestsRefetchInterval(rows)).toBe(expected);
+	}
 });

@@ -2,23 +2,25 @@ import {
 	claimedEnvIdsFromDeployments,
 	deploymentPollingState,
 	deploymentToTiles,
+	reconcileDeploymentSnapshots,
 	type SettlingTracker,
 	selectUnifiedAgentList,
 } from "@clawdi/shared/view";
-import { useQuery } from "@tanstack/react-query";
+import { replaceEqualDeep, useQuery } from "@tanstack/react-query";
+import { useIsFocused } from "expo-router/react-navigation";
 import { useRef } from "react";
 import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
 import { transientQueryRetry } from "@/lib/query-retry";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-/** Both inventories are account-fenced. Unresolved membership never claims an empty account. */
-export function useDashboardAgents() {
-	const agents = useCloudAgents();
-	const { hosted, compute } = useMobileApi(),
-		scope = useAccountScope(),
-		read = useAccountRead();
+/** Every deployment list observer uses the same polling and snapshot guards. */
+export function useDashboardDeployments() {
+	const { hosted } = useMobileApi();
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	const focused = useIsFocused();
 	const trackers = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
-	const inventory = useQuery({
+	return useQuery({
 		queryKey: accountQueryKey(scope, "deployments"),
 		queryFn: ({ signal }) =>
 			read((lease) => {
@@ -27,14 +29,30 @@ export function useDashboardAgents() {
 			}, signal),
 		enabled: scope.isReady && Boolean(hosted),
 		...transientQueryRetry,
+		structuralSharing: (previous, incoming) =>
+			Array.isArray(incoming)
+				? replaceEqualDeep(
+						previous,
+						reconcileDeploymentSnapshots(Array.isArray(previous) ? previous : undefined, incoming),
+					)
+				: incoming,
 		refetchInterval: (query) => {
-			if (query.state.error) return false;
+			if (!focused || query.state.error) return false;
 			const polling = deploymentPollingState(query.state.data, trackers.current, Date.now());
 			trackers.current = polling.trackers;
 			return polling.refetchInterval;
 		},
 		refetchIntervalInBackground: false,
 	});
+}
+
+/** Both inventories are account-fenced. Unresolved membership never claims an empty account. */
+export function useDashboardAgents() {
+	const agents = useCloudAgents();
+	const inventory = useDashboardDeployments();
+	const { hosted, compute } = useMobileApi(),
+		scope = useAccountScope(),
+		read = useAccountRead();
 	const capabilities = useQuery({
 		queryKey: accountQueryKey(scope, "product-capabilities"),
 		queryFn: ({ signal }) =>
