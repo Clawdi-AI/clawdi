@@ -13,7 +13,7 @@ import { progressLine } from "../lib/progress";
 import { confirmOrRequireYes } from "../lib/prompts";
 import { uninstall as uninstallDaemon } from "../serve/installer";
 import { authLogout } from "./auth";
-import { teardown } from "./teardown";
+import { teardownLocalIntegrationsForUninstall } from "./teardown";
 
 export interface UninstallOptions {
 	removeCli?: boolean;
@@ -31,7 +31,7 @@ export async function uninstall(
 	runtime: {
 		home?: string;
 		uninstallDaemon?: typeof uninstallDaemon;
-		teardown?: typeof teardown;
+		teardown?: typeof teardownLocalIntegrationsForUninstall;
 		logout?: typeof authLogout;
 	} = {},
 ) {
@@ -91,7 +91,7 @@ export async function uninstall(
 		message: "Background service stopped and removed, or already absent.",
 	}));
 	await run("integrations", async () => {
-		const agents = await (runtime.teardown ?? teardown)({
+		const agents = await (runtime.teardown ?? teardownLocalIntegrationsForUninstall)({
 			all: true,
 			yes: true,
 			reportFailures: true,
@@ -126,6 +126,12 @@ export async function uninstall(
 		};
 	});
 	await run("local-state", () => {
+		if (steps.some((step) => step.step === "integrations" && step.status === "failed")) {
+			return {
+				status: "skipped",
+				message: "Local ownership records kept. Retry uninstall to finish integration cleanup.",
+			};
+		}
 		const directory = resolve(getClawdiDir());
 		const homeFromState = relative(directory, resolve(home));
 		if (
