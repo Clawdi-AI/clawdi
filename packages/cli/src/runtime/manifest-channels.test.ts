@@ -13,10 +13,17 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseDocument, parse as parseYaml } from "yaml";
+import {
+	commitHermesConfigTransaction,
+	getHermesRawConfigValue,
+	type HermesConfigTransaction,
+} from "./hermes-config";
 import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
 import {
 	materializeHostedChannelCredentials,
 	openClawManagedChannelsPatch,
+	repairHermesChannelEnablement,
 } from "./manifest-channels";
 import type { RuntimeManifest } from "./manifest-contract";
 import { withRuntimeUserFileAccess } from "./runtime-user-command";
@@ -32,8 +39,13 @@ describe("native channel ownership", () => {
 		expect(patch).not.toHaveProperty("session.dmScope");
 	});
 
-	test("does not disable independently configured Hermes platforms on unlink", () => {
-		expect(buildHermesManagedChannelsPatch({}, null)).toEqual({});
+	test("uses env credentials to enable managed Hermes Telegram and Discord", () => {
+		expect(
+			buildHermesManagedChannelsPatch(
+				{ telegram: { accounts: { managed: {} } }, discord: { accounts: { managed: {} } } },
+				null,
+			),
+		).toEqual({});
 	});
 });
 
@@ -55,6 +67,95 @@ afterEach(() => {
 	delete process.env.CLAWDI_RUNTIME_UID;
 	delete process.env.CLAWDI_RUNTIME_GID;
 	rmSync(root, { recursive: true, force: true });
+});
+
+function hermesConfig(initial: Record<string, unknown>): HermesConfigTransaction {
+	const path = join(home, ".hermes", "config.yaml");
+	const sourceContent = JSON.stringify(initial);
+	mkdirSync(join(home, ".hermes"), { recursive: true });
+	writeFileSync(path, sourceContent);
+	return {
+		context: { command: "hermes", home, cwd: home },
+		path,
+		sourceContent,
+		document: parseDocument(sourceContent),
+		changed: false,
+	};
+}
+
+describe("Hermes credential-aware enablement repair", () => {
+	for (const [platform, tokenField] of [
+		["telegram", "TELEGRAM_BOT_TOKEN"],
+		["discord", "DISCORD_BOT_TOKEN"],
+	] as const) {
+		test(`unsets stale ${platform}.enabled without credentials and preserves other settings`, () => {
+			const config = hermesConfig({ [platform]: { enabled: true, require_mention: false } });
+			const desired = manifest(authDir());
+			expect(repairHermesChannelEnablement(config, desired, {})).toEqual([platform]);
+			expect(commitHermesConfigTransaction(config)).toBe("committed");
+			expect(parseYaml(readFileSync(config.path, "utf8"))).toEqual({
+				[platform]: { require_mention: false },
+			});
+			expect(repairHermesChannelEnablement(config, desired, {})).toEqual([]);
+			expect(commitHermesConfigTransaction(config)).toBe("unchanged");
+		});
+
+		test(`does not disable a platform that still has credentials (${platform})`, () => {
+			const config = hermesConfig({ [platform]: { enabled: true } });
+			writeFileSync(join(home, ".hermes", ".env"), `export ${tokenField}="user-token"\n`);
+			expect(repairHermesChannelEnablement(config, manifest(authDir()), {})).toEqual([]);
+			expect(commitHermesConfigTransaction(config)).toBe("unchanged");
+			expect(getHermesRawConfigValue(config, `${platform}.enabled`).value).toBe(true);
+		});
+
+		test.each(["env", "secretEnv"] as const)(
+			`keeps ${platform}.enabled with a credential in managed %s`,
+			(source) => {
+				const config = hermesConfig({ [platform]: { enabled: true } });
+				const desired = manifest(authDir());
+				const ref = `secret://channels/${platform}/token`;
+				desired.runtimes.hermes = {
+					enabled: true,
+					services: {},
+					run: {
+						env: source === "env" ? { [tokenField]: "managed-token" } : {},
+						secretEnv: source === "secretEnv" ? { [tokenField]: ref } : {},
+						prependPath: [],
+					},
+				};
+				expect(repairHermesChannelEnablement(config, desired, { [ref]: "managed-token" })).toEqual(
+					[],
+				);
+				expect(commitHermesConfigTransaction(config)).toBe("unchanged");
+			},
+		);
+
+		test.each(["", "platforms.", "gateway.", "gateway.platforms."])(
+			`keeps ${platform}.enabled with a config credential under %s${platform}`,
+			(prefix) => {
+				const config = hermesConfig({ [platform]: { enabled: true } });
+				config.document.setIn(`${prefix}${platform}.token`.split("."), "user-token");
+				expect(repairHermesChannelEnablement(config, manifest(authDir()), {})).toEqual([]);
+				expect(getHermesRawConfigValue(config, `${platform}.enabled`).value).toBe(true);
+			},
+		);
+
+		test(`preserves explicit ${platform}.enabled: false`, () => {
+			const config = hermesConfig({ [platform]: { enabled: false } });
+			expect(repairHermesChannelEnablement(config, manifest(authDir()), {})).toEqual([]);
+			expect(commitHermesConfigTransaction(config)).toBe("unchanged");
+			expect(getHermesRawConfigValue(config, `${platform}.enabled`).value).toBe(false);
+		});
+	}
+
+	test("refuses repair when native credentials cannot be read", () => {
+		const config = hermesConfig({ telegram: { enabled: true } });
+		mkdirSync(join(home, ".hermes", ".env"));
+		expect(() => repairHermesChannelEnablement(config, manifest(authDir()), {})).toThrow(
+			"Hermes channel credentials could not be read",
+		);
+		expect(commitHermesConfigTransaction(config)).toBe("unchanged");
+	});
 });
 
 function authDir(name = ACCOUNT_KEY): string {

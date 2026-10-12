@@ -56,6 +56,7 @@ import {
 	type ChannelPluginInstallResult,
 	installHostedChannelProjectionDependencies,
 	materializeHostedChannelCredentials,
+	repairHermesChannelEnablement,
 } from "./manifest-channels";
 import {
 	AGENT_PLUGIN_INSTALLATIONS_UNSUPPORTED_ERROR,
@@ -211,6 +212,7 @@ interface RuntimeConvergenceState {
 	providerConflicts: RuntimeProviderConflict[];
 	skillGuardRefusals: HostedSkillGuardRefusal[];
 	hermesNativeEnvConflicts: string[];
+	hermesChannelEnablementRepairs: string[];
 	serviceWithdrawals: { runtime: string; service: string }[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
 	withdrawnOpenClawChannels: Set<string>;
@@ -349,6 +351,7 @@ function initializeRuntimeConvergence(
 		providerConflicts: [],
 		skillGuardRefusals: [],
 		hermesNativeEnvConflicts: [],
+		hermesChannelEnablementRepairs: [],
 		serviceWithdrawals: [],
 		withdrawnOpenClawChannels: new Set(),
 		projectedProviderIds: {},
@@ -1143,6 +1146,19 @@ function applyRuntimeEntryProjections(
 				);
 			}
 			try {
+				if (
+					name === "hermes" &&
+					runtime.enabled &&
+					hermesConfig &&
+					observation.commandPath &&
+					observation.status !== "install_failed"
+				) {
+					state.hermesChannelEnablementRepairs = repairHermesChannelEnablement(
+						hermesConfig,
+						manifest,
+						secretValues,
+					);
+				}
 				applyHostedChannelProjection(
 					name,
 					observation,
@@ -1336,7 +1352,11 @@ function activateRuntimeServices(
 				...new Set([
 					...officialServicePlan.pending.map((item) => item.unitName),
 					...state.runtimeSystemdUserPrograms
-						.filter((program) => state.nativeCredentialChangedRuntimes.has(program.runtime))
+						.filter(
+							(program) =>
+								state.nativeCredentialChangedRuntimes.has(program.runtime) ||
+								(program.runtime === "hermes" && state.hermesChannelEnablementRepairs.length > 0),
+						)
 						.map(runtimeSystemdUserUnitName),
 				]),
 			],
@@ -1610,6 +1630,11 @@ export function convergeRuntimeManifest(
 					...runtimeConvergenceFailure(context, state),
 					deferredReason: "hermes_config_conflict",
 				};
+			}
+			if (commitResult === "committed") {
+				for (const platform of state.hermesChannelEnablementRepairs) {
+					log.info("runtime.hermes.channel_enablement_repaired", { platform });
+				}
 			}
 		}
 		state.resourceProjectionErrors.push(

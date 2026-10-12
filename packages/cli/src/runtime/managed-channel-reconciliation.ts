@@ -16,15 +16,11 @@ export function buildHermesManagedChannelsPatch(
 	channels: Record<string, unknown>,
 	whatsappAuthDir: string | null,
 ): Record<string, unknown> {
-	const telegramEnabled = managedChannelHasAccounts(channels.telegram);
-	const discordEnabled = managedChannelHasAccounts(channels.discord);
 	const whatsappEnabled = managedChannelHasAccounts(channels.whatsapp);
 	if (whatsappEnabled && !whatsappAuthDir) {
 		throw new Error("managed Hermes WhatsApp projection is missing its exact auth directory");
 	}
 	return {
-		...(telegramEnabled ? { telegram: { enabled: true } } : {}),
-		...(discordEnabled ? { discord: { enabled: true } } : {}),
 		...(whatsappEnabled
 			? {
 					whatsapp: { enabled: true },

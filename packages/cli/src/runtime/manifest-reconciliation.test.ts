@@ -57,6 +57,7 @@ import {
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
 import type { PreparedHostedSkill } from "./hosted-sourced-skill-archive";
 import { MANAGED_BAILEYS_STATIC_PATCH_TARGETS } from "./managed-baileys-compat";
+import * as managedChannelReconciliation from "./managed-channel-reconciliation";
 import { collectManagedSkillTree } from "./managed-skill-delivery";
 import {
 	managedSkillReservationLedgerPath,
@@ -3599,6 +3600,10 @@ writeFileSync(${JSON.stringify(configPath)}, JSON.stringify({auth:{concurrent:"n
 				platforms: { whatsapp: { extra: { group_policy: "disabled" } } },
 			};
 			writeFileSync(configPath, JSON.stringify(native));
+			writeFileSync(
+				join(paths.userHome, ".hermes", ".env"),
+				"TELEGRAM_BOT_TOKEN=native-telegram-token\nDISCORD_BOT_TOKEN=native-discord-token\n",
+			);
 			const accountKey = "clawdi_50000000000040008000000000000005";
 			const linkId = "60000000-0000-4000-8000-000000000006";
 			const credentialId = "80000000-0000-4000-8000-000000000011";
@@ -5803,6 +5808,207 @@ del list_profile_names
 			expect(readFileSync(path)).toEqual(snapshots[index]?.bytes);
 			expect(statSync(path).mtimeMs).toBe(snapshots[index]?.mtime);
 		});
+	});
+
+	test("upgrades previously applied linked Hermes Telegram and Discord without config writes or restarts", () => {
+		const paths = tempRuntimePaths();
+		const command = writeFakeHermesCli(paths);
+		const desired = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: {
+						...runSettings(command, ["gateway", "run"]),
+						env: {
+							TELEGRAM_BOT_TOKEN: "managed-telegram-token",
+							DISCORD_BOT_TOKEN: "managed-discord-token",
+						},
+					},
+					services: {},
+				},
+			},
+			{
+				projection: {
+					channels: {
+						telegram: { accounts: { managed: {} } },
+						discord: { accounts: { managed: {} } },
+					},
+				},
+			},
+		);
+		const load = manifestLoad(desired, "healthy-linked-upgrade");
+		let invalidated: string[] = [];
+		const converge = () => {
+			const result = convergeRuntimeManifest(load, paths, {
+				commitAuthority: (convergence, authority) =>
+					commitTestRuntimeAuthority(load, paths, convergence, authority),
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: (signal) => {
+						invalidated = signal.invalidatedUserUnits;
+						return successfulPrerequisiteActivation();
+					},
+				},
+			});
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		};
+		// Apply the 0.16.10 patch first, including its service fingerprint and durable authority.
+		const patch = managedChannelReconciliation.buildHermesManagedChannelsPatch;
+		const legacy = spyOn(
+			managedChannelReconciliation,
+			"buildHermesManagedChannelsPatch",
+		).mockImplementation((channels, authDir) => ({
+			...patch(channels, authDir),
+			telegram: { enabled: true },
+			discord: { enabled: true },
+		}));
+		try {
+			converge();
+		} finally {
+			legacy.mockRestore();
+		}
+		expect(readRuntimeAppliedState(paths)).not.toBeNull();
+		const configPath = join(paths.userHome, ".hermes", "config.yaml");
+		const content = readFileSync(configPath, "utf8");
+		const mtime = statSync(configPath).mtimeMs;
+		expect(parseYaml(content)).toMatchObject({
+			telegram: { enabled: true },
+			discord: { enabled: true },
+		});
+		const envPath = join(paths.userHome, ".hermes", ".env");
+		const nativeEnv = readFileSync(envPath, "utf8");
+		expect(nativeEnv).toContain("TELEGRAM_BOT_TOKEN=managed-telegram-token");
+		expect(nativeEnv).toContain("DISCORD_BOT_TOKEN=managed-discord-token");
+		const gatewayBefore = readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service");
+		expect(gatewayBefore).toBeDefined();
+		const write = spyOn(privateFile, "writePrivateFileAtomic");
+		try {
+			converge();
+			expect(write.mock.calls.filter(([path]) => path === configPath)).toEqual([]);
+			expect(readFileSync(configPath, "utf8")).toBe(content);
+			expect(statSync(configPath).mtimeMs).toBe(mtime);
+			expect(readFileSync(envPath, "utf8")).toBe(nativeEnv);
+			expect(invalidated).not.toContain("hermes-gateway.service");
+			expect(readSystemdUnitSnapshot(paths).user.get("hermes-gateway.service")).toBe(gatewayBefore);
+		} finally {
+			write.mockRestore();
+		}
+	});
+
+	test.each([false, true])(
+		"unlinks Hermes Telegram and preserves surviving user credentials (user token: %s)",
+		(userToken) => {
+			const paths = tempRuntimePaths();
+			const command = writeFakeHermesCli(paths);
+			const configPath = join(paths.userHome, ".hermes", "config.yaml");
+			const envPath = join(paths.userHome, ".hermes", ".env");
+			const ref = "secret://channels/telegram/managed-token";
+			const linked = baseManifest(
+				paths,
+				{
+					hermes: {
+						enabled: true,
+						run: {
+							...runSettings(command, ["gateway", "run"]),
+							secretEnv: { TELEGRAM_BOT_TOKEN: ref },
+						},
+						services: {},
+					},
+				},
+				{ projection: { channels: { telegram: { accounts: { managed: {} } } } } },
+			);
+			const converge = (desired: RuntimeManifest, values: Record<string, string>) => {
+				const result = convergeRuntimeManifest(
+					manifestLoad(desired, "telegram-unlink", values),
+					paths,
+				);
+				expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+			};
+			converge(linked, { [ref]: "managed-telegram-token" });
+			expect(readFileSync(envPath, "utf8")).toContain("TELEGRAM_BOT_TOKEN=managed-telegram-token");
+			expect(parseYaml(readFileSync(configPath, "utf8"))).not.toHaveProperty("telegram.enabled");
+			// Reproduce the enable flag left by older CLIs; a later user edit retains native ownership.
+			appendFileSync(configPath, "\ntelegram:\n  enabled: true\n  require_mention: false\n");
+			if (userToken) writeFileSync(envPath, "TELEGRAM_BOT_TOKEN=user-telegram-token\n");
+			const unlinked = baseManifest(
+				paths,
+				{ hermes: { enabled: true, run: runSettings(command, ["gateway", "run"]), services: {} } },
+				{ generation: 2, projection: { channels: {} } },
+			);
+			const info = spyOn(log, "info").mockImplementation(() => {});
+			try {
+				converge(unlinked, {});
+				const native = parseYaml(readFileSync(configPath, "utf8"));
+				expect(native.telegram.require_mention).toBe(false);
+				if (userToken) {
+					expect(native.telegram.enabled).toBe(true);
+					expect(readFileSync(envPath, "utf8")).toBe("TELEGRAM_BOT_TOKEN=user-telegram-token\n");
+				} else {
+					expect(native.telegram).not.toHaveProperty("enabled");
+					expect(readFileSync(envPath, "utf8")).not.toContain("TELEGRAM_BOT_TOKEN");
+				}
+				const content = readFileSync(configPath, "utf8");
+				const mtime = statSync(configPath).mtimeMs;
+				converge(unlinked, {});
+				expect(readFileSync(configPath, "utf8")).toBe(content);
+				expect(statSync(configPath).mtimeMs).toBe(mtime);
+				const repairs = info.mock.calls.filter(
+					([event]) => event === "runtime.hermes.channel_enablement_repaired",
+				);
+				expect(repairs).toEqual(
+					userToken
+						? []
+						: [["runtime.hermes.channel_enablement_repaired", { platform: "telegram" }]],
+				);
+			} finally {
+				info.mockRestore();
+			}
+		},
+	);
+
+	test("repairs legacy Hermes enablement without a channel projection and refreshes services once", () => {
+		const paths = tempRuntimePaths();
+		const command = writeFakeHermesCli(paths);
+		const configPath = join(paths.userHome, ".hermes", "config.yaml");
+		writeFileSync(configPath, "telegram:\n  enabled: true\ndiscord:\n  enabled: true\n");
+		const desired = baseManifest(paths, {
+			hermes: { enabled: true, run: runSettings(command, ["gateway", "run"]), services: {} },
+		});
+		let invalidated: string[] = [];
+		const converge = () => {
+			const result = convergeRuntimeManifest(manifestLoad(desired, "legacy-enable-repair"), paths, {
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: (signal) => {
+						invalidated = signal.invalidatedUserUnits;
+						return successfulPrerequisiteActivation();
+					},
+				},
+			});
+			expect([...result.installErrors, ...result.resourceProjectionErrors]).toEqual([]);
+		};
+		const info = spyOn(log, "info").mockImplementation(() => {});
+		try {
+			converge();
+			expect(parseYaml(readFileSync(configPath, "utf8"))).not.toHaveProperty("telegram.enabled");
+			expect(parseYaml(readFileSync(configPath, "utf8"))).not.toHaveProperty("discord.enabled");
+			expect(invalidated).toContain("hermes-gateway.service");
+			const content = readFileSync(configPath, "utf8");
+			const mtime = statSync(configPath).mtimeMs;
+			converge();
+			expect(invalidated).toEqual([]);
+			expect(readFileSync(configPath, "utf8")).toBe(content);
+			expect(statSync(configPath).mtimeMs).toBe(mtime);
+			expect(
+				info.mock.calls.filter(([event]) => event === "runtime.hermes.channel_enablement_repaired"),
+			).toEqual([
+				["runtime.hermes.channel_enablement_repaired", { platform: "telegram" }],
+				["runtime.hermes.channel_enablement_repaired", { platform: "discord" }],
+			]);
+		} finally {
+			info.mockRestore();
+		}
 	});
 
 	test("reports native Hermes environment conflicts without treating them as projection errors", () => {

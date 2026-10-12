@@ -9,7 +9,8 @@ import {
 	readFileSync,
 	rmSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { parseEnv } from "node:util";
 import type { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import {
@@ -409,6 +410,60 @@ function applyHermesChannelConfig(
 	}
 	return changed;
 }
+
+/** Withdraw stale Clawdi enable flags only when no native or managed credential survives. */
+export function repairHermesChannelEnablement(
+	config: HermesConfigTransaction,
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): string[] {
+	const tokenFields = { telegram: "TELEGRAM_BOT_TOKEN", discord: "DISCORD_BOT_TOKEN" };
+	const candidates = Object.entries(tokenFields).filter(
+		([platform]) => getHermesRawConfigValue(config, `${platform}.enabled`).value === true,
+	);
+	if (!candidates.length) return [];
+	let nativeEnv: Record<string, string | undefined>;
+	try {
+		nativeEnv = parseEnv(readFileSync(join(dirname(config.path), ".env"), "utf8"));
+	} catch (error) {
+		if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+			throw new Error("Hermes channel credentials could not be read");
+		}
+		nativeEnv = {};
+	}
+	const repaired: string[] = [];
+	const settings = manifest.runtimes.hermes?.run;
+	for (const [platform, tokenField] of candidates) {
+		const secretRef = settings?.secretEnv?.[tokenField];
+		if (
+			nativeEnv[tokenField]?.trim() ||
+			settings?.env?.[tokenField]?.trim() ||
+			(secretRef && runtimeSecretValue(secretValues ?? {}, secretRef)?.trim())
+		) {
+			continue;
+		}
+		// Hermes accepts all four YAML layouts; any surviving credential retains native ownership.
+		const hasConfigCredential = [
+			platform,
+			`platforms.${platform}`,
+			`gateway.${platform}`,
+			`gateway.platforms.${platform}`,
+		].some((prefix) =>
+			["token", "api_key"].some((field) => {
+				const credential = getHermesRawConfigValue(config, `${prefix}.${field}`).value;
+				return typeof credential === "string" && credential.trim().length > 0;
+			}),
+		);
+		if (
+			!hasConfigCredential &&
+			reconcileHermesConfigValue(config, `${platform}.enabled`, undefined)
+		) {
+			repaired.push(platform);
+		}
+	}
+	return repaired;
+}
+
 export function applyHostedChannelProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
