@@ -7,9 +7,16 @@ import {
 	dashboardClerkOrigins,
 	dashboardOrigin,
 	dashboardSessionIds,
+	dashboardWindowOptions,
 	readDesktopWebSession,
 	strictHttpsUrl,
 } from "./dashboard-window";
+
+test("dashboard uses its own persistent session partition", () => {
+	expect(dashboardWindowOptions("/app/shell-preload.cjs").webPreferences?.partition).toBe(
+		"persist:clawdi-dashboard",
+	);
+});
 
 test("navigation trusts exact Clawdi and first-party Clerk origins only", () => {
 	for (const url of [

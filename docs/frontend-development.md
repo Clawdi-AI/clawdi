@@ -252,8 +252,8 @@ and `remark-gfm` declarations; Shared still owns the Markdown plugins.
 
 ## CI packaging and deploy contract
 
-Desktop Platform Packages and Desktop Preview build pull requests that change
-packaging inputs. Desktop Release builds the channel artifacts after merge.
+Desktop Platform Packages builds pull requests that change packaging inputs.
+Desktop Release builds the channel artifacts after merge.
 The Windows platform legs install only Desktop, CLI and Shared dependencies
 with Bun's documented workspace filters and the frozen lockfile.
 

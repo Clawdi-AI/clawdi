@@ -19,6 +19,7 @@ interface Workflow {
 			needs?: string[];
 			if?: string;
 			env?: Record<string, string>;
+			strategy?: { "max-parallel"?: number };
 			steps?: Step[];
 		}
 	>;
@@ -34,6 +35,7 @@ describe("CI routing and coverage", () => {
 		expect(platforms.on.pull_request?.paths).toContain("apps/desktop/**");
 		expect(platforms.on.pull_request?.paths).toContain("scripts/build-desktop-dmg.sh");
 		expect(platforms.on.push).toBeUndefined();
+		expect(platforms.jobs.package?.strategy?.["max-parallel"]).toBeUndefined();
 		expect(platforms.on.workflow_dispatch).toBeDefined();
 		const release = workflow("desktop-channel-build");
 		expect(release.on.workflow_dispatch).toBeDefined();
