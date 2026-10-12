@@ -49,6 +49,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.11
+
+- **Hermes channels:** unlinking Telegram or Discord no longer leaves a platform
+  enabled without credentials, which could stop the gateway with exit 78.
+  Convergence repairs stale enable flags while preserving user-owned tokens and
+  explicit local disables.
+
 ### CLI 0.16.10
 
 - **Hermes startup:** runtime initialization gives Hermes config and version

@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { hostedProviderEnvironment } from "./hosted-provider-resolution";
-import { buildHermesManagedChannelsPatch } from "./managed-channel-reconciliation";
+import {
+	buildHermesManagedChannelsPatch,
+	managedChannelHasAccounts,
+} from "./managed-channel-reconciliation";
 import { hostedChannelProjection, hostedWhatsAppAuthCredentials } from "./manifest-channels";
 import type { LiveSyncAgent, RuntimeManifest } from "./manifest-contract";
 import { hostedMcpIntent } from "./manifest-mcp";
@@ -112,7 +115,13 @@ function hermesChannelProjection(
 ): Record<string, unknown> | null {
 	const channels = hostedChannelProjection(manifest);
 	if (!channels || !desiredRuntime?.enabled) return null;
-	return buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir);
+	// Env tokens still enable these platforms. Retain the historical impact shape so
+	// upgrading the CLI does not change service fingerprints for healthy linked agents.
+	return {
+		...(managedChannelHasAccounts(channels.telegram) ? { telegram: { enabled: true } } : {}),
+		...(managedChannelHasAccounts(channels.discord) ? { discord: { enabled: true } } : {}),
+		...buildHermesManagedChannelsPatch(channels, hermesWhatsAppAuthDir),
+	};
 }
 export function runtimeProgramRevisionForManifest(
 	manifest: RuntimeManifest,

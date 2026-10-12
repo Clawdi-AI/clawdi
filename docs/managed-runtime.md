@@ -730,6 +730,25 @@ fallback, so no separate restart or channel-specific reconcile state machine is
 required. Creating a pair code emits this signal only when that request also
 creates an AgentLink or repairs missing WhatsApp credential material.
 
+Hermes Telegram and Discord are enabled by their projected env tokens; Clawdi
+does not write top-level `telegram.enabled: true` or `discord.enabled: true`.
+Env-token auto-enable exists in upstream
+[`v2026.3.12`](https://github.com/NousResearch/hermes-agent/blob/a370ab8391ca5f8de7ebbc449f05cb0df36ade7c/gateway/config.py#L350-L375)
+and in the current gateway env loader. The CLI uses the official installer's
+latest release and does not declare a numeric minimum Hermes version.
+After managed env cleanup, every converge repairs an existing top-level
+`enabled: true` for either platform only when no credential remains in the
+profile's `.env`, the current Clawdi runtime env/secret env, or any native YAML
+platform block. The existing atomic YAML transaction unsets the key rather than
+writing `false`, preserving other settings. Explicit `enabled: false` and
+platforms with user-owned credentials are untouched. Each committed repair is
+logged once and refreshes the existing Hermes services through normal activation.
+Existing linked agents retain their enable flags and historical channel service
+fingerprints while a credential survives, so this upgrade alone causes no config
+write or gateway restart.
+This prevents a withdrawn bot's stale enable flag from causing
+Hermes `missing_credentials` and gateway exit 78.
+
 Hermes WhatsApp withdrawal removes its projected enable flags only when the
 previous committed bundle belongs to the same deployment and instance, its
 projected session path still matches native configuration, and no pairing file
@@ -749,6 +768,9 @@ bindings or overwrite current applied authority to manufacture cleanup intent.
 Done: `scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts -t 'withdraws archived Hermes'`
 verifies bundle add/update/archive, native config loading, local ownership, and
 idempotent reconciliation in the disposable Docker runner.
+
+Done: `scripts/test.sh cli src/runtime/manifest-channels.test.ts src/runtime/manifest-reconciliation.test.ts`
+verifies credential-aware repair and unlink ownership in the disposable Docker runner.
 
 Each WhatsApp binding carries Link-scoped agent-token and egress-capability
 secret references plus a credential descriptor containing its id, explicit
