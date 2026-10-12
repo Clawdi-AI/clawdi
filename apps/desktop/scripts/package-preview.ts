@@ -11,7 +11,6 @@ for (const args of [
 	[
 		"run",
 		"electron-builder",
-		`--config.afterPack=${resolve(root, "scripts/after-pack.mjs")}`,
 		...(platform === "darwin"
 			? ["--mac", "zip"]
 			: platform === "win32"

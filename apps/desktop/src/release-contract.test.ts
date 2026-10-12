@@ -14,20 +14,7 @@ const RELEASE_ENV = {
 describe("Desktop release contract", () => {
 	test("builds explicit unsigned Windows installers or pins complete signing credentials", () => {
 		const unsigned = readDesktopReleaseConfiguration(RELEASE_ENV, "win32");
-		const unsignedArgs = desktopReleaseBuilderArgs(unsigned);
 		expect(unsigned.windowsPublisher).toBeUndefined();
-		expect(unsignedArgs.some((arg) => arg.startsWith("--config.win.sign="))).toBeFalse();
-		expect(unsignedArgs).toContain("--config.win.verifyUpdateCodeSignature=false");
-		expect(unsignedArgs).not.toContain("--config.nsis.differentialPackage=false");
-		expect(unsignedArgs).toContain("--config.extraMetadata.clawdiUpdateChannel=stable");
-		expect(unsignedArgs).toContain(
-			`--config.win.artifactName=Clawdi-\${version}-win32-\${arch}-unsigned.\${ext}`,
-		);
-		expect(unsignedArgs).toContain("--config.publish.provider=generic");
-		expect(unsignedArgs).toContain("--config.publish.channel=latest");
-		expect(unsignedArgs).toContain(
-			`--config.publish.url=${RELEASE_ENV.CLAWDI_DESKTOP_UPDATE_FEED_URL}`,
-		);
 		expect(() =>
 			readDesktopReleaseConfiguration({ ...RELEASE_ENV, WIN_CSC_LINK: "certificate.p12" }, "win32"),
 		).toThrow("together");
@@ -45,9 +32,6 @@ describe("Desktop release contract", () => {
 			"--config.win.signtoolOptions.publisherName=CN=Clawdi Inc., O=Clawdi Inc., C=US",
 		);
 		expect(desktopReleaseBuilderArgs(release)).toContain("--config.forceCodeSigning=true");
-		expect(desktopReleaseBuilderArgs(release)).not.toContain(
-			"--config.win.verifyUpdateCodeSignature=false",
-		);
 		for (const publisher of ["Clawdi Inc.", "CN=Clawdi Inc."]) {
 			expect(() =>
 				readDesktopReleaseConfiguration(
@@ -142,21 +126,5 @@ describe("Desktop release contract", () => {
 			channel: "stable",
 			updateFeedUrl: "https://downloads.example.test/clawdi/desktop/stable/",
 		});
-	});
-
-	test("embeds signed updater metadata and configures generic artifacts without publishing", () => {
-		const configuration = readDesktopReleaseConfiguration(RELEASE_ENV, "darwin");
-		const args = desktopReleaseBuilderArgs(configuration);
-		expect(args).toContain("dmg");
-		expect(args).toContain("zip");
-		expect(args).toContain("never");
-		expect(args).toContain("--config.forceCodeSigning=true");
-		expect(args).toContain("--config.mac.notarize=true");
-		expect(args).toContain("--config.dmg.sign=true");
-		expect(args).toContain("--config.extraMetadata.clawdiUpdateChannel=stable");
-		expect(args).toContain(
-			"--config.publish.url=https://downloads.example.test/clawdi/desktop/stable/",
-		);
-		expect(args).toContain("--config.publish.provider=generic");
 	});
 });

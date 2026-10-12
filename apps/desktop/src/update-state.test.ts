@@ -17,7 +17,7 @@ describe("desktop update state", () => {
 	});
 
 	test("keeps disabled builds inert", () => {
-		const disabled = { status: "disabled", reason: "unsigned" } as const;
+		const disabled = { status: "disabled", reason: "disabled-by-metadata" } as const;
 		expect(reduceDesktopUpdateState(disabled, { type: "check" })).toBe(disabled);
 		expect(reduceDesktopUpdateState(disabled, { type: "downloaded", version: "9.9.9" })).toBe(
 			disabled,

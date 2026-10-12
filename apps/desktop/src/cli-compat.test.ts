@@ -1,13 +1,5 @@
 import { expect, test } from "bun:test";
-import { meetsDesktopCliMinimum, nativeLauncherPath } from "./cli-compat";
-
-test("native launchers use the shared install's stable paths", () => {
-	expect(nativeLauncherPath("linux", "/home/user")).toBe("/home/user/.local/bin/clawdi");
-	expect(nativeLauncherPath("darwin", "/Users/user")).toBe("/Users/user/.local/bin/clawdi");
-	expect(nativeLauncherPath("win32", "C:\\Users\\user")).toBe(
-		"C:\\Users\\user\\.local\\share\\clawdi\\current\\clawdi.exe",
-	);
-});
+import { meetsDesktopCliMinimum } from "./cli-compat";
 
 test.each([
 	["0.16.7", false],

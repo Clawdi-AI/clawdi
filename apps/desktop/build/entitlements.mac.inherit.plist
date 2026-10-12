@@ -4,6 +4,7 @@
 <dict>
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
+	<!-- The bundled Bun CLI is re-signed with inherit entitlements and needs allow-unsigned-executable-memory. -->
 	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
 	<true/>
 </dict>

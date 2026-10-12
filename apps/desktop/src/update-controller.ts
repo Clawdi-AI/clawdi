@@ -16,9 +16,6 @@ export interface DesktopUpdater
 		| "autoDownload"
 		| "autoInstallOnAppQuit"
 		| "autoRunAppAfterInstall"
-		| "channel"
-		| "allowPrerelease"
-		| "allowDowngrade"
 		| "checkForUpdates"
 		| "quitAndInstall"
 	> {
@@ -46,30 +43,26 @@ export class DesktopUpdateController {
 	constructor(private readonly options: DesktopUpdateControllerOptions) {
 		this.updater = options.updater;
 		this.state =
-			"channel" in options.policy
+			options.policy.mode !== "disabled"
 				? { status: "idle" }
 				: { status: "disabled", reason: options.policy.reason };
 		this.options.onStateChange(this.state);
 	}
 
 	start(): void {
-		if (!("channel" in this.options.policy)) return;
+		if (this.options.policy.mode === "disabled") return;
 		// https://www.electron.build/docs/features/auto-update/
 		// DEB/RPM use checkForUpdates with autoDownload=false, never an installer.
-		this.updater.autoDownload = this.options.policy.enabled;
+		this.updater.autoDownload = this.options.policy.mode === "install";
 		// Before-quit awaits the application's service shutdown. Installation on
 		// quit is owned by electron-updater; its quit handler does not relaunch.
-		this.updater.autoInstallOnAppQuit = this.options.policy.enabled;
-		this.updater.channel = this.options.policy.channel === "stable" ? "latest" : "beta";
-		this.updater.allowPrerelease = this.options.policy.channel === "beta";
-		// Setting channel enables downgrades in electron-updater.
-		this.updater.allowDowngrade = false;
+		this.updater.autoInstallOnAppQuit = this.options.policy.mode === "install";
 		this.updater.on("checking-for-update", () => this.transition({ type: "check" }));
 		this.updater.on("update-available", (info: UpdateInfo) => {
 			this.transition({
 				type: "available",
 				version: info.version,
-				checkOnly: !this.options.policy.enabled,
+				checkOnly: this.options.policy.mode !== "install",
 			});
 			if (this.state.status === "available" && !this.notifiedVersions.has(info.version)) {
 				this.notifiedVersions.add(info.version);
@@ -81,7 +74,7 @@ export class DesktopUpdateController {
 		);
 		this.updater.on("update-not-available", () => this.transition({ type: "not-available" }));
 		this.updater.on("update-downloaded", (event: UpdateDownloadedEvent) => {
-			if (!this.options.policy.enabled) return;
+			if (this.options.policy.mode !== "install") return;
 			this.transition({ type: "downloaded", version: event.version });
 			if (this.state.status === "ready" && !this.notifiedVersions.has(event.version)) {
 				this.notifiedVersions.add(event.version);
@@ -109,7 +102,7 @@ export class DesktopUpdateController {
 	}
 
 	async checkForUpdates(): Promise<void> {
-		if (!("channel" in this.options.policy) || !canCheckForDesktopUpdate(this.state)) return;
+		if (this.options.policy.mode === "disabled" || !canCheckForDesktopUpdate(this.state)) return;
 		try {
 			await this.updater.checkForUpdates();
 		} catch (error) {
@@ -121,7 +114,7 @@ export class DesktopUpdateController {
 	}
 
 	installDownloadedUpdate(): boolean {
-		if (!this.options.policy.enabled || this.state.status !== "ready" || this.installing)
+		if (this.options.policy.mode !== "install" || this.state.status !== "ready" || this.installing)
 			return false;
 		this.installing = true;
 		this.installError = null;

@@ -28,6 +28,7 @@ declare global {
 }
 
 const desktop = resolve(import.meta.dir, "..");
+process.chdir(desktop);
 // Resolve directory symlinks before setting fixture homes. Windows may still
 // retain 8.3 aliases; bundled executable comparisons use file identity below.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "clawdi-shared-native-")));
@@ -158,15 +159,12 @@ try {
 		"node",
 		[
 			join(desktop, "node_modules/electron-builder/cli.js"),
-			"--projectDir",
-			desktop,
 			process.platform === "win32" ? "--win" : "--linux",
 			"--dir",
 			`--${process.arch}`,
 			"--publish",
 			"never",
 			`--config.directories.output=${join(root, "packaged")}`,
-			`--config.afterPack=${join(desktop, "scripts/after-pack.mjs")}`,
 		],
 		{
 			timeoutMs: 180_000,
@@ -363,15 +361,12 @@ $env:Path = [Environment]::GetEnvironmentVariable('Path', 'User') + ';' + [Envir
 			"node",
 			[
 				join(desktop, "node_modules/electron-builder/cli.js"),
-				"--projectDir",
-				desktop,
 				"--win",
 				"nsis",
 				`--${process.arch}`,
 				"--publish",
 				"never",
 				`--config.directories.output=${join(root, "nsis")}`,
-				`--config.afterPack=${join(desktop, "scripts/after-pack.mjs")}`,
 			],
 			{ timeoutMs: 180_000 },
 		);

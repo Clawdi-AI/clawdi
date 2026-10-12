@@ -26,7 +26,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun-ci
+      - name: Typecheck Desktop
+        run: bun run --cwd apps/desktop typecheck
+
   macos:
+    needs: verify
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
@@ -57,11 +70,10 @@ jobs:
         shell: bash
         run: |
           bun -e 'if (process.platform !== "darwin" || process.arch !== "${{ matrix.arch }}") throw new Error("Release runner is not native to target")'
-          bun run --cwd apps/desktop typecheck
           bun run --cwd apps/desktop test:internal
           bun test packages/cli/src/lib/machine-identity.test.ts
       - name: Package signed channel
-        shell: bash apps/desktop/scripts/with-signing-keychain.sh bash {0}
+        shell: bash
         env:
           CLAWDI_DESKTOP_VERSION: ${{ inputs.version }}
           CLAWDI_DESKTOP_ARCH: ${{ matrix.arch }}
@@ -98,6 +110,7 @@ jobs:
           retention-days: 14
 
   platforms:
+    needs: verify
     if: github.ref == 'refs/heads/main'
     strategy:
       fail-fast: false
@@ -133,7 +146,6 @@ jobs:
         shell: bash
         run: |
           bun -e 'if (process.arch !== "${{ matrix.arch }}" || process.platform !== "${{ matrix.platform }}") throw new Error("Runner is not native to target")'
-          bun run --cwd apps/desktop typecheck
           bun run --cwd apps/desktop test:internal
           bun test packages/cli/src/lib/machine-identity.test.ts
       - name: Verify native Windows target and contracts
@@ -142,8 +154,6 @@ jobs:
         run: |
           bun -e 'if (process.arch !== "${{ matrix.arch }}" || process.platform !== "win32") throw new Error("Runner is not native to target")'
           if ($LASTEXITCODE -ne 0) { throw 'Wrong native runner' }
-          bun run --cwd apps/desktop typecheck
-          if ($LASTEXITCODE -ne 0) { throw 'Typecheck failed' }
           bun run --cwd apps/desktop test:internal
           if ($LASTEXITCODE -ne 0) { throw 'Desktop tests failed' }
           bun test packages/cli/src/lib/machine-identity.test.ts

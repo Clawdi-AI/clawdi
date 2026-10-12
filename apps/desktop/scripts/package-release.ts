@@ -8,8 +8,6 @@ import {
 	readDesktopReleaseConfiguration,
 } from "../src/release-contract";
 import { standardUpdateMetadataName } from "../src/update-metadata";
-import { evaluateDesktopUpdatePolicy } from "../src/update-policy";
-import { readMacCodeSignature } from "../src/update-signature";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = join(desktopRoot, "release");
@@ -21,10 +19,7 @@ await run("bun", ["run", "build"]);
 await run("bun", ["run", "prepare:native"], {
 	CLAWDI_NATIVE_TARGET: `${configuration.platform}-${configuration.arch}`,
 });
-await run("bun", [
-	...desktopReleaseBuilderArgs(configuration),
-	`--config.afterPack=${join(desktopRoot, "scripts/after-pack.mjs")}`,
-]);
+await run("bun", desktopReleaseBuilderArgs(configuration));
 verifyPackagedUpdateConfiguration();
 if (configuration.platform === "darwin") {
 	await verifyReleaseSignature();
@@ -39,24 +34,12 @@ async function verifyReleaseSignature(): Promise<void> {
 		configuration.arch === "arm64" ? "mac-arm64" : "mac",
 		"Clawdi.app",
 	);
-	const executable = join(appBundle, "Contents", "MacOS", "Clawdi");
 	const cli = join(appBundle, "Contents", "Resources", "native", "clawdi");
 	await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appBundle]);
 	await run("codesign", ["--verify", "--strict", "--verbose=2", cli]);
 	await run("xcrun", ["stapler", "validate", appBundle]);
 	await run("spctl", ["--assess", "--type", "execute", "--verbose=4", appBundle]);
 	await run(cli, ["update", "--native-identity"]);
-	const signature = await readMacCodeSignature(executable);
-	const policy = evaluateDesktopUpdatePolicy({
-		isPackaged: true,
-		platform: "darwin",
-		isMacAppStore: false,
-		channel: configuration.channel,
-		signature: existsSync(executable) ? signature : null,
-	});
-	if (!policy.enabled) {
-		throw new Error("Desktop release must have a valid Developer ID Application signature.");
-	}
 }
 
 async function verifyReleaseArtifacts(version: string): Promise<void> {

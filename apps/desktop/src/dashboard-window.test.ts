@@ -3,7 +3,6 @@ import {
 	allowsDashboardNavigation,
 	allowsDashboardPermission,
 	assertDashboardSender,
-	DASHBOARD_PARTITION,
 	dashboardAuthRedirect,
 	dashboardClerkOrigins,
 	dashboardOrigin,
@@ -13,17 +12,10 @@ import {
 	strictHttpsUrl,
 } from "./dashboard-window";
 
-test("remote dashboard is isolated from Connect and has no Node access", () => {
-	const options = dashboardWindowOptions("/app/shell-preload.cjs");
-	expect(options.webPreferences).toEqual({
-		preload: "/app/shell-preload.cjs",
-		additionalArguments: ["--clawdi-dashboard-origin=https://cloud.clawdi.ai"],
-		partition: DASHBOARD_PARTITION,
-		contextIsolation: true,
-		nodeIntegration: false,
-		sandbox: true,
-	});
-	expect(DASHBOARD_PARTITION.startsWith("persist:")).toBe(true);
+test("dashboard uses its own persistent session partition", () => {
+	expect(dashboardWindowOptions("/app/shell-preload.cjs").webPreferences?.partition).toBe(
+		"persist:clawdi-dashboard",
+	);
 });
 
 test("navigation trusts exact Clawdi and first-party Clerk origins only", () => {

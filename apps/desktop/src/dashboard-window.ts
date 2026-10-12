@@ -142,9 +142,6 @@ export function dashboardWindowOptions(
 			preload,
 			additionalArguments: [`--clawdi-dashboard-origin=${origin}`],
 			partition: DASHBOARD_PARTITION,
-			contextIsolation: true,
-			nodeIntegration: false,
-			sandbox: true,
 		},
 	};
 }

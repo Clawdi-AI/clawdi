@@ -1,9 +1,17 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { dirname, join, relative as relativePath } from "node:path";
 import { parse, stringify } from "yaml";
+import { normalizeDesktopUpdateFeedUrl } from "../src/release-contract";
 import { desktopUpdateSiteTargets, releaseAssetMetadataName } from "../src/update-metadata";
-import { normalizeDesktopUpdateFeedUrl } from "../src/update-policy";
 import {
 	assertDesktopFeedDoesNotRegress,
 	desktopPausedVersions,
@@ -15,6 +23,9 @@ const output = process.argv[2];
 const paused = desktopPausedVersions(process.env.DESKTOP_PAUSED_VERSIONS);
 const now = Date.now();
 const siteUrl = process.env.DESKTOP_UPDATE_SITE_URL;
+const githubOutput = process.env.GITHUB_OUTPUT;
+if (githubOutput && !siteUrl)
+	throw new Error("DESKTOP_UPDATE_SITE_URL is required with GITHUB_OUTPUT.");
 if (siteUrl && !normalizeDesktopUpdateFeedUrl(siteUrl))
 	throw new Error("Invalid existing update site URL.");
 if (!repository || !/^[\w-]+\/[\w.-]+$/.test(repository) || !output) {
@@ -31,6 +42,22 @@ function gh(args: string[]): string {
 
 function record(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// Share each live response between the regression guard and content comparison.
+const liveFiles = new Map<string, string | undefined>();
+async function liveContent(relative: string): Promise<string | undefined> {
+	if (!siteUrl) return undefined;
+	if (!liveFiles.has(relative)) {
+		const response = await fetch(new URL(relative, siteUrl), {
+			signal: AbortSignal.timeout(15_000),
+			cache: "no-store",
+		});
+		if (response.status !== 200 && response.status !== 404)
+			throw new Error(`Could not read existing ${relative}: HTTP ${response.status}.`);
+		liveFiles.set(relative, response.status === 200 ? await response.text() : undefined);
+	}
+	return liveFiles.get(relative);
 }
 
 const pages: unknown = JSON.parse(
@@ -50,19 +77,12 @@ for (const { channel, arch, platform, path: relative } of desktopUpdateSiteTarge
 	const destination = join(output, relative);
 	rmSync(destination, { force: true });
 	const selected = selectDesktopUpdateRelease(releases, channel, now, paused);
-	if (siteUrl) {
-		const response = await fetch(new URL(relative, siteUrl), {
-			signal: AbortSignal.timeout(15_000),
-			cache: "no-store",
-		});
-		if (response.ok) {
-			const previous: unknown = parse(await response.text());
-			if (!record(previous) || typeof previous.version !== "string")
-				throw new Error(`Invalid existing ${relative}.`);
-			assertDesktopFeedDoesNotRegress(previous.version, selected?.version, paused);
-		} else if (response.status !== 404) {
-			throw new Error(`Could not read existing ${relative}: HTTP ${response.status}.`);
-		}
+	const previousContent = await liveContent(relative);
+	if (previousContent !== undefined) {
+		const previous: unknown = parse(previousContent);
+		if (!record(previous) || typeof previous.version !== "string")
+			throw new Error(`Invalid existing ${relative}.`);
+		assertDesktopFeedDoesNotRegress(previous.version, selected?.version, paused);
 	}
 	if (!selected) continue;
 	const { release, version } = selected;
@@ -79,7 +99,7 @@ for (const { channel, arch, platform, path: relative } of desktopUpdateSiteTarge
 		);
 	if (!asset && hasPlatformMatrix)
 		throw new Error(`Incomplete Desktop release: missing ${assetName}.`);
-	// Releases predating Intel support contain only the arm64 metadata.
+	// Early releases may omit Linux and Windows metadata.
 	if (!asset && (arch === "x64" || platform !== "darwin")) continue;
 	if (!record(asset) || typeof asset.id !== "number") throw new Error(`Missing ${relative}.`);
 	const metadata: unknown = parse(
@@ -128,4 +148,26 @@ for (const { channel, arch, platform, path: relative } of desktopUpdateSiteTarge
 		metadata.stagingPercentage = selected.stagingPercentage;
 	mkdirSync(dirname(destination), { recursive: true });
 	writeFileSync(destination, stringify(metadata));
+}
+
+if (githubOutput) {
+	// Include generated content and omitted feeds so pauses can remove a channel.
+	const files = new Set([
+		...readdirSync(output, { recursive: true, withFileTypes: true })
+			.filter((entry) => entry.isFile())
+			.map((entry) =>
+				relativePath(output, join(entry.parentPath, entry.name)).replaceAll("\\", "/"),
+			),
+		...desktopUpdateSiteTargets.map((target) => target.path),
+	]);
+	let changed = false;
+	for (const relative of files) {
+		const path = join(output, relative);
+		const local = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+		if (local !== (await liveContent(relative))) changed = true;
+	}
+	appendFileSync(githubOutput, `changed=${changed}\n`);
+	console.log(
+		changed ? "Desktop update site changed." : "Desktop update site is unchanged; skip deployment.",
+	);
 }

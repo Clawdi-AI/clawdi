@@ -1,9 +1,9 @@
+import { parseDn } from "builder-util-runtime";
 import {
 	type DesktopPlatform,
 	requireDesktopArchitecture,
 	requireDesktopPlatform,
 } from "./platform";
-import { isDesktopWindowsPublisherDn, normalizeDesktopUpdateFeedUrl } from "./update-policy";
 
 export interface DesktopReleaseConfiguration {
 	version: string;
@@ -90,9 +90,6 @@ export function readDesktopReleaseConfiguration(
 export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfiguration): string[] {
 	const signedWindows =
 		configuration.platform === "win32" && Boolean(configuration.windowsPublisher);
-	// Unsigned NSIS updates use HTTPS and the generated metadata's SHA-512.
-	// verifyUpdateCodeSignature=false omits publisherName from app-update.yml:
-	// https://www.electron.build/docs/win#verifyupdatecodesignature
 	const artifactNameOption =
 		configuration.platform === "darwin"
 			? "artifactName"
@@ -110,13 +107,11 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 		"never",
 		...(configuration.platform === "darwin"
 			? ["--config.forceCodeSigning=true", "--config.mac.notarize=true", "--config.dmg.sign=true"]
-			: configuration.platform === "win32"
-				? signedWindows
-					? [
-							"--config.forceCodeSigning=true",
-							`--config.win.signtoolOptions.publisherName=${configuration.windowsPublisher}`,
-						]
-					: ["--config.win.verifyUpdateCodeSignature=false"]
+			: signedWindows
+				? [
+						"--config.forceCodeSigning=true",
+						`--config.win.signtoolOptions.publisherName=${configuration.windowsPublisher}`,
+					]
 				: []),
 		// electron-builder expands these placeholders after selecting the target.
 		`--config.${artifactNameOption}=Clawdi-\${version}-${configuration.platform}-\${arch}${configuration.platform === "win32" && !signedWindows ? "-unsigned" : ""}.\${ext}`,
@@ -131,4 +126,45 @@ export function desktopReleaseBuilderArgs(configuration: DesktopReleaseConfigura
 
 function allPresent(env: Record<string, string | undefined>, names: string[]): boolean {
 	return names.every((name) => Boolean(env[name]?.trim()));
+}
+
+export function normalizeDesktopUpdateFeedUrl(value: unknown): string | null {
+	if (typeof value !== "string" || value !== value.trim()) return null;
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		return null;
+	}
+	if (
+		url.protocol !== "https:" ||
+		url.username ||
+		url.password ||
+		url.search ||
+		url.hash ||
+		!url.hostname ||
+		!url.pathname.endsWith("/")
+	) {
+		return null;
+	}
+	return url.href;
+}
+
+// Require DN notation here. The release verifier checks the complete Subject;
+// electron-updater remains responsible for downloaded-installer verification.
+export function isDesktopWindowsPublisherDn(value: unknown): value is string {
+	if (
+		typeof value !== "string" ||
+		value !== value.trim() ||
+		["\r", "\n", "\0"].some((character) => value.includes(character))
+	)
+		return false;
+	try {
+		// Use the same RFC2253 parser as electron-updater 6.8.9, including quoted
+		// and escaped values. Reject both a bare CN label and a CN-only DN.
+		const fields = parseDn(value);
+		return fields.has("CN") && fields.size > 1;
+	} catch {
+		return false;
+	}
 }

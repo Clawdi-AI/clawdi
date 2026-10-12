@@ -82,9 +82,6 @@ describe("DMG packaging recovery", () => {
 		const result = packageDmg("none");
 		expect(result.status).toBe(0);
 		expect(result.attempts).toHaveLength(1);
-		expect(result.attempts[0]).toContain(
-			`--config.afterPack=${root}/apps/desktop/scripts/after-pack.mjs`,
-		);
 		expect(result.attempts[0]).toContain("--prepackaged");
 		expect(result.attempts[0]).toContain("release/mac-arm64/Clawdi.app --mac dmg --arm64");
 		expect(result.detaches).toBe("");

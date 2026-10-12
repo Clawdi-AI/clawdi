@@ -31,13 +31,10 @@ const workflow = (name: string) => parse(read(`.github/workflows/${name}.yml`)) 
 
 describe("CI routing and coverage", () => {
 	test("keeps PR packaging and release builds without duplicate main push packaging", () => {
-		for (const name of ["desktop-platforms", "desktop-preview"]) {
-			const document = workflow(name);
-			expect(document.on.pull_request?.paths).toContain("apps/desktop/**");
-			expect(document.on.pull_request?.paths).toContain("scripts/build-desktop-dmg.sh");
-			expect(document.on.push).toBeUndefined();
-		}
 		const platforms = workflow("desktop-platforms");
+		expect(platforms.on.pull_request?.paths).toContain("apps/desktop/**");
+		expect(platforms.on.pull_request?.paths).toContain("scripts/build-desktop-dmg.sh");
+		expect(platforms.on.push).toBeUndefined();
 		expect(platforms.jobs.package?.strategy?.["max-parallel"]).toBeUndefined();
 		expect(platforms.on.workflow_dispatch).toBeDefined();
 		const release = workflow("desktop-channel-build");
