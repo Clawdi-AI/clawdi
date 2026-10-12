@@ -388,8 +388,8 @@ the old disabled preview cannot self-update.
 ### Rollout and pause control
 
 Stable releases enter the feed 24 hours after GitHub `published_at`, with
-electron-updater's documented `stagingPercentage: 25` through the first 48 hours,
-then omits the percentage for full rollout. Beta has no age gate or staging percentage. The
+electron-updater's documented `stagingPercentage: 25` through the first 48 hours.
+After that, the percentage is omitted for full rollout. Beta has no age gate or staging percentage. The
 Desktop Update Site workflow regenerates both channels hourly, on Desktop release
 publication, and on manual dispatch. It compares every prepared file (including
 `index.html`) and removed feeds with live Pages during preparation, skipping upload and

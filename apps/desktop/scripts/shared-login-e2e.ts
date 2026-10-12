@@ -54,7 +54,7 @@ try {
 		entrypoints: [join(repo, "apps/desktop/src/main.ts")],
 		target: "node",
 		format: "esm",
-		external: ["electron", "electron-updater", "builder-util-runtime"],
+		external: ["electron", "electron-updater"],
 		outdir: join(root, "dist"),
 		naming: "main.js",
 		plugins: [
@@ -98,7 +98,7 @@ acceptanceApp.desktopAcceptance = {
        quit:()=>{throw new Error('Unexpected quit');}, onQuit:()=>undefined
      });
      deferredUpdater.logger = null;
-     deferredController = new DesktopUpdateController({policy:{enabled:true,channel:'stable'}, updater:deferredUpdater,
+     deferredController = new DesktopUpdateController({policy:{mode:'install'}, updater:deferredUpdater,
        onStateChange:state=>{deferredState=state;}, onUpdateReady:()=>undefined,
        onInstallError:()=>{deferredRecovery=deferredInstallation?.recoverAfterFailure();}});
      deferredInstallation = new DesktopUpdateInstallation({platform:'win32', mutations,
