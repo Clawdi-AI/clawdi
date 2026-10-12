@@ -96,7 +96,6 @@ import { DesktopUpdateController } from "./update-controller";
 import { DesktopUpdateInstallation } from "./update-install";
 import { desktopUpdateDownloadUrl, desktopUpdateNotification } from "./update-notification";
 import { evaluateDesktopUpdatePolicy } from "./update-policy";
-import { readMacCodeSignature } from "./update-signature";
 import { type DesktopUpdateState, desktopUpdateStatusLabel } from "./update-state";
 
 const APP_SCHEME = "clawdi-app";
@@ -321,31 +320,20 @@ function registerAppProtocol(targetSession: Session): void {
 
 async function initializeUpdates(): Promise<void> {
 	const channel = readPackageMetadataField("clawdiUpdateChannel");
-	const shouldInspectSignature =
-		app.isPackaged &&
-		process.platform === "darwin" &&
-		process.mas !== true &&
-		(channel === "stable" || channel === "beta");
-	const signature = shouldInspectSignature ? await readMacCodeSignature(process.execPath) : null;
 	const policy = evaluateDesktopUpdatePolicy({
 		isPackaged: app.isPackaged,
 		platform: process.platform,
 		isMacAppStore: process.mas === true,
 		channel,
-		signature,
 		isAppImage: Boolean(process.env.APPIMAGE),
 	});
-	if (!("channel" in policy)) {
+	if (policy.mode === "disabled") {
 		console.info(`Desktop updates disabled: ${policy.reason}`);
 		updateState = { status: "disabled", reason: policy.reason };
 		renderUpdateMenus();
 		return;
 	}
-	// A Linux updater checks the same generic feed for DEB/RPM. AppImageUpdater
-	// requires APPIMAGE even to check; DebUpdater can check installed packages.
-	// autoDownload=false and the policy prohibit all artifact/installer operations.
-	// https://www.electron.build/docs/features/auto-update/
-	const updater = policy.enabled ? electronUpdater.autoUpdater : new electronUpdater.DebUpdater();
+	const updater = electronUpdater.autoUpdater;
 	updater.logger = console;
 	disableUpdateOnQuit = () => {
 		updater.autoInstallOnAppQuit = false;
@@ -506,9 +494,7 @@ async function maybePromptForUpdate(): Promise<void> {
 	) {
 		return;
 	}
-	const parent = [dashboardWindow, connectWindow].find(
-		(window) => window && !window.isDestroyed() && window.isVisible(),
-	);
+	const parent = activeDialogParent();
 	if (!parent) return;
 	updatePromptedVersion = updateState.version;
 	const choice = await showMessageBox(
@@ -657,7 +643,7 @@ function registerIpc(): void {
 	);
 	ipcMain.handle(DESKTOP_IPC.connectAgents, (event, rawConnections: unknown) =>
 		safeConnectAction(event, "connect the selected agents", async () => {
-			assertSafeDaemonMutation();
+			assertRuntimeLocation();
 			const result = await cli.connectAgents(readAgentConnections(rawConnections));
 			runAsync("refresh sync status", refreshTrayState());
 			runAsync(
@@ -908,13 +894,8 @@ function desktopCliCommandOptions(target: string): DesktopCliCommandOptions {
 	};
 }
 
-function hardenLocalWindow(
-	window: BrowserWindow,
-	allowedUrl: string,
-	label: string,
-	maxRendererReloads = 0,
-): void {
-	let rendererReloads = 0;
+function hardenLocalWindow(window: BrowserWindow, allowedUrl: string, label: string): void {
+	let rendererReloaded = false;
 	window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
 	const preventUnexpectedNavigation = (event: Electron.Event, url: string) => {
 		if (url !== allowedUrl) event.preventDefault();
@@ -931,8 +912,8 @@ function hardenLocalWindow(
 	window.webContents.on("render-process-gone", (_event, details) => {
 		if (quitting || window.isDestroyed()) return;
 		console.error(`${label} renderer exited: ${details.reason}`);
-		if (rendererReloads < maxRendererReloads) {
-			rendererReloads += 1;
+		if (!rendererReloaded) {
+			rendererReloaded = true;
 			window.webContents.reload();
 			return;
 		}
@@ -976,14 +957,11 @@ async function showConnectWindow(view?: DesktopConnectView): Promise<void> {
 		...(icon.isEmpty() ? {} : { icon }),
 		webPreferences: {
 			preload,
-			contextIsolation: true,
-			nodeIntegration: false,
-			sandbox: true,
 			spellcheck: false,
 		},
 	});
 	connectWindow = window;
-	hardenLocalWindow(window, CONNECT_URL, "Connect window", 1);
+	hardenLocalWindow(window, CONNECT_URL, "Connect window");
 	window.once("ready-to-show", () => window.show());
 	window.on("closed", () => {
 		runAsync("cancel sign-in", cli.cancelAuthentication());
@@ -1059,11 +1037,8 @@ async function refreshTrayState(): Promise<void> {
 				await signOutOfDesktop();
 				return;
 			}
-			if (
-				dashboardAccountId &&
-				(!state.auth.authenticated || state.auth.user?.id !== dashboardAccountId)
-			) {
-				dashboardAccountId = state.auth.authenticated ? (state.auth.user?.id ?? null) : null;
+			if (dashboardAccountId && state.auth.user?.id !== dashboardAccountId) {
+				dashboardAccountId = state.auth.user?.id ?? null;
 				if (dashboardWindow && !dashboardWindow.isDestroyed())
 					await dashboardWindow.loadURL(`${WEB_ORIGIN}/desktop-auth`);
 			}
@@ -1085,7 +1060,7 @@ async function setSyncEnabled(enabled: boolean): Promise<void> {
 	if (!enabled) return turnOffBackgroundSync();
 	try {
 		await withCriticalOperation(async () => {
-			assertSafeDaemonMutation();
+			assertRuntimeLocation();
 			const state = await cli.bootstrapState();
 			if (!state.auth.authenticated) {
 				await showConnectWindow();
@@ -1189,13 +1164,6 @@ function installationState(): DesktopInstallationState {
 function assertRuntimeLocation(): void {
 	if (!installationState().requiresMove) return;
 	throw new DesktopConnectError("Move Clawdi to Applications before starting its local runtime.");
-}
-
-function assertSafeDaemonMutation(): void {
-	if (!installationState().requiresMove) return;
-	throw new DesktopConnectError(
-		"Move Clawdi to Applications before connecting agents or repairing sync.",
-	);
 }
 
 function moveToApplicationsFolder(): DesktopMoveToApplicationsResult {
@@ -1320,7 +1288,6 @@ async function openDashboardWindow(): Promise<void> {
 		return;
 	}
 	const accountChanged = dashboardAccountId !== state.auth.user.id;
-	if (signingOut) return;
 	dashboardAccountId = state.auth.user.id;
 	if (dashboardWindow && !dashboardWindow.isDestroyed()) {
 		if (dashboardWindow.isMinimized()) dashboardWindow.restore();

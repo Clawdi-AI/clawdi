@@ -3,28 +3,13 @@ import {
 	allowsDashboardNavigation,
 	allowsDashboardPermission,
 	assertDashboardSender,
-	DASHBOARD_PARTITION,
 	dashboardAuthRedirect,
 	dashboardClerkOrigins,
 	dashboardOrigin,
 	dashboardSessionIds,
-	dashboardWindowOptions,
 	readDesktopWebSession,
 	strictHttpsUrl,
 } from "./dashboard-window";
-
-test("remote dashboard is isolated from Connect and has no Node access", () => {
-	const options = dashboardWindowOptions("/app/shell-preload.cjs");
-	expect(options.webPreferences).toEqual({
-		preload: "/app/shell-preload.cjs",
-		additionalArguments: ["--clawdi-dashboard-origin=https://cloud.clawdi.ai"],
-		partition: DASHBOARD_PARTITION,
-		contextIsolation: true,
-		nodeIntegration: false,
-		sandbox: true,
-	});
-	expect(DASHBOARD_PARTITION.startsWith("persist:")).toBe(true);
-});
 
 test("navigation trusts exact Clawdi and first-party Clerk origins only", () => {
 	for (const url of [

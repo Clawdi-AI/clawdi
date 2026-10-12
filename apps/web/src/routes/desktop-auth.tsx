@@ -1,7 +1,7 @@
 import {
 	type ClawdiDesktopBridge,
+	clawdiDesktopBridge,
 	type DesktopWebSession,
-	isClawdiDesktopBridge,
 } from "@clawdi/shared/desktop";
 import { useAuth, useClerk, useSignIn } from "@clerk/tanstack-react-start";
 import { createFileRoute } from "@tanstack/react-router";
@@ -19,8 +19,7 @@ export function DesktopAuthPage() {
 	const [desktopBridge, setDesktopBridge] = useState<ClawdiDesktopBridge | null>(null);
 	const [loaded, setLoaded] = useState(false);
 	useEffect(() => {
-		const candidate = "clawdiDesktop" in window ? window.clawdiDesktop : undefined;
-		setDesktopBridge(isClawdiDesktopBridge(candidate) ? candidate : null);
+		setDesktopBridge(clawdiDesktopBridge());
 		setLoaded(true);
 	}, []);
 	if (!loaded) return null;

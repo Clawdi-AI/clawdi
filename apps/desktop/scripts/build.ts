@@ -51,7 +51,7 @@ async function bundle(
 		naming: entry.endsWith(".tsx") ? "[name].[ext]" : name,
 		target,
 		format,
-		external: target === "node" ? ["electron", "electron-updater", "builder-util-runtime"] : [],
+		external: target === "node" ? ["electron", "electron-updater"] : [],
 		minify: true,
 		sourcemap: "none",
 	});

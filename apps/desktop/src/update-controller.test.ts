@@ -13,9 +13,6 @@ class FakeUpdater extends EventEmitter implements DesktopUpdater {
 	autoDownload = false;
 	autoInstallOnAppQuit = false;
 	autoRunAppAfterInstall = true;
-	channel = "latest";
-	allowPrerelease = false;
-	allowDowngrade = true;
 	installs: (boolean | undefined)[][] = [];
 	async checkForUpdates(): Promise<null> {
 		this.emit("checking-for-update");
@@ -29,7 +26,7 @@ const controllers: DesktopUpdateController[] = [];
 afterEach(() => {
 	for (const controller of controllers.splice(0)) controller.stop();
 });
-function fixture(policy: DesktopUpdatePolicy = { enabled: true, channel: "stable" }) {
+function fixture(policy: DesktopUpdatePolicy = { mode: "install" }) {
 	const updater = new FakeUpdater();
 	const states: DesktopUpdateState[] = [];
 	const ready: string[] = [];
@@ -69,18 +66,15 @@ describe("Desktop updater", () => {
 		expect(f.controller.installDownloadedUpdate()).toBe(false);
 		expect(f.updater.installs).toEqual([[]]);
 		expect(f.updater.autoInstallOnAppQuit).toBe(true);
-		expect(f.updater.allowDowngrade).toBe(false);
 		expect(desktopUpdateNotification("1.1.0", true).body).toBe(
 			"Clawdi Desktop 1.1.0 is ready — restart to update",
 		);
 	});
 	test("DEB/RPM only check, deduplicate the download notice and never download/install", async () => {
-		const f = fixture({ enabled: false, reason: "package-manager", channel: "beta" });
+		const f = fixture({ mode: "check" });
 		await download(f);
 		expect(f.updater.autoDownload).toBe(false);
 		expect(f.updater.autoInstallOnAppQuit).toBe(false);
-		expect(f.updater.channel).toBe("beta");
-		expect(f.updater.allowDowngrade).toBe(false);
 		expect(f.states.at(-1)).toEqual({ status: "available", version: "1.1.0" });
 		expect(f.ready).toEqual([]);
 		expect(f.available).toEqual(["1.1.0"]);

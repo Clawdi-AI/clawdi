@@ -845,10 +845,8 @@ bun run --cwd packages/cli test:watch:local                    # opt-in host-loc
 
 ## Releasing
 
-Desktop release leftovers have explicit owners and removal conditions. The
-Desktop owner keeps the macOS Electron entitlements until a signed preview
-proves launch, sign-in, and daemon installation, then trims any entitlement the
-runtime no longer needs. Windows signing is a release owner action; remove the stale
+Desktop release leftovers have explicit owners and removal conditions.
+Windows signing is a release owner action; remove the stale
 release note after a signed beta-to-beta update passes. Desktop download links
 are maintained by the Desktop owner and continue to use the GitHub releases search page until `clawdi.ai/download`
 exists, then switch the link and delete this note.

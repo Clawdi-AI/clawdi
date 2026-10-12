@@ -33,7 +33,7 @@ describe("Desktop release rollout", () => {
 		for (const age of [24, 30, 47.999])
 			expect(select([release("1.1.0", age)])?.stagingPercentage).toBe(25);
 		for (const age of [48, 96])
-			expect(select([release("1.1.0", age)])?.stagingPercentage).toBe(100);
+			expect(select([release("1.1.0", age)])?.stagingPercentage).toBeUndefined();
 	});
 	test("skips paused releases, resumes them when removed, can pause an entire channel", () => {
 		const releases = [release("1.1.0", 80), release("1.2.0", 50)];

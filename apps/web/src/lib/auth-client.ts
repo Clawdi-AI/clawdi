@@ -1,6 +1,6 @@
 "use client";
 
-import { isClawdiDesktopBridge } from "@clawdi/shared/desktop";
+import { clawdiDesktopBridge } from "@clawdi/shared/desktop";
 import { useAuth, useClerk, useSession, useUser } from "@clerk/tanstack-react-start";
 import { useCallback } from "react";
 import { ApiError } from "@/lib/api-errors";
@@ -116,9 +116,8 @@ export function useSessionIdentity() {
 }
 
 async function signOutOfDesktop(): Promise<boolean> {
-	const bridge =
-		typeof window !== "undefined" && "clawdiDesktop" in window ? window.clawdiDesktop : undefined;
-	if (!isClawdiDesktopBridge(bridge)) return false;
+	const bridge = clawdiDesktopBridge();
+	if (!bridge) return false;
 	await bridge.signOut();
 	resetChatwoot();
 	return true;

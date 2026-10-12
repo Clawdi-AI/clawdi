@@ -4,7 +4,8 @@
 # hdiutil info -plist / detach -force: https://keith.github.io/xcode-man-pages/hdiutil.1.html
 set -euo pipefail
 
-repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+desktop_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../apps/desktop" && pwd)"
+cd "$desktop_root"
 case "${1:-}" in
 	x64) bundle=mac ;;
 	arm64) bundle=mac-arm64 ;;
@@ -16,10 +17,8 @@ trap 'rm -rf "$retry_root"' EXIT
 hdiutil info -plist > "$retry_root/before.plist"
 
 build_dmg() {
-	node "$repo_root/apps/desktop/node_modules/electron-builder/cli.js" \
-		--projectDir "$repo_root/apps/desktop" \
-		--config.afterPack="$repo_root/apps/desktop/scripts/after-pack.mjs" \
-		--prepackaged "$repo_root/apps/desktop/release/$bundle/Clawdi.app" \
+	node "$desktop_root/node_modules/electron-builder/cli.js" \
+		--prepackaged "$desktop_root/release/$bundle/Clawdi.app" \
 		--mac dmg "--$arch" --publish never
 }
 

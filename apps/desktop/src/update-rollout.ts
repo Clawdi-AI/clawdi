@@ -45,7 +45,7 @@ export function selectDesktopUpdateRelease(
 			const age = now - publishedAt;
 			return age < 24 * HOUR_MS
 				? []
-				: [{ release, version, stagingPercentage: age < 48 * HOUR_MS ? 25 : 100 }];
+				: [{ release, version, stagingPercentage: age < 48 * HOUR_MS ? 25 : undefined }];
 		})
 		.sort((a, b) => Bun.semver.order(b.version, a.version))[0];
 }

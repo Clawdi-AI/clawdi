@@ -41,7 +41,7 @@ for (const platform of ["darwin", "win32"] as const) {
 	const restored = Promise.withResolvers<void>();
 	let recovery = Promise.resolve();
 	const controller = new DesktopUpdateController({
-		policy: { enabled: true, channel: "stable" },
+		policy: { mode: "install" },
 		updater,
 		onStateChange: (state) => states.push(state),
 		onUpdateReady: () => undefined,

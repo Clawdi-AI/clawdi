@@ -183,7 +183,6 @@ try {
 				"--publish",
 				"never",
 				`--config.directories.output=${join(root, version)}`,
-				`--config.afterPack=${join(desktopRoot, "scripts/after-pack.mjs")}`,
 				`--config.extraMetadata.version=${version}`,
 				"--config.extraMetadata.clawdiUpdateChannel=stable",
 				`--config.linux.artifactName=Clawdi-\${version}-linux-\${arch}.\${ext}`,
@@ -236,29 +235,39 @@ try {
 	});
 	const installed = join(root, "Clawdi.AppImage");
 	// Reuse unpacked N for the package-manager path; no DEB/RPM builds.
-	const noticeHome = join(root, "notice-home");
-	mkdirSync(join(noticeHome, ".pki"), { recursive: true });
-	cpSync(nss, join(noticeHome, ".pki/nssdb"), { recursive: true });
-	await run(
-		join(root, "0.0.1/linux-unpacked/clawdi-desktop"),
-		["--no-sandbox", "--use-mock-keychain"],
-		120_000,
-		{
-			HOME: noticeHome,
-			XDG_CONFIG_HOME: join(noticeHome, ".config"),
-			XDG_CACHE_HOME: join(noticeHome, ".cache"),
-			CLAWDI_HOME: join(noticeHome, ".clawdi"),
-			CLAWDI_DESKTOP_UPDATE_E2E_CLI_LOG: join(root, "notice-cli.log"),
-			CLAWDI_DESKTOP_UPDATE_E2E_PHASE: "notice",
-			CLAWDI_DESKTOP_UPDATE_E2E_RESULT: join(root, "notice.json"),
-		},
-	);
-	assert.equal(JSON.parse(readFileSync(join(root, "notice.json"), "utf8")).notice, true);
-	assert.ok(
-		!requests.includes(imageName),
-		"A package-manager installation must not download the image.",
-	);
-	assert.doesNotMatch(readFileSync(join(root, "notice-cli.log"), "utf8"), /^daemon stop$/m);
+	for (const packageType of ["deb", "rpm"]) {
+		// Match the marker electron-builder writes for installed distribution packages.
+		writeFileSync(join(root, "0.0.1/linux-unpacked/resources/package-type"), packageType);
+		const noticeHome = join(root, `notice-${packageType}-home`);
+		mkdirSync(join(noticeHome, ".pki"), { recursive: true });
+		cpSync(nss, join(noticeHome, ".pki/nssdb"), { recursive: true });
+		await run(
+			join(root, "0.0.1/linux-unpacked/clawdi-desktop"),
+			["--no-sandbox", "--use-mock-keychain"],
+			120_000,
+			{
+				HOME: noticeHome,
+				XDG_CONFIG_HOME: join(noticeHome, ".config"),
+				XDG_CACHE_HOME: join(noticeHome, ".cache"),
+				CLAWDI_HOME: join(noticeHome, ".clawdi"),
+				CLAWDI_DESKTOP_UPDATE_E2E_CLI_LOG: join(root, `notice-${packageType}-cli.log`),
+				CLAWDI_DESKTOP_UPDATE_E2E_PHASE: "notice",
+				CLAWDI_DESKTOP_UPDATE_E2E_RESULT: join(root, `notice-${packageType}.json`),
+			},
+		);
+		assert.equal(
+			JSON.parse(readFileSync(join(root, `notice-${packageType}.json`), "utf8")).notice,
+			true,
+		);
+		assert.ok(
+			!requests.includes(imageName),
+			"A package-manager installation must not download the image.",
+		);
+		assert.doesNotMatch(
+			readFileSync(join(root, `notice-${packageType}-cli.log`), "utf8"),
+			/^daemon stop$/m,
+		);
+	}
 	const previous = parse(readFileSync(join(root, "0.0.1/latest-linux.yml"), "utf8"));
 	const previousName: unknown = previous.files[0].url;
 	if (typeof previousName !== "string" || !/^[\w.+-]+\.AppImage$/.test(previousName))

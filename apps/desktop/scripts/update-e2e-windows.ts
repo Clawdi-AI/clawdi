@@ -258,7 +258,6 @@ $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new("$
 			[
 				...desktopReleaseBuilderArgs(configuration),
 				`--config.directories.output=${join(root, version)}`,
-				`--config.afterPack=${join(desktopRoot, "scripts/after-pack.mjs")}`,
 				// Documented generic-provider option for this single-range HTTPS server.
 				// https://www.electron.build/docs/publish/#genericserveroptions
 				"--config.publish.useMultipleRangeRequest=false",

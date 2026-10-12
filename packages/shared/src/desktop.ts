@@ -150,3 +150,10 @@ export function isClawdiDesktopBridge(value: unknown): value is ClawdiDesktopBri
 		typeof Reflect.get(value, "signOut") === "function"
 	);
 }
+
+/** Returns the dashboard bridge in Desktop, or null in browsers and during SSR. */
+export function clawdiDesktopBridge(): ClawdiDesktopBridge | null {
+	if (typeof window === "undefined") return null;
+	const candidate: unknown = Reflect.get(window, "clawdiDesktop");
+	return isClawdiDesktopBridge(candidate) ? candidate : null;
+}

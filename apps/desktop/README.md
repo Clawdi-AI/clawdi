@@ -14,11 +14,6 @@ declared as production dependencies of the Electron shell.
 
 ## Intentional release leftovers
 
-- The macOS entitlements in `build/entitlements.mac.plist` (`allow-jit`,
-  `allow-unsigned-executable-memory`, and `disable-library-validation`) remain
-  in the preview configuration. The Desktop owner should trim
-  any entitlement that is no longer needed after a signed preview proves launch,
-  sign-in, and daemon installation on macOS.
 - Windows signing remains an action for the release owner. The unsigned path is supported for
   previews; remove the owner note in the release section after a signed
   beta-to-beta update is verified.
@@ -248,6 +243,8 @@ bun run --cwd apps/desktop package:preview
 
 Preview packages are unsigned or ad-hoc signed and carry
 `clawdiUpdateChannel=disabled`, so the updater skips them deterministically.
+Desktop Signed Preview uses `package:release` with `0.0.0-beta.0` and an
+`example.invalid` feed; its update checks fail without accessing a release feed.
 Release builds download updates in the background. A native notification announces
 `Clawdi Desktop <version> is ready — restart to update`; clicking it or the
 Restart to Update menu item uses electron-updater's default restart.
@@ -283,9 +280,9 @@ Partial Windows signing configuration fails before building. With all three valu
 unset, the build emits a `-unsigned.exe`, its `.exe.blockmap`, and standard
 `latest.yml`/`beta.yml` referencing that exact filename. Unsigned Windows updates
 use HTTPS and electron-updater's SHA-512 validation, the same integrity model as
-the CLI. `win.verifyUpdateCodeSignature=false` omits `publisherName` from
-`app-update.yml`; no custom verifier is installed. With all three set, the default
-`verifyUpdateCodeSignature=true` and configured publisher enable verification.
+the CLI. Unsigned builds have no `publisherName` in `app-update.yml`, so
+electron-updater skips publisher verification. With all three set, the configured
+publisher enables verification.
 The build verifies Authenticode and exact
 Subject equality on the installer, app and CLI, and checks the publisher pin in
 `app-update.yml`. Linux requires no Apple/Windows secrets; its AppImage feed
@@ -318,13 +315,11 @@ standard electron-builder Developer ID signing identity and API key notarization
 `APPLE_API_KEY` (P8 file path), `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`.
 No separate Team ID configuration is required.
 
-CI follows [GitHub's documented certificate import flow](https://docs.github.com/en/actions/how-tos/deploy/deploy-to-third-party-platforms/sign-xcode-applications)
-using macOS `security` directly. The shared shell wrapper generates a random
-temporary keychain password with OpenSSL, removes the P12 immediately after
-import, and restores the keychain search list and deletes the temporary keychain
-on success or failure. It does not grant all applications access to the key.
-electron-builder uses `CSC_KEYCHAIN` and the installed, lockfile-pinned tool;
-no third-party certificate-import Action receives the signing secret.
+CI passes `CSC_LINK` and `CSC_KEY_PASSWORD` to electron-builder, which imports
+the certificate into a temporary keychain and cleans it up after packaging.
+The main app grants only `allow-jit`; inherit entitlements also grant
+`allow-unsigned-executable-memory` for the bundled Bun CLI, which is re-signed
+during packaging.
 
 For local packaging, run:
 
@@ -382,7 +377,7 @@ Workflows become dispatchable once present on the default branch.
 The standard electron-updater client reads its sole feed configuration from
 electron-builder's `app-update.yml`; no `setFeedURL` override or custom package
 feed URL is used. Release packaging validates that YAML against the strict HTTPS
-input and channel. The client selects `latest` or `beta`, checks after
+input and channel. The packaged configuration selects `latest` or `beta`; the client checks after
 30 seconds, every six hours and after system resume, and supports Check for Updates. Automatic
 downgrades are disabled. Channel selection is build-time, not an in-app switch.
 Beta remains on the beta feed even after a stable release; install the signed
@@ -394,10 +389,10 @@ the old disabled preview cannot self-update.
 
 Stable releases enter the feed 24 hours after GitHub `published_at`, with
 electron-updater's documented `stagingPercentage: 25` through the first 48 hours,
-then `stagingPercentage: 100`. Beta has no age gate or staging percentage. The
+then omits the percentage for full rollout. Beta has no age gate or staging percentage. The
 Desktop Update Site workflow regenerates both channels hourly, on Desktop release
 publication, and on manual dispatch. It compares every prepared file (including
-`index.html`) and removed feeds with live Pages using curl, skipping upload and
+`index.html`) and removed feeds with live Pages during preparation, skipping upload and
 deployment when unchanged. A generated file returning 404 requires deployment;
 a feed already absent both locally and online does not. Failed preparation or
 comparison preserves the deployed feed. Generation checks existing Pages versions
