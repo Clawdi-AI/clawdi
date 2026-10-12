@@ -12,6 +12,8 @@ import {
 
 import { dirname, join } from "node:path";
 
+import { parseEnv } from "node:util";
+
 import { readRuntimeAppliedState, runtimeContentSha256 } from "../src/runtime/applied-state";
 
 import { materializeHostedChannelCredentials } from "../src/runtime/manifest";
@@ -832,17 +834,17 @@ exit 64
 		expect(readFileSync(ambientHermesConfig, "utf-8")).toBe(ambientSentinel);
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("telegram:");
-		expect(hermesConfig).toContain("enabled: true");
 		expect(hermesConfig).toContain("discord:");
 		expect(hermesConfig).toContain("thread_require_mention: true");
 		expect(hermesConfig).not.toContain("telegram-agent-token");
 		expect(hermesConfig).not.toContain("discord-agent-token");
 		const parsedHermesConfig = readHermesConfigYaml(home);
+		expect(parsedHermesConfig).not.toHaveProperty("telegram.enabled");
+		expect(parsedHermesConfig).not.toHaveProperty("discord.enabled");
 		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(parsedHermesConfig.group_sessions_per_user).toBe(false);
 		expect(parsedHermesConfig.thread_sessions_per_user).toBe(true);
 		expect(parsedHermesConfig.telegram).toMatchObject({
-			enabled: true,
 			dm_policy: "allowlist",
 			group_policy: "allowlist",
 			allow_from: ["telegram-user"],
@@ -909,6 +911,10 @@ exit 64
 		expect(hermesEnv).toContain('TELEGRAM_ALLOW_ALL_USERS="true"');
 		expect(hermesEnv).toContain('DISCORD_ALLOW_ALL_USERS="true"');
 		expect(hermesEnv).toContain('HERMES_TELEGRAM_DISABLE_FALLBACK_IPS="true"');
+		const nativeEnvPath = join(home, ".hermes", ".env");
+		const nativeEnv = parseEnv(readFileSync(nativeEnvPath, "utf-8"));
+		expect(nativeEnv.TELEGRAM_BOT_TOKEN).toBe(`999999999:${"a".repeat(32)}`);
+		expect(nativeEnv.DISCORD_BOT_TOKEN).toBe(`clawdi_${"b".repeat(32)}`);
 		const profileBundle = readFileSync(getRuntimePaths().egressProfileBundle, "utf-8");
 		expect(profileBundle).toContain("/v1/channels/telegram");
 		expect(profileBundle).toContain("/v1/channels/discord");
@@ -922,10 +928,14 @@ exit 64
 		);
 		expect(discordOnly.installErrors).toEqual([]);
 		const discordOnlyHermesConfig = readHermesConfigYaml(home);
+		expect(discordOnlyHermesConfig).not.toHaveProperty("telegram.enabled");
+		expect(discordOnlyHermesConfig).not.toHaveProperty("discord.enabled");
+		const discordOnlyNativeEnv = parseEnv(readFileSync(nativeEnvPath, "utf-8"));
+		expect(discordOnlyNativeEnv).not.toHaveProperty("TELEGRAM_BOT_TOKEN");
+		expect(discordOnlyNativeEnv.DISCORD_BOT_TOKEN).toBe(`clawdi_${"b".repeat(32)}`);
 		expect(discordOnlyHermesConfig.group_sessions_per_user).toBe(false);
 		expect(discordOnlyHermesConfig.thread_sessions_per_user).toBe(true);
 		expect(discordOnlyHermesConfig.telegram).toMatchObject({
-			enabled: true,
 			dm_policy: "allowlist",
 			group_policy: "allowlist",
 			allow_from: ["telegram-user"],
@@ -949,11 +959,14 @@ exit 64
 		expect(removed.installErrors).toEqual([]);
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("TELEGRAM_BOT_TOKEN=");
 		expect(readSystemdEnvFile(paths, "hermes-gateway")).not.toContain("DISCORD_BOT_TOKEN=");
+		const clearedNativeEnv = parseEnv(readFileSync(nativeEnvPath, "utf-8"));
+		expect(clearedNativeEnv).not.toHaveProperty("TELEGRAM_BOT_TOKEN");
+		expect(clearedNativeEnv).not.toHaveProperty("DISCORD_BOT_TOKEN");
 		const clearedHermesConfig = readHermesConfigYaml(home);
 		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
-		expect(clearedHermesConfig.telegram.enabled).toBe(true);
+		expect(clearedHermesConfig).not.toHaveProperty("telegram.enabled");
+		expect(clearedHermesConfig).not.toHaveProperty("discord.enabled");
 		expect(clearedHermesConfig.discord).toMatchObject({
-			enabled: true,
 			dm_policy: "pairing",
 			group_policy: "allowlist",
 			allow_from: ["discord-user"],
