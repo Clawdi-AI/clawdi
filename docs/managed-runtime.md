@@ -332,6 +332,10 @@ service definitions and performs no service activation. Native Doctor still
 requires its user D-Bus manager to be available and owns its repair lifecycle;
 restoring the environment does not bypass native service or database checks.
 
+Official OpenClaw workspace discovery (`agents list --json`) allows up to two
+minutes per attempt, including gateway transition retries, to cover cold starts
+after reboot. Gateway state probes retain their 15-second deadline.
+
 The official OpenClaw roster supplies workspace inventory, not proof that every
 startup migration is complete. Clawdi does not run Doctor or archive an identity
 merely because a legacy `identity/device.json` exists. Normal native startup owns
