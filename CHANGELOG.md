@@ -52,9 +52,10 @@ only renames unmerged PR series and never-emitted definitions. See
 ### CLI 0.16.12
 
 - **Managed locale:** malformed or duplicated locale markers in Hermes or
-  OpenClaw `SOUL.md` now produce an advisory while the runtime continues running.
-  Clawdi preserves the file until the markers are repaired, then resumes locale
-  updates. Hermes timezone and other managed settings continue to reconcile.
+  OpenClaw `SOUL.md` are now auto-repaired using only known Clawdi-owned lines,
+  preserving all other text and blank lines. If repair cannot validate, the file
+  stays untouched and the runtime reports a non-fatal advisory. Healthy locale
+  blocks need no rewrite or gateway restart; Hermes managed settings still reconcile.
 
 ### CLI 0.16.11
 

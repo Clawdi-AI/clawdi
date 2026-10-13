@@ -848,16 +848,25 @@ Normalization maps hosted fields into the internal shape:
 
 Locale projection preserves user-authored content around the managed block in
 Hermes `~/.hermes/SOUL.md` and OpenClaw's official workspace `SOUL.md`. Malformed
-or duplicated block markers leave the entire file untouched and emit a non-fatal
-`managedLocaleConflicts` advisory in the `applied` watch event. Each entry is
-`<runtime>:<malformed|duplicated>:<path>` and contains no file content. Hermes
+or duplicated markers trigger deterministic auto-repair: remove exact lines from
+the current generated locale block, lines containing the case-sensitive substring
+`clawdi managed locale`, and only the first empty line immediately after an exact
+`## Clawdi managed locale` heading. All other lines, blank lines, and their line
+endings remain unchanged, including sentence lines from a different locale.
+Clawdi then appends one fresh managed block and revalidates its markers before
+writing atomically. A successful write logs `runtime.managed_locale_repaired`
+once with the runtime and original conflict kind, without file content.
+
+If repair cannot validate, the entire file stays untouched and an `applied`
+watch event carries the non-fatal `managedLocaleConflicts` advisory. Each entry
+is `<runtime>:<malformed|duplicated>:<path>` and contains no file content. Hermes
 timezone, terminal working directory, and dashboard settings still reconcile.
-Repair the markers to one intact pair (or remove the damaged managed block);
-the next convergence updates the locale block and clears the advisory. Intact,
-unchanged locale blocks retain their bytes and existing service fingerprints.
+An intact, unchanged block causes no file write or gateway restart. Hermes
+service fingerprints include the generated locale block rather than SOUL.md's
+file contents, so repairing the file alone also requires no gateway refresh.
 
 Done: `scripts/test.sh cli tests/runtime-manifest-source.test.ts` verifies locale
-conflicts, repair, and preservation of healthy locale blocks.
+auto-repair, advisory fallback, and preservation of healthy locale blocks.
 
 The outer Hosted selector remains unchanged for reader-first CLI upgrades.
 Hosted v2 normalizes both OpenClaw and Hermes to their official installers

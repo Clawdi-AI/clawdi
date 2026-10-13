@@ -1110,6 +1110,12 @@ function applyRuntimeEntryProjections(
 					hermesConfig,
 				);
 				if (localeProjection.file) state.managedLocaleFiles.push(localeProjection.file);
+				if (localeProjection.repaired) {
+					log.info("runtime.managed_locale_repaired", {
+						runtime: name,
+						conflict: localeProjection.repaired,
+					});
+				}
 				if (localeProjection.conflict) {
 					state.managedLocaleConflicts.push(`${name}:${localeProjection.conflict}`);
 				}

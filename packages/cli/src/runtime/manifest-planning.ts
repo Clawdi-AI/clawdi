@@ -316,7 +316,7 @@ export function validateRuntimeProjectionPlan(input: {
 	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
 	if (localeBlock) {
-		// Marker conflicts are advisory; reads still validate file access before applying.
+		// Plan the same marker repairs as apply without writing; remaining conflicts are advisory.
 		for (const name of Object.keys(manifest.runtimes)) {
 			if (manifest.runtimes[name]?.enabled !== true) continue;
 			if (name === "openclaw") {
