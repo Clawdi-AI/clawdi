@@ -49,6 +49,14 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.12
+
+- **Managed locale:** malformed or duplicated locale markers in Hermes or
+  OpenClaw `SOUL.md` are now auto-repaired using only known Clawdi-owned lines,
+  preserving all other text and blank lines. If repair cannot validate, the file
+  stays untouched and the runtime reports a non-fatal advisory. Healthy locale
+  blocks need no rewrite or gateway restart; Hermes managed settings still reconcile.
+
 ### CLI 0.16.11
 
 - **Hermes channels:** unlinking Telegram or Discord no longer leaves a platform

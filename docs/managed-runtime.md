@@ -819,7 +819,7 @@ Normalization maps hosted fields into the internal shape:
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Deployment/instance identity and checkpoint/content generation for cache and content state |
 | Bundle root `applyGeneration` | Optional deployment Apply identity; legacy bundles resolve it from checkpoint `generation` through one named compatibility rule |
 | `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
-| `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
+| `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone; projected into a managed `SOUL.md` block and Hermes native timezone |
 | `system.openclawControlUiAllowedOrigins` | Strict-v2 OpenClaw public origin allowlist |
 | `system.openclawGatewayAuth` | Strict-v2 OpenClaw token and required native shared-token capability; the token itself is an environment secret reference |
 | `system.hermesDashboardAuth` | Strict-v2 Hermes Clerk OIDC provider settings, deployment binding, public URL, issuer, and trusted proxy contract; no password or dashboard secret is part of the manifest |
@@ -845,6 +845,28 @@ Normalization maps hosted fields into the internal shape:
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit generic local sidecar profiles; Agent Plugin packages, Store metadata, and public installation APIs cannot declare them |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
+
+Locale projection preserves user-authored content around the managed block in
+Hermes `~/.hermes/SOUL.md` and OpenClaw's official workspace `SOUL.md`. Malformed
+or duplicated markers trigger deterministic auto-repair: remove exact lines from
+the current generated locale block, lines containing the case-sensitive substring
+`clawdi managed locale`, and only the first empty line immediately after an exact
+`## Clawdi managed locale` heading. All other lines, blank lines, and their line
+endings remain unchanged, including sentence lines from a different locale.
+Clawdi then appends one fresh managed block and revalidates its markers before
+writing atomically. A successful write logs `runtime.managed_locale_repaired`
+once with the runtime and original conflict kind, without file content.
+
+If repair cannot validate, the entire file stays untouched and an `applied`
+watch event carries the non-fatal `managedLocaleConflicts` advisory. Each entry
+is `<runtime>:<malformed|duplicated>:<path>` and contains no file content. Hermes
+timezone, terminal working directory, and dashboard settings still reconcile.
+An intact, unchanged block causes no file write or gateway restart. Hermes
+service fingerprints include the generated locale block rather than SOUL.md's
+file contents, so repairing the file alone also requires no gateway refresh.
+
+Done: `scripts/test.sh cli tests/runtime-manifest-source.test.ts` verifies locale
+auto-repair, advisory fallback, and preservation of healthy locale blocks.
 
 The outer Hosted selector remains unchanged for reader-first CLI upgrades.
 Hosted v2 normalizes both OpenClaw and Hermes to their official installers

@@ -25,6 +25,8 @@ export interface RuntimeConvergenceResult {
 	skillGuardRefusals?: HostedSkillGuardRefusal[];
 	/** Hermes native environment values kept by user ownership; they never fail the apply. */
 	hermesNativeEnvConflicts: string[];
+	/** Locale marker conflicts that could not be repaired never fail the apply. */
+	managedLocaleConflicts: string[];
 	/** Optional services withdrawn from this generation; the runtime itself still runs. */
 	serviceWithdrawals?: RuntimeServiceWithdrawal[];
 	agentPluginFailedNames: string[];

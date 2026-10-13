@@ -165,6 +165,7 @@ type RuntimeManifest = RuntimeManifestLoad["manifest"];
 type RuntimeEntry = [string, RuntimeManifest["runtimes"][string]];
 
 let lastLoggedHermesNativeEnvConflicts = "";
+let lastLoggedManagedLocaleConflicts = "";
 
 interface RuntimeConvergenceContext {
 	load: RuntimeManifestLoad;
@@ -212,6 +213,7 @@ interface RuntimeConvergenceState {
 	providerConflicts: RuntimeProviderConflict[];
 	skillGuardRefusals: HostedSkillGuardRefusal[];
 	hermesNativeEnvConflicts: string[];
+	managedLocaleConflicts: string[];
 	hermesChannelEnablementRepairs: string[];
 	serviceWithdrawals: { runtime: string; service: string }[];
 	/** OpenClaw channels whose managed projection is withdrawn for this generation. */
@@ -351,6 +353,7 @@ function initializeRuntimeConvergence(
 		providerConflicts: [],
 		skillGuardRefusals: [],
 		hermesNativeEnvConflicts: [],
+		managedLocaleConflicts: [],
 		hermesChannelEnablementRepairs: [],
 		serviceWithdrawals: [],
 		withdrawnOpenClawChannels: new Set(),
@@ -1098,7 +1101,7 @@ function applyRuntimeEntryProjections(
 				beginOpenClawConfigTransaction(openClawContext, environment);
 			}
 			try {
-				const localeFile = applyHostedRuntimeConfigProjection(
+				const localeProjection = applyHostedRuntimeConfigProjection(
 					name,
 					manifest,
 					projectionHome,
@@ -1106,7 +1109,16 @@ function applyRuntimeEntryProjections(
 					workspaceRoot,
 					hermesConfig,
 				);
-				if (localeFile) state.managedLocaleFiles.push(localeFile);
+				if (localeProjection.file) state.managedLocaleFiles.push(localeProjection.file);
+				if (localeProjection.repaired) {
+					log.info("runtime.managed_locale_repaired", {
+						runtime: name,
+						conflict: localeProjection.repaired,
+					});
+				}
+				if (localeProjection.conflict) {
+					state.managedLocaleConflicts.push(`${name}:${localeProjection.conflict}`);
+				}
 			} catch (error) {
 				state.installErrors.push(
 					`runtime ${name} config projection failed: ${
@@ -1218,6 +1230,15 @@ function applyRuntimeEntryProjections(
 			egressProjection.writtenRunConfigIds.add(
 				runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
 			);
+		}
+	}
+	const conflictKeys = [...state.managedLocaleConflicts].sort().join(",");
+	if (lastLoggedManagedLocaleConflicts !== conflictKeys) {
+		lastLoggedManagedLocaleConflicts = conflictKeys;
+		if (state.managedLocaleConflicts.length > 0) {
+			log.warn("runtime.managed_locale_conflicts", { conflicts: state.managedLocaleConflicts });
+		} else {
+			log.info("runtime.managed_locale_conflicts_cleared");
 		}
 	}
 }
@@ -1404,6 +1425,7 @@ function buildRuntimeConvergenceResult(
 		providerConflicts: state.providerConflicts,
 		skillGuardRefusals: state.skillGuardRefusals,
 		hermesNativeEnvConflicts: state.hermesNativeEnvConflicts,
+		managedLocaleConflicts: state.managedLocaleConflicts,
 		serviceWithdrawals: runtimeServiceWithdrawals(state.serviceWithdrawals),
 		nativeCredentialProviderIds: state.nativeCredentialProviderIds,
 		agentPluginFailedNames: [...state.agentPluginFailedNames].sort(),

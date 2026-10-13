@@ -22,46 +22,81 @@ export function managedLocaleBlock(locale: NonNullable<RuntimeManifest["locale"]
 		MANAGED_LOCALE_BLOCK_END,
 	].join("\n");
 }
-export function nextManagedLocaleFileContent(
-	path: string,
-	block: string,
-): {
-	existing: string;
-	next: string;
-} {
-	const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
-	const start = existing.indexOf(MANAGED_LOCALE_BLOCK_START);
-	const end = existing.indexOf(MANAGED_LOCALE_BLOCK_END);
+type ManagedLocaleConflict = "malformed" | "duplicated";
+
+function managedLocaleMarkerConflict(content: string): ManagedLocaleConflict | null {
+	const start = content.indexOf(MANAGED_LOCALE_BLOCK_START);
+	const end = content.indexOf(MANAGED_LOCALE_BLOCK_END);
 	const hasStart = start !== -1;
 	const hasEnd = end !== -1;
 	if (hasStart !== hasEnd || (hasStart && end < start)) {
-		throw new Error(`managed locale block markers are malformed in ${path}`);
+		return "malformed";
 	}
 	if (
 		hasStart &&
-		(existing.indexOf(MANAGED_LOCALE_BLOCK_START, start + MANAGED_LOCALE_BLOCK_START.length) !==
+		(content.indexOf(MANAGED_LOCALE_BLOCK_START, start + MANAGED_LOCALE_BLOCK_START.length) !==
 			-1 ||
-			existing.indexOf(MANAGED_LOCALE_BLOCK_END, end + MANAGED_LOCALE_BLOCK_END.length) !== -1)
+			content.indexOf(MANAGED_LOCALE_BLOCK_END, end + MANAGED_LOCALE_BLOCK_END.length) !== -1)
 	) {
-		throw new Error(`managed locale block markers are duplicated in ${path}`);
+		return "duplicated";
 	}
+	return null;
+}
 
-	let next: string;
-	if (hasStart && hasEnd) {
-		const suffixStart = end + MANAGED_LOCALE_BLOCK_END.length;
-		next = `${existing.slice(0, start)}${block}${existing.slice(suffixStart)}`;
-	} else {
-		const separator = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
-		next = `${existing}${separator}${block}\n`;
+function appendManagedLocaleBlock(existing: string, block: string): string {
+	const separator = existing.length === 0 ? "" : existing.endsWith("\n") ? "\n" : "\n\n";
+	return `${existing}${separator}${block}\n`;
+}
+
+function repairManagedLocaleFileContent(existing: string, block: string): string {
+	const ownedLines = new Set(block.split("\n").filter((line) => line !== ""));
+	const keptLines: string[] = [];
+	let followsManagedHeading = false;
+	// Keep each retained line's original terminator, including mixed line endings.
+	for (const line of existing.match(/[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$/g) ?? []) {
+		const content = line.replace(/(?:\r\n|\r|\n)$/, "");
+		const headingBlank = followsManagedHeading && content === "";
+		followsManagedHeading = content === "## Clawdi managed locale";
+		if (headingBlank || ownedLines.has(content) || content.includes("clawdi managed locale")) {
+			continue;
+		}
+		keptLines.push(line);
 	}
+	return appendManagedLocaleBlock(keptLines.join(""), block);
+}
+
+export function nextManagedLocaleFileContent(
+	path: string,
+	block: string,
+):
+	| { existing: string; next: string; repaired?: ManagedLocaleConflict }
+	| { conflict: ManagedLocaleConflict } {
+	const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
+	const conflict = managedLocaleMarkerConflict(existing);
+	if (conflict) {
+		const next = repairManagedLocaleFileContent(existing, block);
+		if (managedLocaleMarkerConflict(next)) return { conflict };
+		return { existing, next, repaired: conflict };
+	}
+	const start = existing.indexOf(MANAGED_LOCALE_BLOCK_START);
+	const end = existing.indexOf(MANAGED_LOCALE_BLOCK_END);
+	const next =
+		start !== -1 && end !== -1
+			? `${existing.slice(0, start)}${block}${existing.slice(end + MANAGED_LOCALE_BLOCK_END.length)}`
+			: appendManagedLocaleBlock(existing, block);
 
 	return { existing, next };
 }
-function updateManagedLocaleFile(path: string, block: string): string {
-	const { existing, next } = nextManagedLocaleFileContent(path, block);
-	if (next === existing) return path;
-	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
-	return path;
+function updateManagedLocaleFile(
+	path: string,
+	block: string,
+): { file: string | null; conflict: string | null; repaired?: ManagedLocaleConflict } {
+	const result = nextManagedLocaleFileContent(path, block);
+	if ("conflict" in result) return { file: null, conflict: `${result.conflict}:${path}` };
+	if (result.next !== result.existing) {
+		writePrivateFileAtomic(path, result.next, { mode: 0o600, dirMode: 0o700 });
+	}
+	return { file: path, conflict: null, repaired: result.repaired };
 }
 function applyHermesDashboardConfig(
 	context: HermesConfigTransaction,
@@ -98,14 +133,14 @@ export function applyHostedRuntimeConfigProjection(
 	openClawWorkspaceRoot: string | null,
 	workspaceRoot: string,
 	hermesConfig: HermesConfigTransaction | null,
-): string | null {
-	if (manifest.runtimes[runtime]?.enabled !== true) return null;
+): { file: string | null; conflict: string | null; repaired?: ManagedLocaleConflict } {
+	if (manifest.runtimes[runtime]?.enabled !== true) return { file: null, conflict: null };
 	const locale = manifest.locale;
 	if (runtime === "openclaw") {
 		if (!openClawWorkspaceRoot) throw new Error("OpenClaw official agent workspace is unavailable");
 		return locale
 			? updateManagedLocaleFile(join(openClawWorkspaceRoot, "SOUL.md"), managedLocaleBlock(locale))
-			: null;
+			: { file: null, conflict: null };
 	}
 	if (runtime === "hermes") {
 		if (!hermesConfig) throw new Error("Hermes config command is unavailable");
@@ -116,9 +151,9 @@ export function applyHostedRuntimeConfigProjection(
 		if (locale) reconcileHermesConfigValue(hermesConfig, "timezone", locale.timezone);
 		return locale
 			? updateManagedLocaleFile(join(hermesHome, "SOUL.md"), managedLocaleBlock(locale))
-			: null;
+			: { file: null, conflict: null };
 	}
-	return null;
+	return { file: null, conflict: null };
 }
 export function resolvedRuntimeServiceSettings(
 	manifest: RuntimeManifest,
