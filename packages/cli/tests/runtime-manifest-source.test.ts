@@ -34,6 +34,10 @@ import type { RuntimeManifest } from "../src/runtime/manifest";
 import { officialInstallArgs } from "../src/runtime/manifest-contract";
 import { runtimeConvergenceWithoutApply } from "../src/runtime/manifest-planning";
 import {
+	managedLocaleBlock,
+	nextManagedLocaleFileContent,
+} from "../src/runtime/manifest-runtime-config";
+import {
 	loadCommittedRuntimeManifest,
 	parseHostedRuntimeBundleV2,
 	type RuntimeBundleChannelBinding,
@@ -43,6 +47,7 @@ import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
 import { TRANSPARENT_EGRESS_PORT } from "../src/runtime/transparent-egress";
+import { log } from "../src/serve/log";
 import { getDaemonControlTokenPath } from "../src/serve/paths";
 import {
 	applyRuntimeBundleChannelsToManifestLoad,
@@ -2147,6 +2152,133 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		}
 	});
 
+	it("preserves the managed locale text used by existing Hermes service fingerprints", () => {
+		expect(managedLocaleBlock({ language: "en", timezone: "UTC" })).toBe(
+			"<!-- >>> clawdi managed locale >>>\n" +
+				"## Clawdi managed locale\n\n" +
+				"Use `en` as the default response language unless the user explicitly requests another language.\n" +
+				"Interpret ambiguous dates and times in `UTC` unless the user specifies another timezone.\n" +
+				"<!-- <<< clawdi managed locale <<< -->",
+		);
+	});
+
+	it.each([
+		{ runtime: "hermes", conflict: "malformed" },
+		{ runtime: "openclaw", conflict: "duplicated" },
+	] as const)(
+		"keeps $runtime applied with $conflict locale markers until they are repaired",
+		({ runtime, conflict }) => {
+			const home = join(root, "home", "clawdi");
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "var", "lib", "clawdi");
+			process.env.CLAWDI_RUN_DIR = join(root, "run", "clawdi");
+			if (runtime === "hermes") writeHermesVersionBinary(home, "0.20.1");
+			else seedOpenClawBinary(home);
+			const soulPath =
+				runtime === "hermes"
+					? join(home, ".hermes", "SOUL.md")
+					: join(home, ".openclaw", "workspace", "SOUL.md");
+			const oldBlock = managedLocaleBlock({ language: "en", timezone: "UTC" });
+			const damagedBlock =
+				conflict === "malformed"
+					? oldBlock.replace(
+							"<!-- <<< clawdi managed locale <<< -->",
+							"<!-- <<< clawdi managed locale <<<",
+						)
+					: `${oldBlock}\n\n${oldBlock}`;
+			const damagedSoul = Buffer.from(`User identity.\n\n${damagedBlock}\n\nUser epilogue.\n`);
+			mkdirSync(dirname(soulPath), { recursive: true });
+			writeFileSync(soulPath, damagedSoul);
+			const load = hostedSingleProviderModeLoad(home, runtime, "unmanaged", 1);
+			load.manifest.locale = { language: "fr", timezone: "Europe/Paris" };
+			const paths = getRuntimePaths();
+			const desiredBlock = managedLocaleBlock(load.manifest.locale);
+			const advisory = `${runtime}:${conflict}:${soulPath}`;
+			const watchEvent = (convergence: ReturnType<typeof convergeRuntimeManifest>) =>
+				runtimeWatchEventForOutcome(
+					{
+						kind: "converged",
+						load,
+						convergence,
+						cliUpdate: {
+							status: "not_requested",
+							packageSpec: null,
+							registry: null,
+							npmPrefix: paths.cliNpmPrefix,
+							npmCache: paths.cliNpmCache,
+							activePath: paths.cliManagedBin,
+							activeTarget: null,
+							version: null,
+							retryAt: null,
+							selfReexec: false,
+						},
+						systemdApply: { applied: true, systemUnitsChanged: [], userUnitsChanged: [] },
+						runtimeErrors: convergence.installErrors,
+						resourceProjectionErrors: convergence.resourceProjectionErrors,
+						cliRollback: null,
+						cliRollbackErrors: [],
+						selfReexec: false,
+					},
+					paths,
+				);
+			const warnings = spyOn(log, "warn");
+			const info = spyOn(log, "info");
+			try {
+				// Planning reads this same helper twice per convergence and must preserve the file.
+				expect(nextManagedLocaleFileContent(soulPath, desiredBlock)).toEqual({ conflict });
+				expect(readFileSync(soulPath)).toEqual(damagedSoul);
+				for (let attempt = 0; attempt < 2; attempt++) {
+					const convergence = convergeRuntimeManifest(load, paths);
+					expect(convergence.installErrors).toEqual([]);
+					expect(convergence.managedLocaleConflicts).toEqual([advisory]);
+					expect(convergence.outputs.managedLocaleFiles).not.toContain(soulPath);
+					expect(watchEvent(convergence)).toMatchObject({
+						status: "applied",
+						managedLocaleConflicts: [advisory],
+					});
+					expect(readFileSync(soulPath)).toEqual(damagedSoul);
+				}
+				expect(
+					warnings.mock.calls.filter(([event]) => event === "runtime.managed_locale_conflicts"),
+				).toHaveLength(1);
+				if (runtime === "hermes") {
+					const config = readHermesConfigYaml(home);
+					expect(config.timezone).toBe("Europe/Paris");
+					expect(expectRecord(config.terminal, "terminal").cwd).toBe(home);
+					expect(expectRecord(config.dashboard, "dashboard").public_url).toBe(
+						load.manifest.hermesDashboardAuth?.publicUrl,
+					);
+				}
+
+				writeFileSync(soulPath, `User identity.\n\n${oldBlock}\n\nUser epilogue.\n`);
+				const repaired = convergeRuntimeManifest(load, paths);
+				expect(repaired.installErrors).toEqual([]);
+				expect(repaired.managedLocaleConflicts).toEqual([]);
+				expect(repaired.outputs.managedLocaleFiles).toContain(soulPath);
+				expect(readFileSync(soulPath, "utf-8")).toBe(
+					`User identity.\n\n${desiredBlock}\n\nUser epilogue.\n`,
+				);
+				expect(watchEvent(repaired)).toMatchObject({ status: "applied" });
+				expect(watchEvent(repaired)).not.toHaveProperty("managedLocaleConflicts");
+				expect(
+					info.mock.calls.filter(([event]) => event === "runtime.managed_locale_conflicts_cleared"),
+				).toHaveLength(1);
+			} finally {
+				warnings.mockRestore();
+				info.mockRestore();
+			}
+		},
+	);
+
+	it("still fails locale planning on real file I/O errors", () => {
+		const soulPath = join(root, "SOUL.md");
+		mkdirSync(soulPath);
+		expect(() =>
+			nextManagedLocaleFileContent(soulPath, managedLocaleBlock(TEST_HOSTED_LOCALE)),
+		).toThrow();
+	});
+
 	it("updates the OpenClaw locale block without changing user-authored workspace content", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -2225,16 +2357,14 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 			recovery: {},
 		};
 		const paths = getRuntimePaths();
-		convergeRuntimeManifest(
-			{
-				manifest,
-				source: "remote-datasource",
-				sourcePath: "test://locale-hermes",
-				offline: false,
-				secretValues: {},
-			},
-			paths,
-		);
+		const load: RuntimeManifestLoad = {
+			manifest,
+			source: "remote-datasource",
+			sourcePath: "test://locale-hermes",
+			offline: false,
+			secretValues: {},
+		};
+		convergeRuntimeManifest(load, paths);
 
 		const soul = readFileSync(join(hermesHome, "SOUL.md"), "utf-8");
 		expect(soul.startsWith("User Hermes identity.\n")).toBe(true);
@@ -2242,6 +2372,16 @@ chmod +x "$HOME/.hermes/hermes-agent/venv/bin/python"
 		const config = readHermesConfigYaml(home);
 		expect(config.custom_setting).toBe("keep");
 		expect(config.timezone).toBe("Asia/Taipei");
+		const revision = systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"));
+		const soulPath = join(hermesHome, "SOUL.md");
+		utimesSync(soulPath, new Date("2000-01-01T00:00:00Z"), new Date("2000-01-01T00:00:00Z"));
+		const modifiedAt = statSync(soulPath).mtimeMs;
+		const healthy = convergeRuntimeManifest(load, paths);
+		expect(healthy.installErrors).toEqual([]);
+		expect(healthy.managedLocaleConflicts).toEqual([]);
+		expect(readFileSync(soulPath, "utf-8")).toBe(soul);
+		expect(statSync(soulPath).mtimeMs).toBe(modifiedAt);
+		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).toBe(revision);
 	});
 
 	it("rejects a desired generation below the durable applied generation", async () => {

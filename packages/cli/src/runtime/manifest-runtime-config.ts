@@ -25,17 +25,19 @@ export function managedLocaleBlock(locale: NonNullable<RuntimeManifest["locale"]
 export function nextManagedLocaleFileContent(
 	path: string,
 	block: string,
-): {
-	existing: string;
-	next: string;
-} {
+):
+	| {
+			existing: string;
+			next: string;
+	  }
+	| { conflict: "malformed" | "duplicated" } {
 	const existing = existsSync(path) ? readFileSync(path, "utf-8") : "";
 	const start = existing.indexOf(MANAGED_LOCALE_BLOCK_START);
 	const end = existing.indexOf(MANAGED_LOCALE_BLOCK_END);
 	const hasStart = start !== -1;
 	const hasEnd = end !== -1;
 	if (hasStart !== hasEnd || (hasStart && end < start)) {
-		throw new Error(`managed locale block markers are malformed in ${path}`);
+		return { conflict: "malformed" };
 	}
 	if (
 		hasStart &&
@@ -43,7 +45,7 @@ export function nextManagedLocaleFileContent(
 			-1 ||
 			existing.indexOf(MANAGED_LOCALE_BLOCK_END, end + MANAGED_LOCALE_BLOCK_END.length) !== -1)
 	) {
-		throw new Error(`managed locale block markers are duplicated in ${path}`);
+		return { conflict: "duplicated" };
 	}
 
 	let next: string;
@@ -57,11 +59,16 @@ export function nextManagedLocaleFileContent(
 
 	return { existing, next };
 }
-function updateManagedLocaleFile(path: string, block: string): string {
-	const { existing, next } = nextManagedLocaleFileContent(path, block);
-	if (next === existing) return path;
-	writePrivateFileAtomic(path, next, { mode: 0o600, dirMode: 0o700 });
-	return path;
+function updateManagedLocaleFile(
+	path: string,
+	block: string,
+): { file: string | null; conflict: string | null } {
+	const result = nextManagedLocaleFileContent(path, block);
+	if ("conflict" in result) return { file: null, conflict: `${result.conflict}:${path}` };
+	if (result.next !== result.existing) {
+		writePrivateFileAtomic(path, result.next, { mode: 0o600, dirMode: 0o700 });
+	}
+	return { file: path, conflict: null };
 }
 function applyHermesDashboardConfig(
 	context: HermesConfigTransaction,
@@ -98,14 +105,14 @@ export function applyHostedRuntimeConfigProjection(
 	openClawWorkspaceRoot: string | null,
 	workspaceRoot: string,
 	hermesConfig: HermesConfigTransaction | null,
-): string | null {
-	if (manifest.runtimes[runtime]?.enabled !== true) return null;
+): { file: string | null; conflict: string | null } {
+	if (manifest.runtimes[runtime]?.enabled !== true) return { file: null, conflict: null };
 	const locale = manifest.locale;
 	if (runtime === "openclaw") {
 		if (!openClawWorkspaceRoot) throw new Error("OpenClaw official agent workspace is unavailable");
 		return locale
 			? updateManagedLocaleFile(join(openClawWorkspaceRoot, "SOUL.md"), managedLocaleBlock(locale))
-			: null;
+			: { file: null, conflict: null };
 	}
 	if (runtime === "hermes") {
 		if (!hermesConfig) throw new Error("Hermes config command is unavailable");
@@ -116,9 +123,9 @@ export function applyHostedRuntimeConfigProjection(
 		if (locale) reconcileHermesConfigValue(hermesConfig, "timezone", locale.timezone);
 		return locale
 			? updateManagedLocaleFile(join(hermesHome, "SOUL.md"), managedLocaleBlock(locale))
-			: null;
+			: { file: null, conflict: null };
 	}
-	return null;
+	return { file: null, conflict: null };
 }
 export function resolvedRuntimeServiceSettings(
 	manifest: RuntimeManifest,

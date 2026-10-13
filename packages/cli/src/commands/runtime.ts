@@ -1503,6 +1503,9 @@ export function runtimeWatchEventForOutcome(
 		...(outcome.convergence.hermesNativeEnvConflicts.length
 			? { hermesNativeEnvConflicts: outcome.convergence.hermesNativeEnvConflicts }
 			: {}),
+		...(outcome.convergence.managedLocaleConflicts.length
+			? { managedLocaleConflicts: outcome.convergence.managedLocaleConflicts }
+			: {}),
 	});
 }
 
@@ -1799,6 +1802,10 @@ async function applyRuntimeDesiredState(
 							hermesNativeEnvConflicts: [
 								...convergence.hermesNativeEnvConflicts,
 								...replay.convergence.hermesNativeEnvConflicts,
+							],
+							managedLocaleConflicts: [
+								...convergence.managedLocaleConflicts,
+								...replay.convergence.managedLocaleConflicts,
 							],
 						},
 					};
