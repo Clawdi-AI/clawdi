@@ -393,7 +393,6 @@ function manifestTransportIsDiagnostic(
 		event.stage !== "network" ||
 		event.mode !== "repair" ||
 		boot?.status !== "ok" ||
-		boot.activeGeneration !== applied.generation ||
 		boot.instanceId !== applied.instanceId
 	)
 		return false;

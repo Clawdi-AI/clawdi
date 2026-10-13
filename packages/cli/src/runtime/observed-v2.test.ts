@@ -268,20 +268,23 @@ esac
 		};
 		globalThis.fetch = Object.assign(
 			async () => {
-				throw new TypeError("fetch failed");
+				throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
 			},
 			{ preconnect: () => undefined },
 		);
 		const failure = await loadRemoteRuntimeManifest(paths, { applyContext: context });
 		if (!("errors" in failure)) throw new Error("Expected transport failure");
 		expect(failure).toMatchObject({ failureKind: "transport", requestedApplyIdentity: identity });
+		expect(failure.errors[0]).toContain("fetch failed (ECONNRESET)");
 		const event = runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths);
 		if (!event) throw new Error("Expected watch error");
 		expect(event).toHaveProperty("healthImpact", "manifest_transport");
 		writeRuntimeWatchStatus(event, paths);
 		const healthy = await readHostedRuntimeObserved(paths);
 		expect(healthy?.status).toBe("ok");
-		expect(healthy?.convergeError).toBe("could not fetch runtime manifest: fetch failed");
+		expect(healthy?.convergeError).toBe(
+			"could not fetch runtime manifest: fetch failed (ECONNRESET)",
+		);
 		expect(runtimeWatchEventForOutcome({ kind: "load_failed", failure }, paths)).toHaveProperty(
 			"healthImpact",
 			"manifest_transport",
@@ -325,8 +328,37 @@ esac
 		writeRuntimeAppliedState({ ...applied, sourceRevision: "c".repeat(64) }, paths);
 		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
 		writeRuntimeAppliedState(applied, paths);
-		writeRuntimeBootStatus({ ...boot, activeGeneration: applied.generation + 1 }, paths);
-		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
+		const nextApplied = {
+			...applied,
+			generation: applied.generation + 1,
+			etag: '"bundle-applied-next"',
+			manifestETag: '"manifest-applied-next"',
+			applyReceiptId: "apply-receipt-watch-error-next",
+			bootNonce: "boot-nonce-watch-error-next",
+			sourceRevision: "f".repeat(64),
+			contentIdentity: { ...applied.contentIdentity, sha256: "a".repeat(64) },
+		};
+		writeRuntimeAppliedState(nextApplied, paths);
+		expect(readRuntimeBootStatus(paths).status?.activeGeneration).toBe(applied.generation);
+		const nextIdentity = runtimeAppliedApplyIdentity(nextApplied);
+		if (!nextIdentity) throw new Error("Expected next committed identity");
+		writeRuntimeWatchStatus({ status: "applied", stage: "final" }, paths);
+		const nextFailure = await loadRemoteRuntimeManifest(paths, {
+			applyContext: { ...context, identity: nextIdentity },
+		});
+		if (!("errors" in nextFailure)) throw new Error("Expected next transport failure");
+		const nextEvent = runtimeWatchEventForOutcome(
+			{ kind: "load_failed", failure: nextFailure },
+			paths,
+		);
+		if (!nextEvent) throw new Error("Expected next watch error");
+		expect(nextEvent).toHaveProperty("healthImpact", "manifest_transport");
+		writeRuntimeWatchStatus(nextEvent, paths);
+		const afterWatchApply = await readHostedRuntimeObserved(paths);
+		expect(afterWatchApply?.status).toBe("ok");
+		expect(afterWatchApply?.convergeError).toBe(
+			"could not fetch runtime manifest: fetch failed (ECONNRESET)",
+		);
 		writeRuntimeBootStatus({ ...boot, status: "error" }, paths);
 		expect((await readHostedRuntimeObserved(paths))?.status).toBe("error");
 		rmSync(paths.bootStatus);

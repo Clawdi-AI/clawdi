@@ -2203,6 +2203,9 @@ fallback for environments that reject custom WebSocket subprotocols.
   projection errors. A retryable Skill or Agent Plugin error may cache the
   committed core desired state.
 - Use ETags for remote refreshes where the datasource supports them.
+- A transient manifest transport failure with the exact applied runtime
+  authority remains diagnostic while the committed runtime is healthy, even
+  when boot status still reports the generation from the last process start.
 - Offline boot is allowed only when `recovery.allowOfflineBoot` is true and the
   cached manifest does not require missing secret values. Its root-only secret
   cache must reproduce the applied canonical secret union exactly, including
