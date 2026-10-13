@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -17,6 +17,7 @@ import {
 } from "./hosted-openclaw-context";
 import { activateHostedOpenClawSkill } from "./hosted-openclaw-skill";
 import type { HostedSkillSource } from "./manifest-resources";
+import * as runtimeUserCommand from "./runtime-user-command";
 
 let root = "";
 const originalSystemctlPath = process.env.CLAWDI_SYSTEMCTL_PATH;
@@ -56,8 +57,22 @@ printf '%s\n' 'LoadState=loaded' 'ActiveState=deactivating'
 	chmodSync(systemctl, 0o755);
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
 
-	expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
-	expect(readFileSync(attempts, "utf8")).toBe("2\n");
+	// Observe real subprocess calls to check the cold-start budget without waiting two minutes.
+	const spawn = spyOn(runtimeUserCommand, "spawnRuntimeUserCommand");
+	try {
+		expect(resolveHostedOpenClawWorkspace(home)).toBe(workspaceRoot);
+		expect(readFileSync(attempts, "utf8")).toBe("2\n");
+		expect(
+			spawn.mock.calls
+				.filter(([path, args]) => path === command && args.join(" ") === "agents list --json")
+				.map((call) => call[4]?.timeoutMs),
+		).toEqual([120_000, 120_000]);
+		expect(
+			spawn.mock.calls.filter(([path]) => path === systemctl).map((call) => call[4]?.timeoutMs),
+		).toEqual([15_000]);
+	} finally {
+		spawn.mockRestore();
+	}
 });
 
 test("reuses the official roster until its config revision changes", () => {

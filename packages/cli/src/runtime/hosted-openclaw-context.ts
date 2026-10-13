@@ -31,6 +31,7 @@ import { parseSystemctlShow, systemctlPath } from "./systemd";
 const OPENCLAW_AGENT_ID = "main";
 const OPENCLAW_CONFIG_PROBE_TIMEOUT_MS = 15_000;
 const OPENCLAW_CONFIG_REPAIR_TIMEOUT_MS = 120_000;
+const OPENCLAW_WORKSPACE_ROSTER_TIMEOUT_MS = 120_000;
 const OPENCLAW_GATEWAY_UNIT = "openclaw-gateway.service";
 const OPENCLAW_GATEWAY_TRANSITION_RETRIES = 2;
 const OPENCLAW_GATEWAY_TRANSITION_RETRY_DELAY_MS = 3_000;
@@ -176,7 +177,7 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 		return workspace;
 	}
 	let result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
-		timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
+		timeoutMs: OPENCLAW_WORKSPACE_ROSTER_TIMEOUT_MS,
 		maxBufferBytes: 1024 * 1024,
 	});
 	for (
@@ -188,7 +189,7 @@ export function resolveHostedOpenClawWorkspace(home: string): string {
 	) {
 		waitForOpenClawGatewayTransition();
 		result = spawnRuntimeUserCommand(command, ["agents", "list", "--json"], home, home, {
-			timeoutMs: OPENCLAW_CONFIG_PROBE_TIMEOUT_MS,
+			timeoutMs: OPENCLAW_WORKSPACE_ROSTER_TIMEOUT_MS,
 			maxBufferBytes: 1024 * 1024,
 		});
 	}

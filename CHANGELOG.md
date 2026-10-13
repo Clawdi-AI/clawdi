@@ -49,6 +49,11 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.13
+
+- **OpenClaw startup:** allow up to two minutes for workspace discovery, including
+  gateway transition retries, so a slow cold start after reboot can finish.
+
 ### CLI 0.16.12
 
 - **Managed locale:** malformed or duplicated locale markers in Hermes or
