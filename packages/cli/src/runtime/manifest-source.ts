@@ -189,6 +189,15 @@ class RuntimeManifestResponseError extends Error {
 
 class RuntimeManifestTransportError extends Error {}
 
+function runtimeManifestTransportMessage(error: unknown): string {
+	const message = toErrorMessage(error);
+	if (typeof error !== "object" || error === null || !("cause" in error)) return message;
+	const cause = error.cause;
+	if (typeof cause !== "object" || cause === null || !("code" in cause)) return message;
+	const code = cause.code;
+	return typeof code === "string" ? `${message} (${code})` : message;
+}
+
 function readJsonFile(path: string): unknown {
 	const content = readFileSync(path, "utf-8");
 	try {
@@ -268,7 +277,7 @@ async function fetchRuntimeManifestPayload(
 		} catch (error) {
 			// Only failure to obtain an HTTP response is non-mutating transport
 			// evidence. Authentication, payload and authority failures stay fatal.
-			throw new RuntimeManifestTransportError(toErrorMessage(error));
+			throw new RuntimeManifestTransportError(runtimeManifestTransportMessage(error));
 		}
 		const etag = response.headers.get("etag") ?? undefined;
 		if (response.status === 304) {

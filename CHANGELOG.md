@@ -51,6 +51,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.15
+
+- **Managed runtime diagnostics:** transient runtime manifest transport failures
+  keep a healthy committed runtime healthy across watch applies, and network
+  error cause codes are included in the reported failure message when available.
+
 ### CLI 0.16.14
 
 - **Provider reactivation:** Clawdi-owned custom connections automatically adopt a
