@@ -2,6 +2,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import chalk from "chalk";
 import { emit, wantsJson } from "../lib/command-output";
 import { getCliVersion } from "../lib/version";
+import { type RuntimeMcpConflict, readRuntimeAppliedState } from "../runtime/applied-state";
 import { readRuntimeApplyContext } from "../runtime/apply-identity";
 import { readHostPolicy } from "../runtime/host-policy";
 import { inspectHostedRuntimeIdentity } from "../runtime/hosted-runtime-contract";
@@ -78,6 +79,13 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 export async function runtimeStatus(opts: { json?: boolean } = {}) {
 	const paths = getRuntimePaths();
 	const read = readRuntimeBootStatus(paths);
+	let mcpConflicts: RuntimeMcpConflict[] | undefined;
+	try {
+		mcpConflicts = readRuntimeAppliedState(paths)?.mcpConflicts;
+	} catch (error) {
+		// Applied state is private; tenant status still works without root diagnostics.
+		if (!(error instanceof Error && "code" in error && error.code === "EACCES")) throw error;
+	}
 	const payload = {
 		schemaVersion: "clawdi.runtimeStatus.v1",
 		runtimeMode: paths.mode,
@@ -85,6 +93,7 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 			bootStatus: paths.bootStatus,
 		},
 		...read,
+		...(mcpConflicts ? { mcpConflicts } : {}),
 	};
 	if (read.error || read.status?.status === "error") process.exitCode = 1;
 
@@ -111,6 +120,9 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 	console.log(`  Status: ${read.status?.status ?? "unknown"}`);
 	console.log(`  Stage: ${read.status?.stage ?? "unknown"}`);
 	console.log(chalk.gray(`  Source: ${read.source}`));
+	for (const conflict of mcpConflicts ?? []) {
+		console.log(chalk.yellow(`  MCP ${conflict.runtime}/${conflict.serverName}: ${conflict.code}`));
+	}
 	if (read.status?.error) console.log(chalk.yellow(`  Error: ${read.status.error}`));
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 
 import {
 	chmodSync,
@@ -12,23 +12,18 @@ import {
 
 import { dirname, join } from "node:path";
 
-import { writeRuntimeAppliedState } from "../src/runtime/applied-state";
-
+import { readRuntimeAppliedState, writeRuntimeAppliedState } from "../src/runtime/applied-state";
 import {
 	managedSkillReservationLedgerPath,
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "../src/runtime/managed-skill-reservation";
-
 import type { RuntimeManifest } from "../src/runtime/manifest";
-
 import { officialInstallArgs } from "../src/runtime/manifest-contract";
-
 import type { RuntimeManifestLoad } from "../src/runtime/manifest-source";
-
 import { getRuntimePaths } from "../src/runtime/paths";
-
 import { ensureRuntimeStateDirs } from "../src/runtime/state";
+import { log } from "../src/serve/log";
 
 import {
 	convergeAndCommitTestRuntimeManifest,
@@ -423,7 +418,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search.proxy");
 	});
 
-	it("upgrades header-owned MCP state without a ledger and rejects an unmarked collision", () => {
+	it("upgrades header-owned MCP state without a ledger and skips an unmarked collision", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -481,9 +476,26 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			openclawConfigPath,
 			'{"mcp":{"servers":{"clawdi":{"url":"https://user.test","transport":"streamable-http","headers":{"Authorization":"user-token"}}}}}\n',
 		);
-		expect(() => convergeRuntimeManifest(load(2), paths)).toThrow(
-			/refusing to replace unmanaged openclaw MCP server clawdi/,
-		);
+		const before = readOpenClawMcpServers(home).clawdi;
+		const warn = spyOn(log, "warn");
+		try {
+			const collision = convergeAndCommitTestRuntimeManifest(load(2), paths);
+			expect(collision.installErrors).toEqual([]);
+			expect(collision.resourceProjectionErrors).toEqual([]);
+			expect(collision.mcpConflicts).toEqual([
+				{ runtime: "openclaw", serverName: "clawdi", code: "native_mcp_server_exists" },
+			]);
+			expect(readRuntimeAppliedState(paths)?.mcpConflicts).toEqual(collision.mcpConflicts);
+			expect(readOpenClawMcpServers(home).clawdi).toEqual(before);
+			const after = readFileSync(openclawConfigPath, "utf-8");
+			convergeAndCommitTestRuntimeManifest(load(2), paths);
+			expect(readFileSync(openclawConfigPath, "utf-8")).toBe(after);
+			expect(
+				warn.mock.calls.filter(([event]) => event === "runtime.mcp.native_conflicts"),
+			).toHaveLength(1);
+		} finally {
+			warn.mockRestore();
+		}
 	});
 
 	it("claims MCP ownership only after successful mutations and retries failed cleanup", () => {
@@ -535,14 +547,18 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		};
 
 		const beforeCollision = readFileSync(openclawConfigPath, "utf-8");
-		expect(() =>
-			convergeRuntimeManifest(
-				load(1, { "user-owned": managedRemoteMcpServer("user-owned", "v1") }),
-				getRuntimePaths(),
-			),
-		).toThrow(/refusing to replace unmanaged openclaw MCP server user-owned/);
-		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
+		const collision = convergeRuntimeManifest(
+			load(1, { "user-owned": managedRemoteMcpServer("user-owned", "v1") }),
+			getRuntimePaths(),
+		);
+		expect(collision.installErrors).toEqual([]);
+		expect(collision.resourceProjectionErrors).toEqual([]);
+		expect(collision.mcpConflicts).toEqual([
+			{ runtime: "openclaw", serverName: "user-owned", code: "native_mcp_server_exists" },
+		]);
+		expect(readOpenClawMcpServers(home)).toEqual(JSON.parse(beforeCollision).mcp.servers);
 		expect(existsSync(calls)).toBe(false);
+		const afterCollision = readFileSync(openclawConfigPath, "utf-8");
 
 		writeFileSync(failSet, "fail\n");
 		const failedSet = convergeRuntimeManifest(
@@ -550,7 +566,7 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 			getRuntimePaths(),
 		);
 		expect(failedSet.installErrors.join("\n")).toContain("runtime MCP projection failed");
-		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(afterCollision);
 		rmSync(failSet);
 
 		const omittedAfterFailure = convergeRuntimeManifest(load(3, {}), getRuntimePaths());
@@ -585,6 +601,77 @@ install -D -m 700 '${fixtureBinary}' "$prefix/bin/openclaw"
 		});
 		expect(readFileSync(calls, "utf-8").match(/unset owned-server/g)).toHaveLength(2);
 	});
+
+	it.each(["hermes", "openclaw"] as const)(
+		"%s preserves a masked MCP collision while updating other managed servers",
+		(runtime) => {
+			const home = join(root, "home", "clawdi");
+			process.env.HOME = home;
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "var", "lib", "clawdi");
+			process.env.CLAWDI_RUN_DIR = join(root, "run", "clawdi");
+			const configPath =
+				runtime === "hermes"
+					? join(home, ".hermes", "config.yaml")
+					: writeFakeOpenClawMcpBinary(home).configPath;
+			if (runtime === "hermes") writeHermesVersionBinary(home, "0.20.1");
+			mkdirSync(dirname(configPath), { recursive: true });
+			const native = {
+				url: "https://user.test",
+				transport: "streamable-http",
+				headers: { Authorization: "Bearer masked...xxxx" },
+			};
+			const servers = {
+				clawdi: native,
+				search: nativeManagedRemoteMcpServer("search", "v1"),
+				removed: nativeManagedRemoteMcpServer("removed", "v1"),
+			};
+			writeFileSync(
+				configPath,
+				JSON.stringify(runtime === "hermes" ? { mcp_servers: servers } : { mcp: { servers } }),
+			);
+			const load = hostedSingleProviderModeLoad(home, runtime, "unmanaged", 1);
+			load.manifest.projection = {
+				...load.manifest.projection,
+				mcp: {
+					servers: {
+						clawdi: managedRemoteMcpServer("clawdi", "v2"),
+						search: managedRemoteMcpServer("search", "v2"),
+						added: managedRemoteMcpServer("added", "v1"),
+					},
+				},
+			};
+			for (const name of ["clawdi", "search", "added"]) {
+				load.secretValues = { ...load.secretValues, [`secret://mcp/${name}`]: `${name}-test-key` };
+			}
+			const paths = getRuntimePaths();
+			const result = convergeAndCommitTestRuntimeManifest(load, paths);
+			expect(result.installErrors).toEqual([]);
+			expect(result.resourceProjectionErrors).toEqual([]);
+			expect(result.mcpConflicts).toEqual([
+				{ runtime, serverName: "clawdi", code: "native_mcp_server_exists" },
+			]);
+			const readServers = () =>
+				runtime === "hermes"
+					? readHermesConfigYaml(home).mcp_servers
+					: readOpenClawMcpServers(home);
+			const timeout = runtime === "openclaw" ? { requestTimeoutMs: 420_000 } : {};
+			expect(readServers()).toEqual({
+				clawdi: native,
+				search: { ...nativeManagedRemoteMcpServer("search", "v2"), ...timeout },
+				added: { ...nativeManagedRemoteMcpServer("added", "v1"), ...timeout },
+			});
+			expect(readRuntimeAppliedState(paths)?.mcpConflicts).toEqual(result.mcpConflicts);
+			load.manifest.generation = 2;
+			load.manifest.projection = { mcp: { servers: {} } };
+			const cleared = convergeAndCommitTestRuntimeManifest(load, paths);
+			expect(cleared.installErrors).toEqual([]);
+			expect(cleared.resourceProjectionErrors).toEqual([]);
+			expect(cleared.mcpConflicts).toEqual([]);
+			expect(readRuntimeAppliedState(paths)?.mcpConflicts).toBeUndefined();
+			expect(readServers()).toEqual({ clawdi: native });
+		},
+	);
 
 	it("keeps provider secrets sidecar-only in the ephemeral run-dir config", () => {
 		const home = join(root, "home", "clawdi");

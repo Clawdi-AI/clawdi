@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { log } from "../serve/log";
+import type { RuntimeMcpConflict } from "./applied-state";
 import {
 	beginHermesConfigTransaction,
 	commitHermesConfigTransaction,
@@ -46,7 +47,7 @@ export function applyHostedMcpProjections(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	workspaceRoot: string,
 	hermesConfig: HermesConfigTransaction | null,
-): void {
+): RuntimeMcpConflict[] {
 	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations, hermesConfig);
 	for (const runtime of [...plan.runtimes].sort((left, right) =>
 		left.name === right.name ? 0 : left.name === "hermes" ? -1 : 1,
@@ -70,6 +71,7 @@ export function applyHostedMcpProjections(
 			runRuntimeUserCommand(runtime.commandPath, args, "", plan.home, workspaceRoot);
 		}
 	}
+	return plan.runtimes.flatMap((runtime) => runtime.conflicts);
 }
 type HostedMcpTarget = (typeof HOSTED_RUNTIME_TARGETS)[number];
 type HostedMcpNativeServer = ReturnType<typeof hostedMcpNativeServerConfig>;
@@ -83,6 +85,7 @@ interface HostedMcpRuntimePlan {
 	name: HostedMcpTarget;
 	native: HostedMcpNativeState;
 	mutations: HostedMcpMutation[];
+	conflicts: RuntimeMcpConflict[];
 	commandPath: string | null;
 }
 interface HostedMcpReconciliationPlan {
@@ -109,34 +112,27 @@ function buildHostedMcpReconciliationPlan(
 			name === "openclaw" || runtimeAvailable
 				? readHostedMcpNativeState(name, home, commandPath, hermesConfig)
 				: { servers: {} };
-		const mutations = planHostedMcpMutations(name, native.servers, desiredServers);
+		const { mutations, conflicts } = planHostedMcpMutations(name, native.servers, desiredServers);
 		const hasSet = mutations.some((mutation) => mutation.kind === "set");
 		if (hasSet && (!observation?.enabled || observation.status === "install_failed")) {
 			throw new Error(`could not apply managed ${name} MCP servers: runtime is unavailable`);
 		}
-		return { name, native, mutations, commandPath };
+		return { name, native, mutations, conflicts, commandPath };
 	});
 	return { home, runtimes };
 }
-class HostedMcpOwnershipError extends Error {}
 function planHostedMcpMutations(
 	name: HostedMcpTarget,
 	servers: Record<string, unknown>,
 	desiredServers: Record<string, HostedMcpServerDesiredState>,
-): HostedMcpMutation[] {
+): { mutations: HostedMcpMutation[]; conflicts: RuntimeMcpConflict[] } {
 	const managedServerNames = new Set(
 		Object.entries(servers).flatMap(([serverName, server]) =>
 			hostedMcpNativeServerIsManaged(serverName, server) ? [serverName] : [],
 		),
 	);
-	for (const serverName of Object.keys(desiredServers).sort()) {
-		if (Object.hasOwn(servers, serverName) && !managedServerNames.has(serverName)) {
-			throw new HostedMcpOwnershipError(
-				`refusing to replace unmanaged ${name} MCP server ${serverName}`,
-			);
-		}
-	}
 	const mutations: HostedMcpMutation[] = [];
+	const conflicts: RuntimeMcpConflict[] = [];
 	for (const serverName of [...managedServerNames].sort()) {
 		if (!Object.hasOwn(desiredServers, serverName) && Object.hasOwn(servers, serverName)) {
 			mutations.push({ kind: "remove", serverName });
@@ -145,12 +141,16 @@ function planHostedMcpMutations(
 	for (const [serverName, desired] of Object.entries(desiredServers).sort(([a], [b]) =>
 		a.localeCompare(b),
 	)) {
+		if (Object.hasOwn(servers, serverName) && !managedServerNames.has(serverName)) {
+			conflicts.push({ runtime: name, serverName, code: "native_mcp_server_exists" });
+			continue;
+		}
 		const server = hostedMcpNativeServerConfig(name, serverName, desired);
 		if (!canonicalJsonEqual(servers[serverName], server)) {
 			mutations.push({ kind: "set", serverName, server });
 		}
 	}
-	return mutations;
+	return { mutations, conflicts };
 }
 function applyHermesMcpMutations(
 	transaction: HermesConfigTransaction,
@@ -176,25 +176,27 @@ export function reconcileHostedHermesProfileMcp(
 	command: string | null,
 	defaultConfig: HermesConfigTransaction | null,
 	identity: RuntimeUserIdentity,
-): string[] {
-	if (!command || !executableExists(command)) return [];
+): { errors: string[]; conflicts: RuntimeMcpConflict[] } {
+	const errors: string[] = [];
+	const conflicts: RuntimeMcpConflict[] = [];
+	const result = { errors, conflicts };
+	if (!command || !executableExists(command)) return result;
 	let names: string[];
 	try {
 		// Upstream _get_profiles_root() anchors profiles to the same root used by discovery.
 		const profilesRoot = join(home, ".hermes", "profiles");
-		if (!existsSync(profilesRoot) || readdirSync(profilesRoot).length === 0) return [];
+		if (!existsSync(profilesRoot) || readdirSync(profilesRoot).length === 0) return result;
 		names = listHermesProfileNames(home);
 	} catch {
 		if (!profileDiscoveryWarningLogged) {
 			profileDiscoveryWarningLogged = true;
 			log.warn("runtime.hermes-profile-mcp.skipped", { reason: "profile_discovery_failed" });
 		}
-		return [];
+		return result;
 	}
-	if (names.length === 1 && names[0] === "default") return [];
+	if (names.length === 1 && names[0] === "default") return result;
 	const desired =
 		manifest.runtimes.hermes?.enabled === true ? hostedMcpIntent(manifest).servers : {};
-	const errors: string[] = [];
 	const seenPaths = new Set(defaultConfig ? [defaultConfig.path] : []);
 	for (const profile of names) {
 		let reason = "config_path_or_read_failed";
@@ -204,8 +206,9 @@ export function reconcileHostedHermesProfileMcp(
 			seenPaths.add(transaction.path);
 			reason = "config_invalid";
 			const native = readHostedMcpNativeState("hermes", home, command, transaction);
-			const mutations = planHostedMcpMutations("hermes", native.servers, desired);
-			applyHermesMcpMutations(transaction, native.servers, mutations);
+			const plan = planHostedMcpMutations("hermes", native.servers, desired);
+			conflicts.push(...plan.conflicts);
+			applyHermesMcpMutations(transaction, native.servers, plan.mutations);
 			reason = "config_commit_failed";
 			const result = withRuntimeUserFileAccess(
 				() => commitHermesConfigTransaction(transaction),
@@ -215,12 +218,10 @@ export function reconcileHostedHermesProfileMcp(
 				errors.push(`Hermes profile MCP projection failed (profile ${profile}): config_conflict`);
 		} catch (error) {
 			if (error instanceof HermesConfigYamlInvalidError) reason = "config_invalid";
-			errors.push(
-				`Hermes profile MCP projection failed (profile ${profile}): ${error instanceof HostedMcpOwnershipError ? error.message : reason}`,
-			);
+			errors.push(`Hermes profile MCP projection failed (profile ${profile}): ${reason}`);
 		}
 	}
-	return errors;
+	return result;
 }
 
 function hostedMcpNativeServerIsManaged(serverName: string, server: unknown): boolean {

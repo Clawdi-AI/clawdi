@@ -49,6 +49,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.14
+
+- **Provider reactivation:** Clawdi-owned custom connections automatically adopt a
+  reactivated incarnation of the same provider, so restarting the agent can converge.
+- **Managed MCP:** a same-name native server is preserved and reported as a local
+  conflict while other servers reconcile and the agent continues starting.
+
 ### CLI 0.16.13
 
 - **OpenClaw startup:** allow up to two minutes for workspace discovery, including

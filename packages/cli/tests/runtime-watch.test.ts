@@ -106,7 +106,7 @@ describe("runtime watch poll delay", () => {
 		]);
 	});
 
-	it("applied events carry Hermes native environment conflicts", () => {
+	it("native environment and MCP conflicts keep runtime watch applied", () => {
 		const home = join(root, "home", "clawdi");
 		const paths = seedRuntimeWatchLocaleBaseline(
 			home,
@@ -123,6 +123,9 @@ describe("runtime watch poll delay", () => {
 			projectedProviderIds: {},
 		});
 		convergence.hermesNativeEnvConflicts = ["TELEGRAM_BOT_TOKEN"];
+		convergence.mcpConflicts = [
+			{ runtime: "hermes", serverName: "clawdi", code: "native_mcp_server_exists" },
+		];
 		const event = runtimeWatchEventForOutcome(
 			{
 				kind: "converged",

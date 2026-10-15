@@ -1907,18 +1907,19 @@ Directory trust checks remain mandatory: every root-managed directory must be
 a real, root-owned directory without group/world write permission before Apply
 begins.
 
-Generic MCP reconciliation compares desired servers, the previous managed
-server-name ownership ledger, and the current native map. The ledger never
-stores desired or native config values. A retained v1 ledger is migrated by
-strictly validating its schema, runtime keys, server-map boundaries, and server
-names, then discarding every legacy config value; all desired native config is
-derived from the current manifest. OpenClaw current state is the
+Generic MCP reconciliation compares desired servers with the current native map.
+A server is Clawdi-owned only when one of its headers retains the matching
+managed MCP placeholder. OpenClaw current state is the
 canonical `mcp.servers` object in `~/.openclaw/openclaw.json`; Hermes uses
 `mcp_servers` in `~/.hermes/config.yaml`. A desired name that already exists
-without ledger ownership fails closed. Native absence already satisfies a
-managed deletion. The convergence transaction snapshots both complete native
-configs and the ledger, preserves unrelated entries, writes the ledger last,
-and restores the exact previous files and metadata if any later mutation fails.
+without a managed header placeholder is left untouched. Other servers still
+reconcile, including Hermes named profiles, and apply remains successful. The
+CLI records `mcpConflicts` in its private applied state and exposes it in local
+`clawdi runtime status --json` when the caller can read that state. Conflicts are
+logged when the committed conflict list changes; they are omitted from Cloud
+observations and heartbeat events. Native absence already satisfies a managed
+deletion. The convergence transaction preserves unrelated native entries and
+restores the previous configs if a later required mutation fails.
 Hermes' `mcp add` and `mcp remove` flows are interactive and perform live
 discovery, while `mcp list` has no machine-readable output and does not expose
 the complete native map. Hosted therefore resolves the official config path
@@ -1937,6 +1938,14 @@ and
 plus Hermes'
 [`tools/mcp_tool.py` lines 1-64](https://github.com/NousResearch/hermes-agent/blob/8208fc52701332f213e6c51ebc0b610be00300de/tools/mcp_tool.py#L1-L64),
 which defines `mcp_servers` URL, header, transport, and SSE handling.
+
+Clawdi-owned custom provider connections adopt a new incarnation when the
+provider UUID is unchanged and no native credential handoff exists. A different
+provider UUID or a handed-off/native identity still requires explicit operator
+handoff; see [provider identity](ai-providers.md#explicit-native-identity-handoff).
+
+Done: `scripts/test.sh cli src/runtime/connection-provider-config.test.ts tests/runtime-mcp.test.ts src/runtime/observed-v2.test.ts`
+passes, including journal updates, preserved native entries, and Cloud observation compatibility.
 
 Short-lived consumer projections belong under the runtime run directory, not
 in durable config. The runtime-user aggregate continues to exclude refs used

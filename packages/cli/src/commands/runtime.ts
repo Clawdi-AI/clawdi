@@ -10,6 +10,7 @@ import {
 	runtimeAppliedApplyIdentity,
 	runtimeAppliedStateSchema,
 	runtimeContentSha256,
+	runtimeMcpConflicts,
 	runtimeProviderConflicts,
 	runtimeServiceWithdrawals,
 	writeRuntimeAppliedState,
@@ -367,6 +368,7 @@ export function commitRuntimeAppliedState(input: {
 	// the independently rendered runtime bundle. Persist both authorities.
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
 	const providerConflicts = runtimeProviderConflicts(input.convergence.providerConflicts ?? []);
+	const mcpConflicts = runtimeMcpConflicts(input.convergence.mcpConflicts ?? []);
 	const serviceWithdrawals = runtimeServiceWithdrawals(input.convergence.serviceWithdrawals ?? []);
 	const applied = runtimeAppliedStateSchema.parse({
 		schemaVersion: "clawdi.runtimeAppliedState.v2",
@@ -393,6 +395,7 @@ export function commitRuntimeAppliedState(input: {
 		...(input.skillEvidence ? { skillEvidence: input.skillEvidence } : {}),
 		nativeCredentialProviderIds: input.convergence.nativeCredentialProviderIds,
 		...(providerConflicts.length > 0 ? { providerConflicts } : {}),
+		...(mcpConflicts.length > 0 ? { mcpConflicts } : {}),
 		...(serviceWithdrawals.length > 0 ? { serviceWithdrawals } : {}),
 	});
 	if (input.load.manifest.recovery.cacheManifest !== false) {
