@@ -634,8 +634,11 @@ for newly created rows; reactivation or explicit handoff enables it permanently.
 Healthy legacy bindings retain their old projection even with a newer reader:
 upgrading software alone never infers or writes a Cloud tuple by provider name.
 Identified new providers and explicitly handed-off providers bind
-`(providerUuid, incarnationId)` into their transfer entries. Reactivated providers
-cannot inherit an old or missing tuple merely because their name matches.
+`(providerUuid, incarnationId)` into their transfer entries. Clawdi-owned entries
+without a handoff adopt a new incarnation of the same provider UUID while Cloud
+still holds the credential. An unmarked legacy entry adopts its first tuple in
+the same credential environment. A matching name never authorizes replacing a
+different provider UUID or a handed-off/native credential identity.
 The `provider-identity-v1` capability gates the additive manifest fields. Existing
 legacy readers remain available for unchanged legacy projections; they cannot
 process a pending handoff or native credential authority.

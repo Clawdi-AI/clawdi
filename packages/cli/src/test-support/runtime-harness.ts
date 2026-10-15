@@ -30,7 +30,11 @@ import {
 	runtimeWatch as runtimeWatchWithContext,
 } from "../commands/runtime";
 import { getCliVersion } from "../lib/version";
-import { runtimeContentSha256, writeRuntimeAppliedState } from "../runtime/applied-state";
+import {
+	runtimeContentSha256,
+	runtimeMcpConflicts,
+	writeRuntimeAppliedState,
+} from "../runtime/applied-state";
 import type { RuntimeApplyContext } from "../runtime/apply-identity";
 import { applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext } from "../runtime/channels";
 import {
@@ -2245,6 +2249,9 @@ export function writeTestRuntimeAppliedState(
 			officialServiceCommandRevisions: input.officialServiceCommandRevisions ?? {},
 			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
+			...(convergence.mcpConflicts?.length
+				? { mcpConflicts: runtimeMcpConflicts(convergence.mcpConflicts) }
+				: {}),
 		},
 		paths,
 	);

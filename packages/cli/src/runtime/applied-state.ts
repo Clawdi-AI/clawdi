@@ -80,6 +80,28 @@ export function runtimeProviderConflicts(
 	);
 }
 
+const RUNTIME_MCP_CONFLICT_LIMIT = 64;
+const runtimeMcpConflictSchema = z
+	.object({
+		runtime: z.enum(["hermes", "openclaw"]),
+		serverName: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/),
+		code: z.literal("native_mcp_server_exists"),
+	})
+	.strict();
+export type RuntimeMcpConflict = z.infer<typeof runtimeMcpConflictSchema>;
+
+/** Local diagnostics only; the Cloud observation contract does not include MCP conflicts. */
+export function runtimeMcpConflicts(
+	entries: readonly { runtime: string; serverName: string; code: string }[],
+): RuntimeMcpConflict[] {
+	return canonicalRuntimeEntries(
+		runtimeMcpConflictSchema,
+		entries,
+		(entry) => `${entry.runtime}\0${entry.serverName}`,
+		RUNTIME_MCP_CONFLICT_LIMIT,
+	);
+}
+
 const RUNTIME_SERVICE_WITHDRAWAL_LIMIT = 8;
 const runtimeServiceWithdrawalSchema = z
 	.object({
@@ -119,6 +141,16 @@ export const runtimeAppliedStateSchema = z
 		projectedProviderIds: projectedProviderIdsSchema,
 		skillEvidence: z.array(hostedSkillEvidenceSchema).optional(),
 		nativeCredentialProviderIds: projectedProviderIdsSchema.optional(),
+		mcpConflicts: z
+			.array(runtimeMcpConflictSchema)
+			.min(1)
+			.max(RUNTIME_MCP_CONFLICT_LIMIT)
+			.refine(
+				(entries) =>
+					runtimeContentSha256(runtimeMcpConflicts(entries)) === runtimeContentSha256(entries),
+				{ message: "MCP conflicts must be unique and sorted" },
+			)
+			.optional(),
 		providerConflicts: z
 			.array(runtimeProviderConflictSchema)
 			.min(1)

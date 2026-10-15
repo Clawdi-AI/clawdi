@@ -6143,8 +6143,9 @@ fi
 		expect(committed).toBe(true);
 		expect(result.installErrors).toEqual([]);
 		expect(result.deferredReason).toBeUndefined();
-		expect(result.resourceProjectionErrors).toEqual([
-			"Hermes profile MCP projection failed (profile work): refusing to replace unmanaged hermes MCP server clawdi",
+		expect(result.resourceProjectionErrors).toEqual([]);
+		expect(result.mcpConflicts).toEqual([
+			{ runtime: "hermes", serverName: "clawdi", code: "native_mcp_server_exists" },
 		]);
 		expect(readFileSync(workPath, "utf8")).toBe(userConfig);
 		expect(fixture.configs()[0]?.mcp_servers).toHaveProperty("clawdi");
@@ -6197,7 +6198,7 @@ fi
 						null,
 						{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
 					),
-				).toEqual([]);
+				).toEqual({ errors: [], conflicts: [] });
 				expect(spawn).not.toHaveBeenCalled();
 			} finally {
 				spawn.mockRestore();
@@ -6223,7 +6224,7 @@ fi
 						null,
 						{ uid: TEST_PROCESS_UID, gid: TEST_PROCESS_GID },
 					),
-				).toEqual([]);
+				).toEqual({ errors: [], conflicts: [] });
 				expect(spawn).not.toHaveBeenCalled();
 				expect(warning).not.toHaveBeenCalled();
 			} finally {

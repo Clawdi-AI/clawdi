@@ -240,16 +240,17 @@ export function validateConnectionProviderEnvironments(
 			throw new Error("Native credentials require an acknowledged identity handoff");
 		if (previous && previous.envName !== envName)
 			throw new Error("Connection credential environment is immutable");
-		// Journal entries written before Cloud identity carry none. When Clawdi still holds
-		// the credential in the same environment, the first identity is adopted by prepare.
-		const adoptsLegacyIdentity =
-			!previous?.cloudIdentity &&
+		// Clawdi-held credentials adopt their first Cloud identity or a new incarnation
+		// of the same provider UUID. Native and handed-off entries retain their exact tuple.
+		const adoptsCloudIdentity =
+			(!previous?.cloudIdentity ||
+				previous.cloudIdentity.providerUuid === cloudIdentity?.providerUuid) &&
 			!previous?.handoffId &&
 			cloudIdentity !== undefined &&
 			credentialAuthority !== "native";
 		if (
 			previous &&
-			!adoptsLegacyIdentity &&
+			!adoptsCloudIdentity &&
 			!canonicalJsonEqual(previous.cloudIdentity ?? null, cloudIdentity ?? null)
 		)
 			throw new Error("Provider Cloud identity requires explicit operator handoff");

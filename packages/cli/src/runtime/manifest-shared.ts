@@ -1,5 +1,9 @@
 import { writePrivateFileAtomic } from "../lib/private-file";
-import type { RuntimeProviderConflict, RuntimeServiceWithdrawal } from "./applied-state";
+import type {
+	RuntimeMcpConflict,
+	RuntimeProviderConflict,
+	RuntimeServiceWithdrawal,
+} from "./applied-state";
 import type { HostedSkillEvidence } from "./hosted-skill-evidence";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { HostedSkillGuardRefusal } from "./manifest-skills-apply";
@@ -21,6 +25,8 @@ export interface RuntimeConvergenceResult {
 	projectedProviderIds: Record<string, string[]>;
 	/** Connections left to native configuration; they never fail the apply. */
 	providerConflicts?: RuntimeProviderConflict[];
+	/** Native MCP servers preserved without failing apply; reported only in local status. */
+	mcpConflicts?: RuntimeMcpConflict[];
 	/** Guard refusals never fail the apply and are not persisted in strict applied state. */
 	skillGuardRefusals?: HostedSkillGuardRefusal[];
 	/** Hermes native environment values kept by user ownership; they never fail the apply. */

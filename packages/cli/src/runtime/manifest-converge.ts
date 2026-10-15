@@ -2,8 +2,10 @@ import { chmodSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { log } from "../serve/log";
 import {
+	type RuntimeMcpConflict,
 	type RuntimeProviderConflict,
 	readRuntimeAppliedState,
+	runtimeMcpConflicts,
 	runtimeServiceWithdrawals,
 } from "./applied-state";
 import {
@@ -113,7 +115,7 @@ import {
 	writeEgressSecretFile,
 	writeLastGoodManifest,
 } from "./manifest-secrets";
-import type { RuntimeConvergenceResult } from "./manifest-shared";
+import { canonicalJsonEqual, type RuntimeConvergenceResult } from "./manifest-shared";
 import {
 	type HostedSkillGuardRefusal,
 	reconcileHostedSkillProjection,
@@ -211,6 +213,7 @@ interface RuntimeConvergenceState {
 	installErrors: string[];
 	resourceProjectionErrors: string[];
 	providerConflicts: RuntimeProviderConflict[];
+	mcpConflicts: RuntimeMcpConflict[];
 	skillGuardRefusals: HostedSkillGuardRefusal[];
 	hermesNativeEnvConflicts: string[];
 	managedLocaleConflicts: string[];
@@ -351,6 +354,7 @@ function initializeRuntimeConvergence(
 		installErrors: [],
 		resourceProjectionErrors: [],
 		providerConflicts: [],
+		mcpConflicts: [],
 		skillGuardRefusals: [],
 		hermesNativeEnvConflicts: [],
 		managedLocaleConflicts: [],
@@ -994,7 +998,15 @@ function applyRuntimeResourceProjections(
 		state.resourceProjectionErrors.push(error instanceof Error ? error.message : String(error));
 	}
 	try {
-		applyHostedMcpProjections(manifest, paths, state.observations, workspaceRoot, hermesConfig);
+		state.mcpConflicts.push(
+			...applyHostedMcpProjections(
+				manifest,
+				paths,
+				state.observations,
+				workspaceRoot,
+				hermesConfig,
+			),
+		);
 	} catch (error) {
 		state.installErrors.push(
 			`runtime MCP projection failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -1423,6 +1435,7 @@ function buildRuntimeConvergenceResult(
 		resourceProjectionErrors: state.resourceProjectionErrors,
 		projectedProviderIds: state.projectedProviderIds,
 		providerConflicts: state.providerConflicts,
+		mcpConflicts: runtimeMcpConflicts(state.mcpConflicts),
 		skillGuardRefusals: state.skillGuardRefusals,
 		hermesNativeEnvConflicts: state.hermesNativeEnvConflicts,
 		managedLocaleConflicts: state.managedLocaleConflicts,
@@ -1659,18 +1672,18 @@ export function convergeRuntimeManifest(
 				}
 			}
 		}
-		state.resourceProjectionErrors.push(
-			...profileRuntimeStep("converge.hermes-profile-mcp", () =>
-				reconcileHostedHermesProfileMcp(
-					context.manifest,
-					context.projectionHome,
-					state.observations.get("hermes")?.commandPath ??
-						runtimeCommandPath("hermes", context.projectionHome),
-					context.hermesConfig,
-					context.hostedRuntimeContract.identity,
-				),
+		const profileMcp = profileRuntimeStep("converge.hermes-profile-mcp", () =>
+			reconcileHostedHermesProfileMcp(
+				context.manifest,
+				context.projectionHome,
+				state.observations.get("hermes")?.commandPath ??
+					runtimeCommandPath("hermes", context.projectionHome),
+				context.hermesConfig,
+				context.hostedRuntimeContract.identity,
 			),
 		);
+		state.resourceProjectionErrors.push(...profileMcp.errors);
+		state.mcpConflicts.push(...profileMcp.conflicts);
 		const activationPlan = profileRuntimeStep("converge.activation-plan", () =>
 			prepareRuntimeActivation(context, state, egressProjection, providerProjectionRevisions),
 		);
@@ -1687,6 +1700,12 @@ export function convergeRuntimeManifest(
 		profileRuntimeStep("converge.commit", () =>
 			commitRuntimeConvergence(context, state, egressProjection, convergence),
 		);
+		if (
+			convergence.mcpConflicts?.length &&
+			!canonicalJsonEqual(context.appliedState?.mcpConflicts ?? [], convergence.mcpConflicts)
+		) {
+			log.warn("runtime.mcp.native_conflicts", { conflicts: convergence.mcpConflicts });
+		}
 		flushPersistedStepRevisions(paths);
 		return convergence;
 	} catch (error) {

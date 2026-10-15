@@ -274,7 +274,7 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 				commitProviderTransfers({ [runtime]: f.input().ownership.providers })[runtime],
 			);
 			f.prepare();
-			// A different recorded identity is a reincarnation and still needs a handoff.
+			// A different provider UUID still needs an explicit handoff.
 			provider.cloudIdentity = { providerUuid: randomUUID(), incarnationId: randomUUID() };
 			expect(() => f.prepare()).toThrow("explicit operator handoff");
 			provider.cloudIdentity = identity;
@@ -283,6 +283,47 @@ for (const runtime of ["openclaw", "hermes"] as const) {
 			provider.credentialAuthority = "native";
 			expect(() => f.prepare()).toThrow("acknowledged identity handoff");
 			expect(f.read()).toEqual(before);
+		} finally {
+			f.cleanup();
+		}
+	});
+
+	test(`${runtime}: a Clawdi-owned provider adopts a new incarnation and persists it in the journal`, () => {
+		const f = fixture(runtime, "custom");
+		try {
+			const provider = f.manifest.projection?.providers?.[id];
+			if (!provider) throw new Error("Missing fixture provider");
+			const identity = { providerUuid: randomUUID(), incarnationId: randomUUID() };
+			f.prepare();
+			provider.cloudIdentity = identity;
+			f.prepare();
+			applyConnectionProviderTransfers(f.input());
+			const before = f.read();
+			const reincarnation = { ...identity, incarnationId: randomUUID() };
+			provider.cloudIdentity = reincarnation;
+			const plan = f.prepare();
+			expect(plan.providers[id]?.cloudIdentity).toEqual(reincarnation);
+			applyConnectionProviderTransfers(f.input());
+			expect(f.read()).toEqual(before);
+			const paths = { ...getRuntimePaths(), serviceStateRoot: join(f.home, "journal") };
+			mkdirSync(paths.serviceStateRoot);
+			writeProviderOwnership(paths, "test", f.home, {
+				providers: { [runtime]: [] },
+				transfers: commitProviderTransfers({ openclaw: {}, hermes: {}, [runtime]: plan.providers }),
+			});
+			expect(
+				readProviderOwnership(paths, "test", f.home, { [runtime]: [id] }).transfers[runtime]?.[id]
+					?.cloudIdentity,
+			).toEqual(reincarnation);
+			const transfer = plan.providers[id];
+			if (!transfer) throw new Error("Missing fixture transfer");
+			// Even the same provider UUID cannot replace a handed-off/native tuple.
+			f.restoreOwnership({
+				[id]: { ...transfer, handoffId: randomUUID(), cloudIdentity: identity },
+			});
+			expect(() => f.prepare()).toThrow("explicit operator handoff");
+			provider.credentialAuthority = "native";
+			expect(() => f.prepare()).toThrow("explicit operator handoff");
 		} finally {
 			f.cleanup();
 		}

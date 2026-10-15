@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { runtimeWatchEventForOutcome } from "../commands/runtime";
+import { runtimeStatus } from "../commands/runtime-doctor";
 import { getCliVersion } from "../lib/version";
 import { routeRuntimeReadinessPort } from "../test-support/runtime-readiness-port";
 import {
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
+	runtimeMcpConflicts,
 	runtimeProviderConflicts,
 	runtimeServiceWithdrawals,
 	writeRuntimeAppliedState,
@@ -403,6 +405,63 @@ esac
 		expect(observed?.convergeError).toBeUndefined();
 		expect(observed?.providerConflicts).toEqual({ schemaVersion: 1, entries });
 	});
+
+	test("keeps MCP conflicts in local status and out of Cloud observations and heartbeat events", async () => {
+		const paths = healthyAppliedRuntimePaths();
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("Missing applied state fixture");
+		const entries = runtimeMcpConflicts([
+			{ runtime: "openclaw", serverName: "search.proxy", code: "native_mcp_server_exists" },
+			{ runtime: "hermes", serverName: "clawdi", code: "native_mcp_server_exists" },
+			{ runtime: "hermes", serverName: "clawdi", code: "native_mcp_server_exists" },
+		]);
+		expect(entries).toHaveLength(2);
+		expect(() =>
+			writeRuntimeAppliedState({ ...applied, mcpConflicts: [...entries].reverse() }, paths),
+		).toThrow("unique and sorted");
+		writeRuntimeAppliedState(
+			{ ...applied, etag: `"sha256:${applied.sourceRevision}"`, mcpConflicts: entries },
+			paths,
+		);
+		writeRuntimeWatchStatus({ status: "applied", stage: "final" }, paths);
+		const output = spyOn(console, "log").mockImplementation(() => {});
+		try {
+			await runtimeStatus({ json: true });
+			expect(JSON.parse(String(output.mock.calls[0]?.[0])).mcpConflicts).toEqual(entries);
+		} finally {
+			output.mockRestore();
+		}
+		const observed = await readHostedRuntimeObserved(paths);
+		expect(observed?.status).toBe("ok");
+		expect(observed).not.toHaveProperty("mcpConflicts");
+		expect(observed?.convergeError).toBeUndefined();
+		const session = new HostedRuntimeHeartbeatSession({ environmentId: "mcp-conflict", paths });
+		const heartbeat = await session.nextEvent();
+		expect(heartbeat?.event.status).toBe("ok");
+		expect(heartbeat?.event).not.toHaveProperty("mcpConflicts");
+		expect(heartbeat?.payloadJson).not.toContain("mcpConflicts");
+	});
+
+	test.skipIf(process.getuid?.() === 0)(
+		"tenant runtime status works without access to private applied state",
+		async () => {
+			const paths = healthyAppliedRuntimePaths();
+			process.env.CLAWDI_RUNTIME_MODE = "hosted";
+			chmodSync(paths.appliedState, 0o000);
+			const output = spyOn(console, "log").mockImplementation(() => {});
+			try {
+				await runtimeStatus({ json: true });
+				expect(JSON.parse(String(output.mock.calls[0]?.[0]))).toMatchObject({
+					schemaVersion: "clawdi.runtimeStatus.v1",
+					status: { status: "ok" },
+				});
+			} finally {
+				output.mockRestore();
+				chmodSync(paths.appliedState, 0o600);
+			}
+		},
+	);
 
 	test("reports committed service withdrawals without degrading runtime health", async () => {
 		const paths = healthyAppliedRuntimePaths();
