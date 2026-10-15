@@ -18,6 +18,8 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Discord Gateway session invalidations now log a warning without a traceback
+  while the worker reconnects using the existing session and retry behavior.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 

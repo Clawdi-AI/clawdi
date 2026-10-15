@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import threading
 import zlib
@@ -499,11 +500,14 @@ def test_discord_gateway_helpers_build_protocol_payloads():
     assert 0 <= lock_key <= 0x7FFF_FFFF_FFFF_FFFF
 
 
+@pytest.mark.parametrize("resumable", [False, True], ids=["identify", "resume"])
 @pytest.mark.asyncio
-async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_session(
+async def test_discord_gateway_worker_reconnects_after_invalid_session(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
-):
+    caplog: pytest.LogCaptureFixture,
+    resumable: bool,
+) -> None:
     created = (
         await client.post(
             "/v1/channels",
@@ -537,7 +541,7 @@ async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_sessi
     resume_socket = _FakeDiscordGatewaySocket(
         [
             {"op": 10, "d": {"heartbeat_interval": 60_000}},
-            {"op": 9, "d": False},
+            {"op": 9, "d": resumable},
         ],
         resume_stop,
     )
@@ -558,13 +562,20 @@ async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_sessi
     )
     connect_factory = _FakeDiscordGatewayConnect([first_socket, resume_socket, fallback_socket])
     sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
-    worker = DiscordGatewayWorker(sessionmaker, connect_factory=connect_factory)
+    worker = DiscordGatewayWorker(
+        sessionmaker, connect_factory=connect_factory, reconnect_initial_seconds=0.01
+    )
     state = _GatewayState()
 
     await worker._connect_and_record(account_id, first_stop, state)
-    with pytest.raises(RuntimeError, match="invalidated gateway session"):
-        await worker._connect_and_record(account_id, resume_stop, state)
-    await worker._connect_and_record(account_id, fallback_stop, state)
+    worker._states[account_id] = state
+    try:
+        with caplog.at_level(logging.WARNING, logger="app.services.discord_gateway_worker"):
+            await asyncio.wait_for(
+                worker._run_account_forever(account_id, fallback_stop), timeout=5
+            )
+    finally:
+        await worker.stop()
 
     assert first_socket.sent[0]["op"] == 2
     assert state.session_id == "new-gateway-session"
@@ -577,10 +588,22 @@ async def test_discord_gateway_worker_resumes_and_falls_back_after_invalid_sessi
             "seq": 11,
         },
     }
-    assert fallback_socket.sent[0]["op"] == 2
+    if resumable:
+        assert fallback_socket.sent[0] == resume_socket.sent[0]
+    else:
+        assert fallback_socket.sent[0]["op"] == 2
     assert connect_factory.uris[0].startswith("wss://gateway.discord.gg/")
     assert connect_factory.uris[1].startswith("wss://gateway.discord.gg/resume")
-    assert connect_factory.uris[2].startswith("wss://gateway.discord.gg/")
+    assert connect_factory.uris[2] == connect_factory.uris[1 if resumable else 0]
+    records = [
+        record for record in caplog.records if record.name == "app.services.discord_gateway_worker"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert records[0].exc_info is None
+    assert records[0].getMessage() == (
+        f"discord gateway account {account_id} disconnected: discord invalidated gateway session"
+    )
 
 
 @pytest.mark.asyncio
