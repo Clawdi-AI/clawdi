@@ -80,6 +80,10 @@ class _GatewayReconnect(RuntimeError):
     """Discord requested an immediate reconnect so the session can resume."""
 
 
+class _GatewayInvalidSession(RuntimeError):
+    """Discord invalidated the session and requested a retryable disconnect."""
+
+
 class _GatewayConnection(Protocol):
     """The WebSocket operations required by one Discord Gateway session."""
 
@@ -316,6 +320,8 @@ class DiscordGatewayWorker:
                             )
                     return
                 log.warning("discord gateway account %s disconnected: %s", account_id, exc)
+            except _GatewayInvalidSession as exc:
+                log.warning("discord gateway account %s disconnected: %s", account_id, exc)
             except Exception as exc:
                 # Gateway workers must reconnect after transport and protocol faults.
                 log.exception("discord gateway account %s failed: %s", account_id, exc)
@@ -479,7 +485,7 @@ class DiscordGatewayWorker:
         elif op == 9:
             if frame.get("d") is not True:
                 state.clear_session()
-            raise RuntimeError("discord invalidated gateway session")
+            raise _GatewayInvalidSession("discord invalidated gateway session")
         elif op == 11:
             state.heartbeat_acknowledged = True
 
