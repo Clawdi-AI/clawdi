@@ -192,7 +192,60 @@ export const VAULT_REQUEST_COPY = {
 	privacy: "Only these fields will be saved. Anyone with vault access can use them.",
 	done: "Your secrets are saved. Send this message to your agent to continue.",
 	multiline: "Multiline value hidden",
+	brand: "Clawdi",
+	loading: "Loading request…",
+	loadFailed: "Couldn't load this request. Try again.",
+	offline: "Couldn't connect. Try again.",
+	tryAgain: "Try again",
+	updateNote: "Fields marked Update replace existing values when you save.",
+	update: "Update",
+	fieldName: "Field name",
+	remove: "Remove",
+	addField: "Add field",
+	importEnv: "Import .env",
+	dotenvText: "Dotenv text",
+	applyImport: "Apply import",
+	cancelImport: "Cancel import",
+	invalidNames:
+		"Use valid, distinct field names (letters, numbers, dots, underscores, and hyphens).",
+	fieldsLimit: "Use valid, distinct field names and at most 32 fields total.",
+	selectionConflict:
+		"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
+	saveFailed: "Couldn't save. Supply every requested field and try again.",
+	saveUncertain:
+		"Save couldn't be confirmed. Ask your agent to check the request status before trying again.",
+	save: "Save secrets",
+	saving: "Saving…",
+	copyMessage: "Copy message for agent",
+	copying: "Copying…",
+	copied: "Copied",
+	copyFailed: "Couldn't copy. Select and copy the message above manually.",
 } as const;
+export function vaultRequestSection(section: string) {
+	return `Section: ${section}`;
+}
+export function vaultRequestExpires(iso: string) {
+	return `Expires ${new Date(iso).toLocaleString()}`;
+}
+export const VAULT_SECRET_REQUESTS_COPY = {
+	title: "Recent secret requests",
+	label: "Secret requests",
+	loadFailed: "Couldn't load secret requests.",
+	retry: "Retry",
+	noSection: "No section",
+	status: {
+		pending: "Awaiting input",
+		supplied: "Supplied",
+		expired: "Expired",
+		conflict: "Credentials changed",
+	},
+} as const;
+export function vaultSecretRequestMeta(
+	row: { section?: string | null; project_name: string; expires_at: string },
+	formatDate: (iso: string) => string = (iso) => new Date(iso).toLocaleString(),
+) {
+	return `${row.section || VAULT_SECRET_REQUESTS_COPY.noSection} · ${row.project_name} · Expires ${formatDate(row.expires_at)}`;
+}
 export function buildVaultSupplyAgentMessage(requestId: string) {
 	return `I've saved the requested credentials. Please check Vault request ${requestId}; once its status is supplied, continue our previous task using existing authorized capabilities. Do not include secret values in chat.`;
 }

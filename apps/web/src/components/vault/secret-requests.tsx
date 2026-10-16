@@ -1,16 +1,10 @@
 import { vaultRequestsRefetchInterval } from "@clawdi/shared/api";
+import { VAULT_SECRET_REQUESTS_COPY as copy, vaultSecretRequestMeta } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { unwrap, useApi } from "@/lib/api";
-
-const labels = {
-	pending: "Awaiting input",
-	supplied: "Supplied",
-	expired: "Expired",
-	conflict: "Credentials changed",
-};
 
 export function VaultSecretRequests({
 	slug,
@@ -41,26 +35,23 @@ export function VaultSecretRequests({
 	if (requests.isError)
 		return (
 			<p role="alert" className="text-sm">
-				Couldn't load secret requests.{" "}
+				{copy.loadFailed}{" "}
 				<Button variant="link" onClick={() => void requests.refetch()}>
-					Retry
+					{copy.retry}
 				</Button>
 			</p>
 		);
 	if (!requests.data?.length) return null;
 	return (
-		<section className="space-y-3 rounded-xl border p-4" aria-label="Secret requests">
-			<h2 className="font-medium">Recent secret requests</h2>
+		<section className="space-y-3 rounded-xl border p-4" aria-label={copy.label}>
+			<h2 className="font-medium">{copy.title}</h2>
 			{requests.data.map((row) => (
 				<div key={row.id} className="flex flex-wrap items-start justify-between gap-2 text-sm">
 					<div>
 						<p className="font-mono">{row.fields.join(", ")}</p>
-						<p className="text-xs text-muted-foreground">
-							{row.section || "No section"} · {row.project_name} · Expires{" "}
-							{new Date(row.expires_at).toLocaleString()}
-						</p>
+						<p className="text-xs text-muted-foreground">{vaultSecretRequestMeta(row)}</p>
 					</div>
-					<Badge variant="secondary">{labels[row.status]}</Badge>
+					<Badge variant="secondary">{copy.status[row.status]}</Badge>
 				</div>
 			))}
 		</section>

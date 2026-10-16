@@ -435,8 +435,9 @@ participate in pull-to-refresh and expose loading/error states.
 
 [Project sharing](../apps/mobile/src/components/sharing/share-project-dialog.tsx)
 now includes owner-managed links, invitations and members, stop-sharing,
-recipient accept/decline, manual link preview/join, and leaving a shared
-project. Joining does not automatically bind an Agent. Newly created links
+recipient accept/decline from the notification center, the `/share/<token>`
+invite page, and leaving a shared project from its detail page, as on Web.
+Joining does not automatically bind an Agent. Newly created links
 remain out of query caches and persistence, are cleared on
 blur/background/account retirement, and
 can be explicitly sent through the native share sheet. Removing a member and
@@ -580,23 +581,19 @@ interaction verification remain open; this is not
 full Vault parity. Existing-key skipping uses the fetched key-name snapshot,
 not a server-side compare-and-set guarantee against concurrent writes.
 
-Vault owners can list the latest 100 secret requests, create a request for an
-attached owned Project with explicit expiry, and share its HTTPS fragment link
-using the native share sheet. Shared validation preserves exact field-name case
-and enforces the server's 1–32 distinct-name limit. Pending records poll every
-10 seconds for at most two minutes while the screen is foregrounded; manual
-refresh restarts that window. Supplied records invalidate the key-name view.
-Request capabilities never enter query keys/caches, route parameters, logs or
-device storage. Only the latest link is retained in a foreground ref for share
-retry, cleared on blur/background/account retirement.
+Vault owners see Web's read-only "Recent secret requests" list on the vault
+page (the latest 100). Agents create requests; neither Web nor mobile creates
+request links. Pending records poll every 10 seconds while the screen is
+focused, and supplied records invalidate the key-name view.
 
-Recipients can paste a request link into the public native supply screen, including
-while signed out. Web's public supply page uses the same Shared capability
-transport for inspection, import preflight and submission. It sends no account token and explicitly
-omits cookies, caching, redirects and referrers. Native fields support dotenv import,
-case-sensitive names and server preflight before explicit overwrite confirmation.
-Submission is never automatically retried; unknown outcomes are not reported as
-success. Native blur/background clears entered secrets and retires response permission.
+Recipients open a request link; there is no paste step, as on Web. The supply
+screen uses the same Shared capability transport for inspection and submission.
+It sends no account token and explicitly omits cookies, caching, redirects and
+referrers. Fields support dotenv import and case-sensitive names, and show
+Web's Update markers. Save submits directly, as on Web. Submission is never
+automatically retried; unknown outcomes are not reported as success. The
+completion message for the agent is shown and can be shared with the native
+share sheet. Native blur/background clears entered secrets and retires response permission.
 Configured HTTPS links now support one-shot native intake as described below.
 Device networking, input, lifecycle and share-sheet acceptance remain outstanding;
 Metro exports do not prove these behaviors.
@@ -798,15 +795,14 @@ DEPLOY_OPENAPI_SOURCE=/path/to/reviewed/openapi.json DEPLOY_CONTRACT_FETCH_MODE=
 Done: the filtered generated client matches exactly; the HTTP client regression
 accepts 204, rejects an unexpected 200 and does not retry 403/500 responses.
 
-Public Session routes (`/s/[shareId]`, `/open-share`) support anonymous snapshots,
+Public Session routes (`/s/[shareId]`) support anonymous snapshots,
 explicit pagination and native Markdown/JSON sharing. Snapshot requests omit
 account tokens and cookies; missing shares return 404 and revoked shares return
 410. The native view clears content on blur/background and revalidates on return.
 Pagination rejects changed totals or revisions. Retired live Session links no
 longer resolve.
 Sign-in continuation accepts only a validated share UUID, not arbitrary redirects.
-Manual HTTPS/custom-scheme input extracts the ID and uses the configured Cloud
-API; it never fetches a pasted hostname.
+Shares open only through links, as on Web; there is no paste screen.
 
 Optional `EXPO_PUBLIC_CLAWDI_LINK_HOSTS` is a comma-separated list of owned DNS
 hostnames, without schemes, ports, wildcards or paths. Build and runtime use the
@@ -841,14 +837,15 @@ negate `/skills/` descendants;
 native intake opens verified-host agent files with `expo-web-browser.openBrowserAsync`
 (Android Custom Tabs with an explicit browser package; iOS SFSafariViewController).
 It never reopens these URLs with `Linking.openURL`. Warm intake preserves the
-current native screen; browser launch failure goes to manual link input.
+current native screen; a browser launch failure or an unsupported link opens
+Overview on a cold start and leaves a running app where it is.
 
 Allowed HTTPS Vault request links stay in a single-use, 60-second memory inbox;
 Router receives only a random intake reference, never the capability token.
-The focused supply screen requires explicit inspection and submission. Its
-received secrets clear on blur/background; no automatic request is sent.
-Relative/custom-scheme Vault request links lack a verified HTTPS origin and
-open manual input without retaining the token. Real-device cold/warm starts,
+The focused supply screen inspects the received request, then submits only on
+Save. Its received secrets clear on blur/background. Relative/custom-scheme
+Vault request links lack a verified HTTPS origin and show the unavailable state
+without retaining the token. Real-device cold/warm starts,
 StrictMode, backgrounding and account transitions remain acceptance checks.
 
 The native deployment terminal uses Expo SDK 57 DOM components with
@@ -1136,7 +1133,7 @@ until each surface has implementation, focused verification and device evidence:
 | Sessions | Search/filter/sort inventory, match excerpts, revision-pinned typed timeline, search navigation, paired tool details, snapshot sharing, anonymous public viewing and Markdown/JSON export, native Markdown with confirmed links and bounded opt-in raster preview | OS universal-link association, device scrolling/sharing/image decoding and visual acceptance |
 | Skills/Memory | Skill text CRUD/import, package upload/replace/download/share and cross-Project copy/move; Hosted GitHub Workspace Skills with durable exact-request recovery; Library references; runtime plugin catalog/install/update/retry/removal with shared Web/native policy; Memory CRUD/search and details with recall metadata/source Session navigation | Remaining Skill detail parity and native file/share/managed-runtime acceptance |
 | Connectors | Catalog/search, credential/OAuth entry, all-status accounts, alias/disconnect, tools with shared Web/native identifier/name/description search | Device/provider OAuth verification and keyboard/list accessibility acceptance |
-| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory/create/share, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
+| Vault | Project filters, search/pagination, scoped create, stable-ID detail/attach, import, selected-key copy/move, prefix splitting, global delete/detach, owner secret-request inventory, public request supply with shared Web/native transport and configured HTTPS intake | Signed domain association and device acceptance |
 | v2 AI providers/channels | BYOK creation/editing/rotation, device OAuth, impact-confirmed removal and Agent model binding; Custom/shared channel inventory, Telegram/Discord creation, Agent link/unlink, chat pair/unpair, command sync, health/activity, Custom deletion and WhatsApp device onboarding/repair | Native/live provider and channel acceptance |
 | Deployment/billing | Included Basic and existing funded Basic/Performance eligibility/creation/recovery, paginated reusable inventory and billing/deployment views, RevenueCat credit purchases and pending-purchase recovery | New paid compute subscription creation, Customer Center management and store sandbox acceptance |
 | Runtime UI/terminal | Shared Web/native xterm engine, Expo DOM terminal route, native controls and foreground teardown; bounded generated credential clients; confirmed system-browser runtime handoff, hosted one-time Files handoff and Hermes OIDC entry with shared URL validation | Native WebView/keyboard/real-server round-trip and compilation; device browser authentication and revocation acceptance |

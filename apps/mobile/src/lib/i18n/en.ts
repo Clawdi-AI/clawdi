@@ -349,7 +349,6 @@ const vaultEn = {
 	destinationsError: LIBRARY_COPY.loadDestinationsFailed,
 	existingKeysError: LIBRARY_COPY.checkExistingKeysFailed,
 	catalogError: LIBRARY_COPY.loadVaultCatalogFailed,
-	sectionLabel: "Section:",
 	splitTitle: "Split by app prefix",
 	splitSlug: "Destination slug",
 	splitComplete: "Complete",
@@ -357,49 +356,9 @@ const vaultEn = {
 	splitInspect:
 		"New Vaults are not linked to Projects automatically. Failed or interrupted operations may leave destinations behind. Inspect both source and destinations before trying again; existing Vaults are never reused automatically.",
 	splitReset: "Close report and review remaining keys",
-	supplyTitle: "Supply requested credentials",
-	supplyReceived:
-		"Request link received. Inspect it before entering credentials. Nothing has been submitted.",
-	supplyLink: "HTTPS request link",
-	supplyLoad: "Inspect request",
-	supplyName: "Field name",
-	supplyValue: "Secret value",
-	supplyAdd: "Add field",
-	supplyRemove: "Remove added field",
-	supplyImport: "Import dotenv assignments",
-	supplyReview: "Check fields and review",
-	supplySave: "Save credentials",
-	supplyWarning:
-		"Save all entered fields to this Vault? The following existing keys will be replaced:",
-	supplyNoUpdates: "No existing keys will be replaced.",
-	supplyReceipt: "Share completion receipt",
-	supplyUncertain:
-		"Save could not be confirmed. Ask the request creator to check its status before trying again. No retry was sent.",
-	supplyInvalid:
-		"Check the request link or fields. Supply every required field, use distinct valid names, and at most 32 nonempty values (65536 characters each).",
-	supplyConflict:
-		"Selected fields changed or are reserved. Remove added fields or ask for a new link; no secrets were sent.",
-	supplyReset: "Clear and start again",
-	requests: "Secret requests",
-	requestsDescription:
-		"Recent 100 requests. Pending requests refresh for two minutes while this screen is active; refresh manually to continue. The latest link can be shared again until you leave this screen or background the app. Links are never saved to device storage.",
-	requestReshare: "Share latest request again",
-	requestCreate: "Create and share request",
-	requestShare: "Supply requested credentials",
-	requestWarning:
-		"Anyone with this link can supply credentials, replace requested existing keys and add keys to this section. Share only with the intended recipient. After leaving this screen or backgrounding the app, the link cannot be recovered here. Continue?",
-	requestFields: "Key names only, separated by commas or new lines",
-	requestInvalid:
-		"Select an attached Project and enter 1–32 distinct valid key names. Do not paste secret values here.",
-	requestPending: "Awaiting input",
-	requestSupplied: "Supplied",
-	requestConflict: "Credentials changed",
-	requestExpired: "Expired",
-	requestFiveMinutes: "Expires in 5 minutes",
-	requestHour: "Expires in 1 hour",
-	requestDay: "Expires in 24 hours",
+	/** The native share sheet stands in for Web's clipboard copy. */
+	shareMessage: "Share message for agent",
 	open: "Open Vault",
-	refresh: "Refresh",
 	keys: "Keys",
 	section: "Section (empty for default)",
 	importText: "Paste dotenv or flat JSON",
@@ -409,7 +368,6 @@ const vaultEn = {
 	invalidImport:
 		"Invalid import. Check key names, duplicates, and quoting. Nothing will be imported.",
 	clear: "Clear pasted secrets",
-	failed: "The operation could not be confirmed. Refresh before trying again.",
 	saved: "Changes saved.",
 	deleteKey: "Delete key",
 	deleteTitle: "Delete {name}?",
@@ -420,8 +378,6 @@ const vaultEn = {
 		"Give this Project and its Agents access to this Vault? Existing secrets remain in the selected Vault.",
 	detachWarning:
 		"Remove this Project's access to the Vault? Its Agents may no longer receive these secrets. The Vault and keys remain.",
-	copySelected: "Copy selected keys",
-	moveSelected: "Move selected keys",
 	selectedCopyWarning:
 		"Matching destination keys will be overwritten. Copies are independent: later changes do not sync. To share one source of truth, attach this Vault to another Project instead. Values remain server-side.",
 	moveWarning:
@@ -430,7 +386,6 @@ const vaultEn = {
 	copyUnconfirmed: "Copy incomplete or unconfirmed; check both Vaults before retrying",
 	cleanupUnconfirmed: "Source deletion skipped or unconfirmed; check source keys",
 	loadTargets: "Load more destinations",
-	defaultSection: "Default section",
 } as const;
 
 import {

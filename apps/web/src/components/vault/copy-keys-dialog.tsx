@@ -1,6 +1,13 @@
 "use client";
 
-import { errorMessage, identityFor, LIBRARY_COPY } from "@clawdi/shared/view";
+import {
+	errorMessage,
+	identityFor,
+	LIBRARY_COPY,
+	transferVaultKeysFailed,
+	transferVaultKeysResult,
+	vaultKeyFormCopy,
+} from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
@@ -200,22 +207,18 @@ export function CopyKeysDialog({
 		onSuccess: ({ targetSlug, copied, failed, sourceRemoveFailed }) => {
 			qc.invalidateQueries({ queryKey: ["get", "/v1/vault"] });
 			qc.invalidateQueries({ queryKey: ["vault-items"] });
-			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
-			toast.success(
-				`${copied} ${copied === 1 ? "key" : "keys"} ${
-					mode === "move" && !sourceCleanupFailed ? "moved" : "copied"
-				}`,
-				{
-					description:
-						`Now in vault://${targetSlug}.` +
-						(sourceCleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
-						(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
-				},
-			);
+			const result = transferVaultKeysResult({
+				mode,
+				copied,
+				failed,
+				sourceRemoveFailed,
+				targetSlug,
+			});
+			toast.success(result.title, { description: result.description });
 			setOpen(false);
 			onDone?.();
 		},
-		onError: (e) => toast.error(`Couldn't ${mode} keys`, { description: errorMessage(e) }),
+		onError: (e) => toast.error(transferVaultKeysFailed(mode), { description: errorMessage(e) }),
 	});
 
 	useEffect(() => {
@@ -239,9 +242,7 @@ export function CopyKeysDialog({
 					    (add this vault to that Project) is the right tool, so
 					    offer it right here. */}
 					<DialogDescription>
-						{mode === "move"
-							? "Values stay server-side; the originals are removed from this vault."
-							: "Each key becomes an independent copy — changing a value later updates only one vault, not both."}
+						{mode === "move" ? vaultKeyFormCopy.moveDescription : vaultKeyFormCopy.copyDescription}
 					</DialogDescription>
 				</DialogHeader>
 				<div className="space-y-4">

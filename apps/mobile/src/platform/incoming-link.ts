@@ -93,10 +93,11 @@ export async function routeMobileIncomingLink(
 			// A warm link must not replace the screen underneath the browser.
 			return initial ? "/" : null;
 		} catch {
-			return "/open-share";
+			return initial ? "/" : null;
 		}
 	}
-	return mobileLinkDestination(path, hosts, stageVault);
+	// Unsupported links open Overview on launch and leave a running app where it is.
+	return mobileLinkDestination(path, hosts, stageVault) ?? (initial ? "/" : null);
 }
 
 export type NotificationActionTarget =
@@ -120,7 +121,7 @@ export function notificationActionTarget(
 	if (!url) return null;
 	if (linked || target?.kind === "same-origin") {
 		const href = mobileLinkDestination(`${url.pathname}${url.search}`, hosts, stageVault);
-		if (href !== "/open-share") return { kind: "route", href };
+		if (href) return { kind: "route", href };
 	}
 	return { kind: "browser", url: url.href };
 }
@@ -140,28 +141,30 @@ function linkHostUrl(value: string, hosts: readonly string[]): URL | null {
 	}
 }
 
-/** Explicit external-link allowlist; capability tokens never enter Router state. */
+/**
+ * Explicit external-link allowlist; capability tokens never enter Router state.
+ * Returns null for a link with no native destination.
+ */
 export function mobileLinkDestination(
 	path: string,
 	hosts: readonly string[],
 	stageVault: (link: string) => string,
-): string {
+): string | null {
 	if (
 		typeof path !== "string" ||
 		path.length > 8192 ||
 		/[\r\n\\]/.test(path) ||
 		path.startsWith("//")
 	)
-		return "/open-share";
+		return null;
 	try {
 		const url = new URL(path, "clawdi:///");
-		if (url.username || url.password || url.port) return "/open-share";
+		if (url.username || url.password || url.port) return null;
 		const custom = url.protocol === "clawdi:";
-		if (!custom && (url.protocol !== "https:" || !hosts.includes(url.hostname)))
-			return "/open-share";
+		if (!custom && (url.protocol !== "https:" || !hosts.includes(url.hostname))) return null;
 		const pathname =
 			(custom && url.hostname ? `/${url.hostname}${url.pathname}` : url.pathname) || "/";
-		if (isBrowserLinkPath(decodeURIComponent(pathname))) return "/open-share";
+		if (isBrowserLinkPath(decodeURIComponent(pathname))) return null;
 		if (pathname === "/vault-request" || pathname === "/vault-supply") {
 			if (!custom && vaultRequestToken(path)) {
 				const id = stageVault(path);
@@ -172,7 +175,7 @@ export function mobileLinkDestination(
 		}
 		if (pathname.startsWith("/s/")) {
 			const share = publicSessionInput(`https://local.invalid${pathname}${url.search}${url.hash}`);
-			return share ? `/s/${share}` : "/open-share";
+			return share ? `/s/${share}` : null;
 		}
 		// Cheap old-mobile aliases, retaining exact object identities.
 		if (pathname === "/skills/detail") {
@@ -194,10 +197,10 @@ export function mobileLinkDestination(
 		if (isWebPath(destination) && url.searchParams.has("settings")) {
 			return settingsDestinations.get(url.searchParams.get("settings") ?? "") ?? "/settings";
 		}
-		if (!isWebPath(destination)) return "/open-share";
+		if (!isWebPath(destination)) return null;
 		return `${destination}${url.search}`;
 	} catch {
-		return "/open-share";
+		return null;
 	}
 }
 
@@ -227,7 +230,7 @@ function isWebPath(path: string): boolean {
 					projects: ["sharing", "edit", "agents"],
 					skills: ["send"],
 					memories: ["edit"],
-					vault: ["add-keys", "transfer", "split", "requests"],
+					vault: ["add-keys", "transfer", "split"],
 					connectors: ["connect"],
 					channels: ["link", "pair", "chats"],
 				};
@@ -287,7 +290,7 @@ function isWebPath(path: string): boolean {
 	if (root === "settings") return pieces.length <= 4;
 	return (
 		pieces.length === 1 &&
-		["ai-providers", "deploy", "sign-in", "sign-up", "library", "open-share"].includes(root ?? "")
+		["ai-providers", "deploy", "sign-in", "sign-up", "library"].includes(root ?? "")
 	);
 }
 

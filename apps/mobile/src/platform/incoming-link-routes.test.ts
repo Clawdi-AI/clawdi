@@ -41,7 +41,6 @@ const paths = [
 	"/vault/acme-prod/add-keys",
 	"/vault/acme-prod/transfer",
 	"/vault/acme-prod/split",
-	"/vault/acme-prod/requests",
 	"/connectors/stripe/connect",
 	"/connectors/github/accounts/account-id/rename",
 	"/projects",
@@ -124,9 +123,7 @@ test("settings app links land on the Settings tab's native menu", () => {
 	]) {
 		expect(mobileLinkDestination(path, ["links.example.test"], stage)).toBe(settingsMenu);
 	}
-	expect(mobileLinkDestination("https://unverified.example.test/settings", [], stage)).toBe(
-		"/open-share",
-	);
+	expect(mobileLinkDestination("https://unverified.example.test/settings", [], stage)).toBeNull();
 });
 
 test("dashboard links open Overview through verified HTTPS and the custom scheme", () => {
@@ -137,16 +134,14 @@ test("dashboard links open Overview through verified HTTPS and the custom scheme
 	expect(
 		mobileLinkDestination("https://links.example.test/dashboard", ["links.example.test"], stage),
 	).toBe("/");
-	expect(mobileLinkDestination("https://unverified.example.test/dashboard", [], stage)).toBe(
-		"/open-share",
-	);
+	expect(mobileLinkDestination("https://unverified.example.test/dashboard", [], stage)).toBeNull();
 });
 
 test.each([
 	["/dashboard", "/"],
 	["/dashboard?agent=a", "/?agent=a"],
 	["/dashboard?settings=billing-plan", "/settings/compute"],
-	["/dashboard/agents", "/open-share"],
+	["/dashboard/agents", null],
 	["/?settings=billing-plan", "/settings/compute"],
 	["/deploy?checkout=cancel", "/deploy?checkout=cancel"],
 	["/deploy?utm_source=sui", "/deploy?utm_source=sui"],
@@ -208,6 +203,7 @@ test("resource links reject unverified hosts and unsupported or malformed routes
 		"clawdi://skills/%",
 		"clawdi://skills/key/unknown",
 		"clawdi://skills/key/archive",
+		"clawdi://vault/acme-prod/requests",
 		"clawdi://projects/id/unknown",
 		"clawdi://native/projects/invitations",
 		"clawdi://skills/%5C",
@@ -227,7 +223,7 @@ test("resource links reject unverified hosts and unsupported or malformed routes
 		"https://links.example.test/vaults-extra",
 		"https://links.example.test/shareholder",
 	]) {
-		expect(mobileLinkDestination(path, ["links.example.test"], () => "")).toBe("/open-share");
+		expect(mobileLinkDestination(path, ["links.example.test"], () => "")).toBeNull();
 	}
 });
 
@@ -292,17 +288,19 @@ test("browser fallback rejects unverified or malformed URLs and handles launch f
 	]) {
 		const opened: string[] = [];
 		expect(mobileBrowserLink(path, hosts)).toBeNull();
-		expect(
-			await routeMobileIncomingLink(
-				path,
-				hosts,
-				stage,
-				async (url) => {
-					opened.push(url);
-				},
-				false,
-			),
-		).toBe("/open-share");
+		for (const initial of [false, true]) {
+			expect(
+				await routeMobileIncomingLink(
+					path,
+					hosts,
+					stage,
+					async (url) => {
+						opened.push(url);
+					},
+					initial,
+				),
+			).toBe(initial ? "/" : null);
+		}
 		expect(opened).toEqual([]);
 	}
 	const link = "https://links.example.test/skills/clawdi/SKILL.md";
@@ -320,7 +318,7 @@ test("browser fallback rejects unverified or malformed URLs and handles launch f
 				},
 				initial,
 			),
-		).toBe("/open-share");
+		).toBe(initial ? "/" : null);
 		expect(attempts).toBe(1);
 	}
 });

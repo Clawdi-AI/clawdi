@@ -32,14 +32,14 @@ test("verified-host links use existing Session and Vault contracts without routi
 		link.replace("links.example.test", "links.example.test:444"),
 		link.replace(`#${token}`, `?token=${token}`),
 	]) {
-		expect(mobileLinkDestination(value, hosts, stage)).not.toContain(token);
+		expect(mobileLinkDestination(value, hosts, stage) ?? "").not.toContain(token);
 	}
 	expect(staged).toEqual([link]);
 	expect(mobileLinkDestination(`/vault-request#${token}`, hosts, stage)).toBe("/vault-request");
 	expect(
 		mobileLinkDestination(`clawdi://vault-request?token=${token}&intake=${id}`, hosts, stage),
 	).toBe(`/vault-request?intake=${id}`);
-	expect(mobileLinkDestination("javascript:alert(1)", hosts, stage)).toBe("/open-share");
+	expect(mobileLinkDestination("javascript:alert(1)", hosts, stage)).toBeNull();
 });
 
 test("Vault intake is latest-only, expires, and is consumed once; stale cleanup cannot erase a newer link", () => {

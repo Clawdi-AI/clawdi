@@ -57,22 +57,10 @@ test("Vault operations retain exact identities and never fetch plaintext", async
 		expect(calls[9]?.url.pathname).toBe("/v1/vault/requests");
 		expect(calls[9]?.url.searchParams.get("vault_id")).toBe(source.id);
 		expect(calls[9]?.url.searchParams.get("limit")).toBe("100");
-		const request = {
-			vault_id: source.id,
-			slug: source.slug,
-			project_id: "project-id",
-			section: "",
-			fields: ["Mixed.Key"],
-			expires_in_seconds: 3600,
-		};
-		await client.createRequest(request);
-		expect(calls[10]?.url.pathname).toBe("/v1/vault/requests");
-		expect(calls[10]?.url.search).toBe("");
-		expect(calls[10]?.body).toEqual(request);
 		await client.createInProject("selected-project", { slug: "scoped", name: "Scoped" });
-		expect(calls[11]?.url.searchParams.get("project_id")).toBe("selected-project");
-		expect(calls[11]?.url.searchParams.get("create_only")).toBe("true");
-		expect(calls[11]?.body).toEqual({ slug: "scoped", name: "Scoped" });
+		expect(calls[10]?.url.searchParams.get("project_id")).toBe("selected-project");
+		expect(calls[10]?.url.searchParams.get("create_only")).toBe("true");
+		expect(calls[10]?.body).toEqual({ slug: "scoped", name: "Scoped" });
 	} finally {
 		server.stop(true);
 	}
