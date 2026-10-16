@@ -94,7 +94,12 @@ from app.services.metrics import (
     rate_limit_rejects,
     track_proxy_latency,
 )
-from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
+from app.services.url_security import (
+    OutboundUrlResolutionError,
+    UnsafeOutboundUrlError,
+    validate_channel_http_url,
+    validate_channel_provider_base_url,
+)
 from app.services.vault_crypto import decrypt, encrypt
 
 log = logging.getLogger(__name__)
@@ -2625,15 +2630,14 @@ async def discord_bot_guild_membership_check(
 ) -> DiscordGuildMembershipCheck:
     """Verify bot membership and return Discord-owned guild display metadata."""
     token = decrypt_provider_token(account)
-    base_url = (
-        _account_config_str(account, "api_base_url")
-        or settings.channel_discord_api_base_url.strip()
-    )
+    api_base_url = _account_config_str(account, "api_base_url")
+    base_url = api_base_url or settings.channel_discord_api_base_url.strip()
     await _validate_provider_endpoint_url(
         base_url,
         channel=CHANNEL_PROVIDER_DISCORD,
         method="GET",
         label="discord api base url",
+        resolve_dns=api_base_url is not None,
     )
     path = f"/guilds/{guild_id}"
     account_scope = str(account.id)
@@ -5644,15 +5648,14 @@ async def configure_discord_application(account: ChannelAccount) -> JsonObject:
             "permissions": "0",
         }
         integration_config[str(DISCORD_USER_INSTALL)] = user_install_config
-    base_url = (
-        _account_config_str(account, "api_base_url")
-        or settings.channel_discord_api_base_url.strip()
-    )
+    api_base_url = _account_config_str(account, "api_base_url")
+    base_url = api_base_url or settings.channel_discord_api_base_url.strip()
     await _validate_provider_endpoint_url(
         base_url,
         channel=CHANNEL_PROVIDER_DISCORD,
         method="application",
         label="discord api base url",
+        resolve_dns=api_base_url is not None,
     )
     url = f"{base_url.rstrip('/')}/applications/@me"
     headers = {
@@ -5746,16 +5749,14 @@ async def verify_discord_application_token_identity(
 ) -> JsonObject:
     """Verify a Discord credential without mutating the Developer Portal."""
     raw_base_url = config.get("api_base_url") if isinstance(config, dict) else None
-    base_url = (
-        raw_base_url.strip()
-        if isinstance(raw_base_url, str) and raw_base_url.strip()
-        else settings.channel_discord_api_base_url.strip()
-    )
+    api_base_url = raw_base_url.strip() if isinstance(raw_base_url, str) else ""
+    base_url = api_base_url or settings.channel_discord_api_base_url.strip()
     await _validate_provider_endpoint_url(
         base_url,
         channel=CHANNEL_PROVIDER_DISCORD,
         method="application",
         label="discord api base url",
+        resolve_dns=bool(api_base_url),
     )
     identity = await _discord_application_request(
         account_scope=rate_limit_scope or f"application:{application_id}",
@@ -6168,6 +6169,7 @@ async def sync_telegram_commands(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="setMyCommands",
         label="telegram api base url",
+        resolve_dns=False,
     )
     url = f"{base_url.rstrip('/')}/bot{token}/setMyCommands"
     request_commands: list[JsonObject] = [
@@ -6284,15 +6286,14 @@ async def _send_discord_provider_payload(
     nonce: str | None = None,
 ) -> tuple[str, JsonObject]:
     token = decrypt_provider_token(account)
-    base_url = (
-        _account_config_str(account, "api_base_url")
-        or settings.channel_discord_api_base_url.strip()
-    )
+    api_base_url = _account_config_str(account, "api_base_url")
+    base_url = api_base_url or settings.channel_discord_api_base_url.strip()
     await _validate_provider_endpoint_url(
         base_url,
         channel=CHANNEL_PROVIDER_DISCORD,
         method="POST",
         label="discord api base url",
+        resolve_dns=api_base_url is not None,
     )
     path = f"/channels/{external_chat_id}/messages"
     url = f"{base_url.rstrip('/')}{path}"
@@ -6392,15 +6393,14 @@ async def sync_discord_commands(
     scoped_guild_id = guild_id
     if scoped_guild_id is None and use_configured_guild:
         scoped_guild_id = _account_config_str(account, "guild_id")
-    base_url = (
-        _account_config_str(account, "api_base_url")
-        or settings.channel_discord_api_base_url.strip()
-    )
+    api_base_url = _account_config_str(account, "api_base_url")
+    base_url = api_base_url or settings.channel_discord_api_base_url.strip()
     await _validate_provider_endpoint_url(
         base_url,
         channel=CHANNEL_PROVIDER_DISCORD,
         method="commands",
         label="discord api base url",
+        resolve_dns=api_base_url is not None,
     )
     path = f"/applications/{application_id}"
     if scoped_guild_id:
@@ -6773,6 +6773,7 @@ async def _post_provider_json(
         channel=channel,
         method=method,
         label=f"{channel} provider url",
+        resolve_dns=False,
     )
     try:
         with track_proxy_latency(channel, method):
@@ -6847,9 +6848,20 @@ async def _validate_provider_endpoint_url(
     channel: str,
     method: str,
     label: str,
+    resolve_dns: bool,
 ) -> None:
     try:
-        await validate_channel_http_url(url, label=label)
+        if resolve_dns:
+            await validate_channel_http_url(url, label=label)
+        else:
+            validate_channel_provider_base_url(url, label=label)
+    except OutboundUrlResolutionError as exc:
+        outbound_errors.labels(channel=channel, method=method).inc()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            headers={"Retry-After": "1"},
+        ) from exc
     except UnsafeOutboundUrlError as exc:
         outbound_errors.labels(channel=channel, method=method).inc()
         if channel in {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}:

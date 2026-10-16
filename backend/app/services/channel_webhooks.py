@@ -6,7 +6,11 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from app.models.channel import ChannelBotAgentLink
 from app.services.metrics import webhook_deliveries
 from app.services.safe_public_http import SafePublicHttpClient, SafePublicHttpError
-from app.services.url_security import UnsafeOutboundUrlError, validate_outbound_url
+from app.services.url_security import (
+    OutboundUrlResolutionError,
+    UnsafeOutboundUrlError,
+    validate_outbound_url,
+)
 
 _CONFIG_OBJECT_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 type JsonObject = dict[str, JsonValue]
@@ -46,6 +50,12 @@ async def validate_agent_webhook_url(url: str) -> None:
             allowed_schemes={"https"},
             label="webhook url",
         )
+    except OutboundUrlResolutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            headers={"Retry-After": "1"},
+        ) from exc
     except UnsafeOutboundUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

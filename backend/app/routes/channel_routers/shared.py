@@ -56,7 +56,7 @@ from app.services.metrics import (
     rate_limit_rejects,
     track_proxy_latency,
 )
-from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_provider_base_url
 
 # Discord API docs baseline 07c83a8f1c54accd8e8d13072a5e08d1b1be7ac3.
 # Keep both directions explicit: runtime credentials and hop-by-hop headers
@@ -1414,7 +1414,7 @@ async def request_discord_provider(
     token = decrypt_provider_token(account)
     normalized_path = f"/{path.lstrip('/')}"
     base_url = settings.channel_discord_api_base_url.strip()
-    await _validate_discord_provider_base_url(base_url)
+    _validate_discord_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}{normalized_path}"
     headers = {
         "Authorization": f"Bot {token}",
@@ -1527,9 +1527,9 @@ def _discord_rate_limit_response_headers(response: httpx.Response) -> dict[str, 
     return headers
 
 
-async def _validate_discord_provider_base_url(base_url: str) -> None:
+def _validate_discord_provider_base_url(base_url: str) -> None:
     try:
-        await validate_channel_http_url(base_url, label="discord api base url")
+        validate_channel_provider_base_url(base_url, label="discord api base url")
     except UnsafeOutboundUrlError as exc:
         outbound_errors.labels(channel="discord", method="provider_url").inc()
         raise HTTPException(

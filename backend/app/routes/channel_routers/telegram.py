@@ -117,7 +117,7 @@ from app.services.metrics import (
     track_proxy_latency,
 )
 from app.services.telegram_rate_limiter import telegram_rate_limiter
-from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
+from app.services.url_security import UnsafeOutboundUrlError, validate_channel_provider_base_url
 
 router = APIRouter(prefix="/channels/telegram", tags=["channels"])
 log = logging.getLogger(__name__)
@@ -660,7 +660,7 @@ async def telegram_file_api(
     provider_token = decrypt_provider_token(account)
     await db.rollback()
     base_url = settings.channel_telegram_api_base_url.strip()
-    await _validate_telegram_provider_base_url(base_url)
+    _validate_telegram_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}/file/bot{provider_token}/{file_path}"
     try:
         response = await get_channel_provider_http_client().get(url, timeout=30.0)
@@ -1103,7 +1103,11 @@ async def _validate_telegram_webhook_url(url: str) -> JSONResponse | None:
     try:
         await validate_agent_webhook_url(url)
     except HTTPException as exc:
-        return _telegram_error_response(f"Bad Request: {exc.detail}", 400)
+        description = f"Bad Request: {exc.detail}" if exc.status_code == 400 else str(exc.detail)
+        response = _telegram_error_response(description, exc.status_code)
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
     return None
 
 
@@ -1905,7 +1909,7 @@ async def _post_telegram_bot_payload(
 ) -> httpx.Response:
     provider_token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
-    await _validate_telegram_provider_base_url(base_url)
+    _validate_telegram_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}/bot{provider_token}/{method}"
     try:
         return await get_channel_provider_http_client().post(
@@ -2683,7 +2687,7 @@ async def _telegram_provider_response(
 ) -> httpx.Response:
     base_url = settings.channel_telegram_api_base_url.strip()
     with request_stage(request.scope, "channel_url_validation_ms"):
-        await _validate_telegram_provider_base_url(base_url)
+        _validate_telegram_provider_base_url(base_url)
     url = httpx.URL(f"{base_url.rstrip('/')}/bot{provider_token}/{method}")
     headers: dict[str, str] = {}
     content_type = request.headers.get("content-type")
@@ -2854,9 +2858,9 @@ def _rename_telegram_multipart_field(
     return separator.join(rewritten)
 
 
-async def _validate_telegram_provider_base_url(base_url: str) -> None:
+def _validate_telegram_provider_base_url(base_url: str) -> None:
     try:
-        await validate_channel_http_url(base_url, label="telegram api base url")
+        validate_channel_provider_base_url(base_url, label="telegram api base url")
     except UnsafeOutboundUrlError as exc:
         outbound_errors.labels(channel="telegram", method="provider_url").inc()
         raise HTTPException(

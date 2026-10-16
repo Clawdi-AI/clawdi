@@ -81,6 +81,18 @@ uv run ruff format --check .
 uv run python -m compileall app scripts tests alembic
 ```
 
+## Channel provider URLs
+
+Operator-configured Discord and Telegram API base URLs must use HTTPS and a
+public hostname or address. They are checked without DNS pre-validation;
+HTTPX resolves the host when connecting. Account URL overrides and agent webhook
+URLs still require DNS validation. Lookup timeouts and resolution failures
+return `503` with `Retry-After: 1`; unsafe URL shapes and private targets return
+`400`. See [URL validation](../backend/app/services/url_security.py).
+
+Done: `scripts/test.sh backend tests/test_channel_provider_http.py tests/test_url_security.py`
+exits 0 with passing tests (Docker required).
+
 ## Discord Gateway ownership
 
 [`DiscordAdvisorySession`](../backend/app/services/discord_advisory_session.py)

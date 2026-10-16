@@ -4423,14 +4423,7 @@ async def test_provider_send_rejects_success_without_provider_message_id(
     def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
         return real_client(transport=httpx.MockTransport(provider_handler))
 
-    async def allow_test_url(_url: str, *, label: str) -> None:
-        expected_label = (
-            "discord api base url" if provider == "discord" else "telegram provider url"
-        )
-        assert label == expected_label
-
     monkeypatch.setattr(channel_service.httpx, "AsyncClient", client_factory)
-    monkeypatch.setattr(channel_service, "validate_channel_http_url", allow_test_url)
     ciphertext, nonce = encrypt_optional_token("provider-token")
     account = ChannelAccount(
         provider=provider,
@@ -4469,11 +4462,11 @@ async def test_channel_command_sync_url_error_does_not_leak_validator_detail(
     await db_session.commit()
     marker = "10.0.0.9 postgresql://user:password@db.internal/app"
 
-    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+    def reject_sensitive_url(_url: str, *, label: str) -> None:
         assert label == "telegram api base url"
         raise UnsafeOutboundUrlError(marker)
 
-    monkeypatch.setattr(channel_service, "validate_channel_http_url", reject_sensitive_url)
+    monkeypatch.setattr(channel_service, "validate_channel_provider_base_url", reject_sensitive_url)
 
     response = await client.post(f"/v1/channels/{created['id']}/commands/sync", json={})
 

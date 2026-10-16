@@ -10,6 +10,7 @@ from app.models.channel import (
     ChannelAccount,
 )
 from app.services.url_security import (
+    OutboundUrlResolutionError,
     UnsafeOutboundUrlError,
     validate_channel_http_url,
     validate_channel_websocket_url,
@@ -90,6 +91,12 @@ async def _validate_optional_http_config(
         return
     try:
         await validate_channel_http_url(value, label=label)
+    except OutboundUrlResolutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            headers={"Retry-After": "1"},
+        ) from exc
     except UnsafeOutboundUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -109,6 +116,12 @@ async def _validate_optional_websocket_config(
         return
     try:
         await validate_channel_websocket_url(value, label=label)
+    except OutboundUrlResolutionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+            headers={"Retry-After": "1"},
+        ) from exc
     except UnsafeOutboundUrlError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
