@@ -15,11 +15,15 @@ import {
 	memoryDetailClasses,
 } from "@clawdi/shared/ui";
 import {
+	connectedAccountsLabel,
 	connectorConnectTitle,
+	connectorDetailCopy,
 	connectorDisconnectTitle,
+	connectorsEmptyCopy,
 	connectorFormCopy as copy,
 	formatCount,
 	getProjectResourceDefinition,
+	LIBRARY_COPY,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -38,6 +42,7 @@ import { EmptyState } from "@/components/empty-state";
 import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { SectionLabel } from "@/components/section-label";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -240,6 +245,11 @@ function Catalog() {
 								) : undefined
 							}
 						/>
+						{agentId ? (
+							<Alert icon={Plug} title={LIBRARY_COPY.sharedAcrossAgents}>
+								{LIBRARY_COPY.connectorsSharedAcrossAgents}
+							</Alert>
+						) : null}
 						{catalog.error ? (
 							<ApiErrorPanel error={catalog.error} onRetry={() => void catalog.refetch()} />
 						) : null}
@@ -249,7 +259,11 @@ function Catalog() {
 					catalog.isPending ? (
 						<EntityCardSkeleton />
 					) : !catalog.error && !apps.length ? (
-						<EmptyState title={t("libraryPort.noConnectors")} />
+						<EmptyState
+							icon={Plug}
+							title={connectorsEmptyCopy(search).title}
+							description={connectorsEmptyCopy(search).description}
+						/>
 					) : null
 				}
 			/>
@@ -266,6 +280,7 @@ export function ConnectorDetailScreen({ form = false }: { form?: boolean } = {})
 
 function Detail({ name, form }: { name?: string; form: boolean }) {
 	const t = useI18n();
+	const agentId = useAgentRouteId();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const cache = useQueryClient();
@@ -361,6 +376,22 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 	const appAccounts = (accounts.data ?? []).filter((c) => c.app_name === name);
 	const connected = appAccounts.some(isActiveConnection);
 	const ready = connected || flow === "no_auth";
+	const setupBlocked = Boolean(app.data?.connect_disabled);
+	const unsupported = Boolean(app.data) && flow === null;
+	const openConnect = () => {
+		if (name) router.push({ pathname: "/connectors/[name]/connect", params: { name } });
+	};
+	const connectAccount = (variant: "default" | "outline") => (
+		<Button
+			variant={variant}
+			size="sm"
+			disabled={!app.data || setupBlocked || !flow || action.busy}
+			onPress={openConnect}
+		>
+			<Icon as={Plug} />
+			<Text>{LIBRARY_COPY.connectAccount}</Text>
+		</Button>
+	);
 
 	const searchOptions = useHeaderSearch({
 		value: toolSearch,
@@ -378,9 +409,13 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 			>
 				<WebView recipe={credentialsDialogClasses.body}>
 					{flow === "no_auth" ? (
-						<AppText className="text-muted-foreground">{t("connectors.ready")}</AppText>
-					) : app.data && (!flow || app.data.connect_disabled) ? (
-						<AppText className="text-muted-foreground">{t("connectors.unavailable")}</AppText>
+						<AppText className="text-muted-foreground">
+							{connectorDetailCopy.noAuthDescription}
+						</AppText>
+					) : unsupported ? (
+						<AppText className="text-muted-foreground">{connectorDetailCopy.unsupported}</AppText>
+					) : setupBlocked ? (
+						<AppText className="text-muted-foreground">{connectorDetailCopy.setupBlocked}</AppText>
 					) : app.data ? (
 						<WebView recipe={credentialsDialogClasses.form}>
 							{flow === "redirect" ? (
@@ -491,6 +526,11 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 				renderItem={({ item }) => item}
 				header={
 					<>
+						{agentId ? (
+							<Alert icon={Plug} title={LIBRARY_COPY.sharedAcrossAgents}>
+								{LIBRARY_COPY.connectorSharedAcrossAgents}
+							</Alert>
+						) : null}
 						<PageHeader
 							title={app.data?.display_name || name || t("connectors.title")}
 							icon={
@@ -504,7 +544,11 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 								ready ? (
 									<Badge variant="secondary">
 										<Icon as={Check} />
-										<Text>{flow === "no_auth" ? t("providers.ready") : t("labels.connected")}</Text>
+										<Text>
+											{flow === "no_auth"
+												? connectorDetailCopy.ready
+												: connectorDetailCopy.connected}
+										</Text>
 									</Badge>
 								) : undefined
 							}
@@ -516,32 +560,55 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 						<DashboardSection priority="primary">
 							<DashboardSectionHeader
 								icon={Plug}
-								title={t("libraryPort.accounts")}
-								count={`${appAccounts.length} connected`}
-								description={t("libraryPort.accountsDescription")}
+								title={LIBRARY_COPY.accounts}
+								count={
+									flow === "no_auth"
+										? connectorDetailCopy.noAccountRequired
+										: accounts.isPending
+											? connectorDetailCopy.checkingAccounts
+											: connectedAccountsLabel(appAccounts.length)
+								}
+								description={
+									flow === "no_auth"
+										? connectorDetailCopy.noAuthDescription
+										: LIBRARY_COPY.accountsDescription
+								}
 								actions={
-									flow !== "no_auth" ? (
-										<Button
-											variant="outline"
-											size="sm"
-											disabled={!app.data || app.data.connect_disabled || !flow || action.busy}
-											onPress={() => {
-												if (name)
-													router.push({ pathname: "/connectors/[name]/connect", params: { name } });
-											}}
-										>
-											<Icon as={Plug} />
-											<Text>{t("libraryPort.connectAccount")}</Text>
-										</Button>
-									) : undefined
+									app.data &&
+									flow !== "no_auth" &&
+									!setupBlocked &&
+									!accounts.isPending &&
+									appAccounts.length > 0
+										? connectAccount("outline")
+										: undefined
 								}
 							/>
-							{accounts.error ? (
-								<ApiErrorPanel error={accounts.error} onRetry={() => void accounts.refetch()} />
-							) : accounts.isPending ? (
+							{flow !== "no_auth" && accounts.error ? (
+								<ApiErrorPanel
+									error={accounts.error}
+									onRetry={() => void accounts.refetch()}
+									title={connectorDetailCopy.loadConnectionsFailed}
+								/>
+							) : flow !== "no_auth" && accounts.isPending ? (
 								<EntityCardSkeleton />
-							) : appAccounts.length ? null : (
-								<EmptyState variant="inset" description={t("connectors.noAccounts")} />
+							) : flow === "no_auth" ? (
+								<EmptyState variant="inset" description={connectorDetailCopy.noAuthEmpty} />
+							) : appAccounts.length ? null : unsupported ? (
+								<ApiErrorPanel
+									error={connectorDetailCopy.unsupported}
+									onRetry={() => void app.refetch()}
+									title={connectorDetailCopy.unsupportedTitle}
+								/>
+							) : setupBlocked ? (
+								<Alert title={connectorDetailCopy.setupBlockedTitle}>
+									{connectorDetailCopy.setupBlocked}
+								</Alert>
+							) : (
+								<EmptyState
+									variant="inset"
+									description={connectorDetailCopy.noAccounts}
+									action={app.data ? connectAccount("default") : undefined}
+								/>
 							)}
 						</DashboardSection>
 					</>
@@ -621,7 +688,7 @@ function Account({ connection }: { connection: Connection }) {
 					onPress={disconnect}
 				>
 					<Icon as={Unplug} />
-					<Text>{t("connectors.disconnect")}</Text>
+					<Text>{copy.disconnect}</Text>
 				</Button>
 			</WebView>
 			{action.error ? <ApiErrorPanel error={action.failure} /> : null}
@@ -730,7 +797,9 @@ function ConnectorRename({ connection }: { connection: Connection }) {
 			>
 				<Text>{copy.rename}</Text>
 			</Button>
-			{action.error || closeError ? <ApiErrorPanel error={action.error ?? closeError} /> : null}
+			{action.error || closeError ? (
+				<ApiErrorPanel error={action.error ? action.failure : closeError} />
+			) : null}
 		</SheetPage>
 	);
 }

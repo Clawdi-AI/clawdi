@@ -1,7 +1,11 @@
 "use client";
 
 import { connectorsSurfaceClasses } from "@clawdi/shared/ui";
-import { getProjectResourceDefinition, LIBRARY_COPY } from "@clawdi/shared/view";
+import {
+	connectorsEmptyCopy,
+	getProjectResourceDefinition,
+	LIBRARY_COPY,
+} from "@clawdi/shared/view";
 import { ChevronLeft, ChevronRight, Plug } from "lucide-react";
 import { parseAsString, useQueryState } from "nuqs";
 import { type ReactNode, Suspense, useEffect, useMemo } from "react";
@@ -197,10 +201,8 @@ function ConnectorsList({
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Plug />
-					<AlertTitle>Shared across all agents</AlertTitle>
-					<AlertDescription>
-						Connections belong to this account. Connecting or disconnecting here affects all agents.
-					</AlertDescription>
+					<AlertTitle>{LIBRARY_COPY.sharedAcrossAgents}</AlertTitle>
+					<AlertDescription>{LIBRARY_COPY.connectorsSharedAcrossAgents}</AlertDescription>
 				</Alert>
 			) : null}
 
@@ -342,12 +344,8 @@ function CatalogSection({
 		content = (
 			<EmptyState
 				icon={Plug}
-				title={query ? "No matches" : "No connectors available"}
-				description={
-					query
-						? `Nothing matches "${query}".`
-						: "Connectors aren't available for this account yet."
-				}
+				title={connectorsEmptyCopy(query).title}
+				description={connectorsEmptyCopy(query).description}
 			/>
 		);
 	} else {

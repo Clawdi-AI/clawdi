@@ -188,9 +188,7 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 	);
 
 	const emptyMessage =
-		searchQuery || apiCategory
-			? "No matches — try a different search or category."
-			: "No memories yet. Create one above, or your agents will create them automatically as they work.";
+		searchQuery || apiCategory ? LIBRARY_COPY.noMemoryMatches : LIBRARY_COPY.emptyMemoriesTable;
 	const paginationFooter = (
 		<DataTablePagination
 			page={page}
@@ -205,10 +203,8 @@ function MemoriesSurfaceBody({ scope }: { scope: ResourceNavigationScope }) {
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Brain />
-					<AlertTitle>Shared across all agents</AlertTitle>
-					<AlertDescription>
-						Memories and provider settings belong to this account. Changes here affect all agents.
-					</AlertDescription>
+					<AlertTitle>{LIBRARY_COPY.sharedAcrossAgents}</AlertTitle>
+					<AlertDescription>{LIBRARY_COPY.memoriesSharedAcrossAgents}</AlertDescription>
 				</Alert>
 			) : null}
 			{provider === "mem0" && !hasMem0Key ? (

@@ -2,7 +2,14 @@
 
 import type { components } from "@clawdi/shared/api";
 import { connectorDetailClasses } from "@clawdi/shared/ui";
-import { formatCount, LIBRARY_COPY } from "@clawdi/shared/view";
+import {
+	connectedAccountsLabel,
+	connectorDetailCopy,
+	connectorDisconnectTitle,
+	connectorFormCopy,
+	formatCount,
+	LIBRARY_COPY,
+} from "@clawdi/shared/view";
 import { AlertCircle, Check, Link2Off, Plug, Wrench } from "lucide-react";
 import { parseAsString, useQueryStates } from "nuqs";
 import {
@@ -183,11 +190,9 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					Rename
 				</Button>
 				<ConfirmAction
-					title={`Disconnect ${c.alias || c.account_display || "this account"}?`}
-					description={
-						<p>All agents will lose access immediately. To restore access, sign in again.</p>
-					}
-					confirmLabel="Disconnect"
+					title={connectorDisconnectTitle(c.alias || c.account_display || "this account")}
+					description={<p>{connectorFormCopy.disconnectDescription}</p>}
+					confirmLabel={connectorFormCopy.disconnect}
 					destructive
 					onConfirm={() => handleDisconnect(c.id)}
 				>
@@ -202,7 +207,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 						) : (
 							<Link2Off className={connectorDetailClasses.actionIcon} />
 						)}
-						Disconnect
+						{connectorFormCopy.disconnect}
 					</Button>
 				</ConfirmAction>
 			</div>
@@ -263,10 +268,8 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Plug />
-					<AlertTitle>Shared across all agents</AlertTitle>
-					<AlertDescription>
-						Connections and names belong to this account. Changes here affect all agents.
-					</AlertDescription>
+					<AlertTitle>{LIBRARY_COPY.sharedAcrossAgents}</AlertTitle>
+					<AlertDescription>{LIBRARY_COPY.connectorSharedAcrossAgents}</AlertDescription>
 				</Alert>
 			) : null}
 			<PageHeader
@@ -276,7 +279,7 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					isReady ? (
 						<Badge variant="secondary">
 							<Check />
-							{usesNoAuth ? "Ready" : "Connected"}
+							{usesNoAuth ? connectorDetailCopy.ready : connectorDetailCopy.connected}
 						</Badge>
 					) : undefined
 				}
@@ -289,15 +292,13 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 					title={LIBRARY_COPY.accounts}
 					count={
 						usesNoAuth
-							? "No account required"
+							? connectorDetailCopy.noAccountRequired
 							: isConnectionsLoading
-								? "Checking accounts"
-								: `${appConnections.length} connected`
+								? connectorDetailCopy.checkingAccounts
+								: connectedAccountsLabel(appConnections.length)
 					}
 					description={
-						usesNoAuth
-							? "This connector does not require an account connection."
-							: ACCOUNTS_DESCRIPTION
+						usesNoAuth ? connectorDetailCopy.noAuthDescription : LIBRARY_COPY.accountsDescription
 					}
 					actions={
 						app &&
@@ -320,33 +321,31 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 							onRetry={() => {
 								void connectionsQ.refetch();
 							}}
-							title="Couldn't load connections"
+							title={connectorDetailCopy.loadConnectionsFailed}
 						/>
 					) : !usesNoAuth && isConnectionsLoading ? (
 						<AccountRowSkeleton />
 					) : usesNoAuth ? (
-						<EmptyState variant="inset" description="No account connection is required." />
+						<EmptyState variant="inset" description={connectorDetailCopy.noAuthEmpty} />
 					) : hasUnsupportedAuthType && appConnections.length === 0 ? (
 						<ApiErrorPanel
-							error="This connector uses an authentication method Clawdi does not support."
+							error={connectorDetailCopy.unsupported}
 							onRetry={() => {
 								void appQ.refetch();
 							}}
-							title="Connection unavailable"
+							title={connectorDetailCopy.unsupportedTitle}
 						/>
 					) : appConnections.length === 0 ? (
 						isSetupBlocked ? (
 							<Alert>
 								<AlertCircle />
-								<AlertTitle>Connector unavailable</AlertTitle>
-								<AlertDescription>
-									Additional configuration is required. Contact support to continue.
-								</AlertDescription>
+								<AlertTitle>{connectorDetailCopy.setupBlockedTitle}</AlertTitle>
+								<AlertDescription>{connectorDetailCopy.setupBlocked}</AlertDescription>
 							</Alert>
 						) : (
 							<EmptyState
 								variant="inset"
-								description="No connected accounts yet."
+								description={connectorDetailCopy.noAccounts}
 								action={
 									app ? (
 										<ConnectorConnectAction
@@ -392,9 +391,6 @@ function ConnectorDetail({ name, scope }: { name: string; scope: ResourceNavigat
 // Sub-components
 // ---------------------------------------------------------------------------
 
-const ACCOUNTS_DESCRIPTION =
-	"Connect an account once. Approved tools become available to agents through this connector.";
-
 /** Mirrors the loaded page: header, Accounts section, Available tools section. */
 function DetailSkeleton() {
 	return (
@@ -405,7 +401,7 @@ function DetailSkeleton() {
 					icon={Plug}
 					title={LIBRARY_COPY.accounts}
 					count="Checking accounts"
-					description={ACCOUNTS_DESCRIPTION}
+					description={LIBRARY_COPY.accountsDescription}
 				/>
 				<div className="p-4">
 					<AccountRowSkeleton />

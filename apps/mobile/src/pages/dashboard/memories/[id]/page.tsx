@@ -1,6 +1,7 @@
 import { memoryDetailClasses } from "@clawdi/shared/ui";
 import {
 	memoryFormCopy as formCopy,
+	LIBRARY_COPY,
 	MEMORY_CATEGORY_COLORS,
 	memoryCategoryLabel,
 	memoryRecallLabel,
@@ -17,6 +18,7 @@ import { DetailBackLink, DetailMeta, DetailPanel, LibraryPage } from "@/componen
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader, PageHeaderSkeleton } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
+import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -95,6 +97,11 @@ function MemoryDetail({ id }: { id: string | undefined }) {
 	return (
 		<LibraryPage detail>
 			<DetailBackLink href="/memories" label={t("memories.title")} />
+			{agentId ? (
+				<Alert icon={Brain} title={LIBRARY_COPY.sharedAcrossAgents}>
+					{LIBRARY_COPY.memorySharedAcrossAgents}
+				</Alert>
+			) : null}
 			{id && query.isPending ? (
 				<PageHeaderSkeleton icon />
 			) : !id || query.isError || !memory ? (

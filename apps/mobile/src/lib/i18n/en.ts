@@ -104,13 +104,7 @@ const connectorsEn = {
 	availableCount: "available",
 	activeCount: "active",
 	title: "Connectors",
-	noAccounts: "No accounts connected to this app.",
-	disconnect: "Disconnect account",
-	ready: "This app needs no credentials and is ready to use.",
-	unavailable:
-		"This authentication method is unavailable. Additional server configuration may be required.",
-	oauth:
-		"Authorize in the system browser, then close it and return here. Refresh accounts to check the result; opening or closing the browser does not mean authorization succeeded.",
+	oauth: "Authorize in the browser, then return here.",
 } as const;
 const storeEn = {
 	checkPending: "Check pending purchases",

@@ -83,6 +83,16 @@ export const LIBRARY_COPY = {
 	noMemories: "No memories yet",
 	emptyMemories: "Create one, or your agents will create them automatically as they work.",
 	noMemoryMatches: "No matches — try a different search or category.",
+	emptyMemoriesTable:
+		"No memories yet. Create one above, or your agents will create them automatically as they work.",
+	sharedAcrossAgents: "Shared across all agents",
+	memoriesSharedAcrossAgents:
+		"Memories and provider settings belong to this account. Changes here affect all agents.",
+	memorySharedAcrossAgents: "This memory belongs to the account. Changes here affect all agents.",
+	connectorsSharedAcrossAgents:
+		"Connections belong to this account. Connecting or disconnecting here affects all agents.",
+	connectorSharedAcrossAgents:
+		"Connections and names belong to this account. Changes here affect all agents.",
 	noVaults: "No vaults yet",
 	emptyVaults: "Create a vault to group API keys for your agents.",
 	yourConnections: "Your connections",
