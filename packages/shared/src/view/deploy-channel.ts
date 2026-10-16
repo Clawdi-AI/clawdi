@@ -12,6 +12,13 @@ function returnUrl(params: URLSearchParams): URL | null {
 	}
 }
 
+export const DEPLOY_CHANNEL_COPY = {
+	preinstalledPlugins: "Preinstalled plugins",
+	suiBundleTitle: "Sui bundle",
+	suiBundleDescription: "Includes Sui ecosystem Store plugins and their skills and MCP servers.",
+} as const;
+
+/** The Store plugin bundle a `/deploy` link (or its sign-in return URL) asks to preinstall. */
 export function resolveDeployChannel(search: string): "sui" | null {
 	let params = new URLSearchParams(search);
 	if (!params.has("deploy_profile") && !params.has("utm_source")) {

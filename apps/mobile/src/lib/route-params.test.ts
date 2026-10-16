@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
+import { resolveDeployChannel } from "@clawdi/shared/view";
 import {
 	limitedText,
 	nextSessionPage,
 	projectRouteFilter,
 	routeParam,
+	routeSearch,
 	uniqueSessions,
 } from "@/lib/route-params";
 import { adjacentTimelineCursor, timelinePage, timelineRequest } from "@/lib/timeline-state";
@@ -125,5 +127,18 @@ describe("read-only pagination boundaries", () => {
 		expect(routeParam(" ")).toBeUndefined();
 		expect(routeParam("x".repeat(257))).toBeUndefined();
 		expect(routeParam(["agent-a", "agent-b"])).toBe("agent-a");
+	});
+	test("deploy channel links keep Web's single-value rule through route params", () => {
+		expect(resolveDeployChannel(routeSearch({ deploy_profile: "sui" }))).toBe("sui");
+		expect(resolveDeployChannel(routeSearch({ utm_source: "sui", other: undefined }))).toBe("sui");
+		expect(resolveDeployChannel(routeSearch({ redirect_url: "/deploy?deploy_profile=sui" }))).toBe(
+			"sui",
+		);
+		expect(resolveDeployChannel(routeSearch({ deploy_profile: ["sui", "sui"] }))).toBeNull();
+		expect(resolveDeployChannel(routeSearch({}))).toBeNull();
+		// Router params may carry non-string values; they never become query values.
+		expect(routeSearch({ deploy_profile: "sui", screen: { nested: true }, count: 2 })).toBe(
+			"deploy_profile=sui",
+		);
 	});
 });

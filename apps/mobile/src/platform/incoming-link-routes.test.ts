@@ -151,6 +151,11 @@ test.each([
 	["/dashboard/agents", "/open-share"],
 	["/?settings=billing-plan", "/settings/compute"],
 	["/deploy?checkout=cancel", "/deploy?checkout=cancel"],
+	["/deploy?utm_source=sui", "/deploy?utm_source=sui"],
+	[
+		"/sign-up?redirect_url=%2Fdeploy%3Fdeploy_profile%3Dsui",
+		"/sign-up?redirect_url=%2Fdeploy%3Fdeploy_profile%3Dsui",
+	],
 	["/?settings=billing-plan&checkout=cancel", "/settings/compute"],
 	[
 		"/?settings=billing-wallet&wallet_checkout_session_id={CHECKOUT_SESSION_ID}",

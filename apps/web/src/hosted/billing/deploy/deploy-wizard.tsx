@@ -4,9 +4,11 @@ import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { deployWizardClasses } from "@clawdi/shared/ui";
 import {
 	agentSurfaceCopy,
+	DEPLOY_CHANNEL_COPY,
 	deployComputeResourceLabels,
 	deployConfigurationSummary,
 	deployFormCopy,
+	resolveDeployChannel,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, useRouterState } from "@tanstack/react-router";
@@ -192,7 +194,6 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
-import { resolveDeployChannel } from "@/lib/deploy-channel";
 import { env } from "@/lib/env";
 import { shouldBlockQueryError } from "@/lib/query-state";
 import { cn } from "@/lib/utils";
@@ -639,7 +640,7 @@ export function DeployWizard() {
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (personaError) return personaError;
-		if (!subscriptionSource) return "Choose a subscription source.";
+		if (!subscriptionSource) return deployFormCopy.chooseSource;
 		if (subscriptionSource.mode === "included") {
 			if (includedBasicAvailable === undefined) {
 				return blockingIncludedBasicError
@@ -657,7 +658,7 @@ export function DeployWizard() {
 			}
 			if (subscriptionSource.mode === "new") {
 				if (!plansResolved) return "Waiting for compute plans.";
-				if (!computePlanReady) return "Choose an available compute plan.";
+				if (!computePlanReady) return deployFormCopy.choosePlan;
 			}
 		}
 		if (!managedPrimaryModelReady) {
@@ -782,19 +783,17 @@ export function DeployWizard() {
 		aiFields: DeployAiFields,
 		computePlanSlug: ComputePlanSlug,
 	): DeployRequest {
-		return {
-			...buildHostedDeployRequest({
-				computePlanSlug,
-				runtime,
-				persona: {
-					agentName,
-					language,
-					timezone,
-				},
-				aiFields,
-			}),
-			...(pluginBundle ? { plugin_bundle: pluginBundle } : {}),
-		};
+		return buildHostedDeployRequest({
+			computePlanSlug,
+			runtime,
+			persona: {
+				agentName,
+				language,
+				timezone,
+			},
+			aiFields,
+			pluginBundle,
+		});
 	}
 
 	function redirectTo(url: string | null | undefined): boolean {
@@ -1208,7 +1207,7 @@ export function DeployWizard() {
 				</SettingsSection>
 
 				{channel ? (
-					<SettingsSection title="Preinstalled plugins">
+					<SettingsSection title={DEPLOY_CHANNEL_COPY.preinstalledPlugins}>
 						<div className={ENTITY_CHOICE_GRID_CLASS}>
 							<EntityChoiceCard
 								selected={preinstallBundle}
@@ -1219,8 +1218,8 @@ export function DeployWizard() {
 										<Package />
 									</IconChip>
 								}
-								title="Sui bundle"
-								description="Includes Sui ecosystem Store plugins and their skills and MCP servers."
+								title={DEPLOY_CHANNEL_COPY.suiBundleTitle}
+								description={DEPLOY_CHANNEL_COPY.suiBundleDescription}
 							/>
 						</div>
 					</SettingsSection>
@@ -1498,7 +1497,7 @@ export function DeployWizard() {
 					<SettingsSection title={agentSurfaceCopy.personalize}>
 						<div className={deployWizardClasses.personalize}>
 							<div className={deployWizardClasses.nameField}>
-								<Label htmlFor="agent-name">Name in Clawdi</Label>
+								<Label htmlFor="agent-name">{deployFormCopy.name}</Label>
 								<Input
 									id="agent-name"
 									value={agentName}
@@ -1543,7 +1542,7 @@ export function DeployWizard() {
 								) : null}
 							</div>
 							<div className={deployWizardClasses.languageField}>
-								<Label htmlFor="agent-language">Language</Label>
+								<Label htmlFor="agent-language">{deployFormCopy.language}</Label>
 								<Select
 									items={LANGUAGE_SELECT_ITEMS}
 									value={language || "default"}
@@ -1568,7 +1567,7 @@ export function DeployWizard() {
 							</div>
 							{tzOptions.length > 0 ? (
 								<div className={deployWizardClasses.timezoneField}>
-									<Label htmlFor="agent-timezone">Timezone</Label>
+									<Label htmlFor="agent-timezone">{deployFormCopy.timezone}</Label>
 									<TimezoneCombobox
 										id="agent-timezone"
 										value={timezone}

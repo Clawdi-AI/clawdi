@@ -2,7 +2,7 @@
 
 import { onboardingCardClasses } from "@clawdi/shared/ui";
 
-import { onboardingCardModel } from "@clawdi/shared/view";
+import { OVERVIEW_COPY, onboardingCardModel } from "@clawdi/shared/view";
 
 import { Link } from "@tanstack/react-router";
 import { Rocket, TerminalSquare } from "lucide-react";
@@ -54,7 +54,7 @@ export function OnboardingCard({
 								size="lg"
 								className={onboardingCardClasses.deployAction}
 							>
-								<Rocket data-icon="inline-start" /> Deploy a Cloud Agent
+								<Rocket data-icon="inline-start" /> {OVERVIEW_COPY.deploy}
 							</Button>
 						) : null}
 						<Button
@@ -64,7 +64,7 @@ export function OnboardingCard({
 							className={onboardingCardClasses.connectAction}
 							onClick={connect}
 						>
-							<TerminalSquare data-icon="inline-start" /> Connect your own agent
+							<TerminalSquare data-icon="inline-start" /> {OVERVIEW_COPY.connect}
 						</Button>
 					</div>
 				</CardContent>

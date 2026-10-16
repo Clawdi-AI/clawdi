@@ -7,6 +7,18 @@ export function routeParam(value: string | string[] | undefined): string | undef
 		: undefined;
 }
 
+/**
+ * Expo Router search params back as a query string, keeping repeated keys. Router params can
+ * also hold non-string values (nested navigation params); those are never query values.
+ */
+export function routeSearch(params: Readonly<Record<string, unknown>>): string {
+	const search = new URLSearchParams();
+	for (const [key, value] of Object.entries(params))
+		for (const item of Array.isArray(value) ? value : [value])
+			if (typeof item === "string") search.append(key, item);
+	return search.toString();
+}
+
 /** An invalid explicit Project filter must never become an unscoped request. */
 export function projectRouteFilter(
 	value: string | string[] | undefined,

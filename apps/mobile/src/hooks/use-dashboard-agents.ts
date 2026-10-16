@@ -46,14 +46,12 @@ export function useDashboardDeployments() {
 	});
 }
 
-/** Both inventories are account-fenced. Unresolved membership never claims an empty account. */
-export function useDashboardAgents() {
-	const agents = useCloudAgents();
-	const inventory = useDashboardDeployments();
-	const { hosted, compute } = useMobileApi(),
+/** Hosted product access; `can_use_v2` is Web's `canCreateCloudAgents`. */
+export function useProductCapabilities() {
+	const { compute } = useMobileApi(),
 		scope = useAccountScope(),
 		read = useAccountRead();
-	const capabilities = useQuery({
+	return useQuery({
 		queryKey: accountQueryKey(scope, "product-capabilities"),
 		queryFn: ({ signal }) =>
 			read((lease) => {
@@ -63,6 +61,16 @@ export function useDashboardAgents() {
 		enabled: scope.isReady && Boolean(compute),
 		...transientQueryRetry,
 	});
+}
+
+/** Both inventories are account-fenced. Unresolved membership never claims an empty account. */
+export function useDashboardAgents() {
+	const agents = useCloudAgents();
+	const inventory = useDashboardDeployments();
+	const { hosted, compute } = useMobileApi(),
+		scope = useAccountScope(),
+		read = useAccountRead();
+	const capabilities = useProductCapabilities();
 	const envs = agents.data ?? [],
 		envById = new Map(envs.map((env) => [env.id.toLowerCase(), env]));
 	const deployments = inventory.data ?? [],

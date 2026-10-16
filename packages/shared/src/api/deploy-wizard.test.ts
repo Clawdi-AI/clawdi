@@ -106,6 +106,22 @@ describe("hosted deploy request contract", () => {
 		});
 	});
 
+	test("adds a channel's plugin bundle only when the draft preinstalls it", () => {
+		const draft = {
+			runtime: "hermes",
+			computePlanSlug: "compute_basic",
+			agentName: "Sui agent",
+			language: "",
+			timezone: "",
+			ai: { mode: "unmanaged" },
+		} as const;
+		const plain = validateAndBuildHostedDeployRequest(draft);
+		const bundled = validateAndBuildHostedDeployRequest({ ...draft, pluginBundle: "sui" });
+		if (!plain.ok || !bundled.ok) throw new Error("Invalid fixture");
+		expect("plugin_bundle" in plain.request).toBe(false);
+		expect(bundled.request).toEqual({ ...plain.request, plugin_bundle: "sui" });
+	});
+
 	test("validates persona and managed catalog boundaries without throwing", () => {
 		const result = validateAndBuildHostedDeployRequest(
 			{

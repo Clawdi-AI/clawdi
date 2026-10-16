@@ -1,5 +1,7 @@
 "use client";
 
+import { newAgentChooserClasses } from "@clawdi/shared/ui";
+import { newAgentChooserCopy } from "@clawdi/shared/view";
 import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useState } from "react";
@@ -40,9 +42,11 @@ export function NewAgentButton({
 	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
+	// Server-rendered markup has no click handler, so it must not look actionable.
+	const disabled = !hydrated || checkingDeployAccess;
 
 	function handleClick() {
-		if (checkingDeployAccess) return;
+		if (disabled) return;
 		if (canDeployOnClawdi || deployAccessError) {
 			setChooserOpen(true);
 			return;
@@ -64,10 +68,10 @@ export function NewAgentButton({
 
 	const trigger = (
 		<SidebarMenuButton
-			tooltip={compact ? undefined : "New agent"}
-			aria-label="New agent"
+			tooltip={compact ? undefined : newAgentChooserCopy.title}
+			aria-label={newAgentChooserCopy.title}
 			onClick={handleClick}
-			disabled={checkingDeployAccess}
+			disabled={disabled}
 			className={cn(
 				"duration-200 ease-linear",
 				compact &&
@@ -75,7 +79,7 @@ export function NewAgentButton({
 			)}
 		>
 			<CirclePlus />
-			<span className={compact ? "sr-only" : undefined}>New agent</span>
+			<span className={compact ? "sr-only" : undefined}>{newAgentChooserCopy.title}</span>
 		</SidebarMenuButton>
 	);
 
@@ -85,7 +89,7 @@ export function NewAgentButton({
 				<Tooltip>
 					<TooltipTrigger render={trigger} />
 					<TooltipContent side="right" align="center">
-						New agent
+						{newAgentChooserCopy.title}
 					</TooltipContent>
 				</Tooltip>
 			) : (
@@ -95,11 +99,9 @@ export function NewAgentButton({
 			<Dialog open={chooserOpen} onOpenChange={setChooserOpen}>
 				<DialogContent className="sm:max-w-lg">
 					<DialogHeader>
-						<DialogTitle>New agent</DialogTitle>
+						<DialogTitle>{newAgentChooserCopy.title}</DialogTitle>
 						<DialogDescription>
-							{canDeployOnClawdi
-								? "Deploy a Cloud Agent, or connect an agent you already run."
-								: "Connect an agent you already run."}
+							{newAgentChooserCopy.description(canDeployOnClawdi)}
 						</DialogDescription>
 					</DialogHeader>
 					{deployAccessError ? (
@@ -108,22 +110,31 @@ export function NewAgentButton({
 							onRetry={() => {
 								void hostedAccess.refetch();
 							}}
-							title="Couldn't check Cloud Agent access"
+							title={newAgentChooserCopy.accessError}
 						/>
 					) : null}
-					<div className={cn("grid gap-3", canDeployOnClawdi && "sm:grid-cols-2")}>
+					<div
+						className={cn(
+							newAgentChooserClasses.choices,
+							canDeployOnClawdi && newAgentChooserClasses.choicesWithDeploy,
+						)}
+					>
 						{canDeployOnClawdi ? (
 							<ChoiceCard
 								icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
-								title={checkingDeployAccess ? "Checking access" : "Deploy a Cloud Agent"}
-								description="Clawdi runs and manages it — pick a framework and go live in minutes."
+								title={
+									checkingDeployAccess
+										? newAgentChooserCopy.checkingAccess
+										: newAgentChooserCopy.deployTitle
+								}
+								description={newAgentChooserCopy.deployDescription}
 								onClick={chooseDeploy}
 							/>
 						) : null}
 						<ChoiceCard
 							icon={<TerminalSquare />}
-							title="Connect your own agent"
-							description="Claude Code, Codex, Hermes, OpenClaw, Pi, or OpenCode with Clawdi Desktop or the CLI."
+							title={newAgentChooserCopy.connectTitle}
+							description={newAgentChooserCopy.connectDescription}
 							onClick={chooseConnect}
 						/>
 					</div>
@@ -152,13 +163,17 @@ function ChoiceCard({
 			data-slot="new-agent-choice"
 			onClick={onClick}
 			variant="outline"
-			className="h-auto min-h-32 w-full flex-col items-start justify-start gap-2 whitespace-normal p-4 text-left hover:border-primary/40 hover:bg-muted/50"
+			className={newAgentChooserClasses.choice}
 		>
-			<IconChip size="sm" tint="bg-primary/10 text-primary" className="size-9 transition-colors">
+			<IconChip
+				size="sm"
+				tint={newAgentChooserClasses.chipTint}
+				className={newAgentChooserClasses.chip}
+			>
 				{icon}
 			</IconChip>
-			<span className="text-sm font-medium">{title}</span>
-			<span className="text-xs text-muted-foreground">{description}</span>
+			<span className={newAgentChooserClasses.title}>{title}</span>
+			<span className={newAgentChooserClasses.description}>{description}</span>
 		</Button>
 	);
 }

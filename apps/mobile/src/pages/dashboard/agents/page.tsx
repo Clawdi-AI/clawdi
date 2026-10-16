@@ -1,103 +1,57 @@
-import type { Project } from "@clawdi/shared/api";
 import { agentSourceBadgeClasses, hostedAgentGroupsClasses } from "@clawdi/shared/ui";
 import {
+	type AgentTile,
 	agentSourceKindLabel,
 	agentSurfaceCopy,
 	hostedAgentCountLabel,
 	hostedAgentGroupsCopy,
-	projectPickerGroups,
-	selfManagedAgentTiles,
+	OVERVIEW_COPY,
 } from "@clawdi/shared/view";
-import { router } from "expo-router";
 import Cloud from "lucide-react-native/icons/cloud";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentsCard, AgentTileView } from "@/components/dashboard/agents-card";
+import { useNewAgentAction } from "@/components/dashboard/new-agent-button";
+import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { PageHeader } from "@/components/page-header";
-import { ProjectResourceBoundary } from "@/components/projects/project-scope";
-import { useCloudProjects } from "@/components/projects/projects-surface";
 import { SectionLabel } from "@/components/section-label";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
 import { WebView, webBoth } from "@/components/ui/web-layout";
-import { useCloudAgents } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
-import { useI18n } from "@/lib/i18n";
+import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
+
+/** Web's /agents index: Cloud Agents, then Connected Agents, each failing on its own. */
 export default function AgentsRoute() {
-	return (
-		<ProjectResourceBoundary>
-			{(project) => <AgentsView project={project} />}
-		</ProjectResourceBoundary>
-	);
-}
-function AgentsView({ project }: { project?: Project }) {
-	const t = useI18n();
-	const agents = useCloudAgents(project?.id);
-	const dashboard = useDashboardAgents();
-	const projects = useCloudProjects();
-	const loading = project
-		? agents.isPending
-		: dashboard.agents.isPending || dashboard.hostedStatus?.isLoading === true;
-	const error = project
-		? agents.data
-			? null
-			: agents.error
-		: (dashboard.hostedStatus?.error ?? (dashboard.agents.data ? null : dashboard.agents.error));
-	const tiles = project ? selfManagedAgentTiles(agents.data) : dashboard.tiles;
+	const { agents, tiles, hasHosted, canDeploy, hostedStatus } = useDashboardAgents();
+	const newAgent = useNewAgentAction();
+	const selfManagedError = agents.data ? undefined : agents.error;
 	const hosted = tiles.filter((tile) => tile.source === "on-clawdi");
 	const other = tiles.filter((tile) => tile.source !== "on-clawdi");
-	const rows = loading || error ? [] : [...hosted, ...other];
+	const empty =
+		!agents.isPending &&
+		!selfManagedError &&
+		(agents.data ?? []).length === 0 &&
+		tiles.length === 0 &&
+		!hostedStatus?.isLoading &&
+		!hostedStatus?.error;
+	// Without hosted compute this is Web's OSS list: one card with its own states.
+	const grouped = hasHosted && !agents.isPending && !hostedStatus?.isLoading && !empty;
+	const rows = grouped ? [...hosted, ...other] : [];
 	const refresh = () => {
 		void agents.refetch();
-		if (!project) {
-			void dashboard.agents.refetch();
-			dashboard.hostedStatus?.onRetry();
-		}
+		hostedStatus?.onRetry?.();
 	};
 	return (
 		<SafeAreaScreen>
-			<NativeHeader
-				title={agentSurfaceCopy.agents}
-				actions={[
-					{ id: "create", label: t("agents.create"), onPress: () => router.push("/deploy") },
-				]}
-				menu={{
-					label: t("projects.filterMenu"),
-					items: [
-						{
-							id: "all",
-							label: t("projects.all"),
-							selected: !project,
-							onPress: () => router.setParams({ projectId: undefined }),
-						},
-					],
-					// Web's project picker groups: projects, agent workspaces, shared; no Personal project.
-					sections: projectPickerGroups(
-						(projects.data ?? []).filter((item) => item.kind !== "personal"),
-					).map((group) => ({
-						id: group.id,
-						title: group.label,
-						items: group.projects.flatMap(({ id, name }) =>
-							id
-								? [
-										{
-											id,
-											label: name,
-											selected: id === project?.id,
-											onPress: () => router.setParams({ projectId: id }),
-										},
-									]
-								: [],
-						),
-					})),
-				}}
-			/>
-			<NativeList
+			<NativeHeader title={agentSurfaceCopy.agents} actions={[newAgent]} />
+			<NativeList<AgentTile>
 				data={rows}
 				keyExtractor={(tile) => `${tile.source}:${tile.id}`}
-				refreshing={agents.isRefetching || dashboard.agents.isRefetching}
+				refreshing={agents.isRefetching}
 				onRefresh={refresh}
 				header={
 					<PageHeader
@@ -105,10 +59,24 @@ function AgentsView({ project }: { project?: Project }) {
 						description={agentSurfaceCopy.everyAgentInYourAccount}
 					/>
 				}
-				empty={<AgentsCard agents={[]} isLoading={loading} error={error} onRetry={refresh} />}
+				empty={
+					grouped ? null : hasHosted && empty ? (
+						<WebView recipe="gap-4">
+							<OnboardingCard canDeployOnClawdi={canDeploy} />
+							<WelcomeWalletCard />
+						</WebView>
+					) : (
+						<AgentsCard
+							agents={tiles}
+							isLoading={agents.isPending || hostedStatus?.isLoading === true}
+							error={selfManagedError}
+							onRetry={() => void agents.refetch()}
+						/>
+					)
+				}
 				renderItem={({ item, index }) => (
 					<WebView recipe={hostedAgentGroupsClasses.section}>
-						{!project && (index === 0 || index === hosted.length) ? (
+						{index === 0 || index === hosted.length ? (
 							item.source === "on-clawdi" ? (
 								<SectionLabel
 									count={hostedAgentCountLabel(hosted.length)}
@@ -136,6 +104,29 @@ function AgentsView({ project }: { project?: Project }) {
 						<AgentTileView tile={item} />
 					</WebView>
 				)}
+				footer={
+					grouped && (selfManagedError || hostedStatus?.error) ? (
+						<WebView recipe={hostedAgentGroupsClasses.root}>
+							{selfManagedError ? (
+								<WebView recipe={hostedAgentGroupsClasses.section}>
+									<SectionLabel>{hostedAgentGroupsCopy.other}</SectionLabel>
+									<ApiErrorPanel
+										error={selfManagedError}
+										onRetry={() => void agents.refetch()}
+										title={hostedAgentGroupsCopy.otherError}
+									/>
+								</WebView>
+							) : null}
+							{hostedStatus?.error ? (
+								<ApiErrorPanel
+									error={hostedStatus.error}
+									onRetry={hostedStatus.onRetry}
+									title={OVERVIEW_COPY.cloudInventoryError}
+								/>
+							) : null}
+						</WebView>
+					) : null
+				}
 			/>
 		</SafeAreaScreen>
 	);

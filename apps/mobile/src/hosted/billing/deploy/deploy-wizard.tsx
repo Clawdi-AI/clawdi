@@ -6,6 +6,7 @@ import {
 	DEFAULT_HOSTED_DEPLOY_RUNTIME,
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	HOSTED_WALLET_FUNDING_ERROR_COPY,
+	type HostedDeployPluginBundle,
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionSelection,
 	type HostedDeployWizardDraft,
@@ -28,14 +29,13 @@ import {
 	agentSurfaceCopy,
 	aiBindingCopy,
 	billingTermLabel,
-	cardDeployAmountPresentation,
 	computePlanComparisonView,
+	DEPLOY_CHANNEL_COPY,
 	deployComputeResourceLabels,
 	deployConfigurationSummary,
 	deployFormCopy,
 	explicitPlanOffers,
 	firstModelForProvider,
-	formatUsdExact,
 	hostedDeployLanguageFromLocales,
 	isValidTimezone,
 	MANAGED_AI_CHOICE,
@@ -46,6 +46,7 @@ import {
 	planOffers,
 	providerAvailabilityIssue,
 	providerDisplayLabel,
+	resolveDeployChannel,
 	resolvedLocale,
 	resolvedTimezone,
 	reusableSubscriptionChoiceView,
@@ -61,9 +62,10 @@ import {
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Crypto from "expo-crypto";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Redirect, useLocalSearchParams, useRouter } from "expo-router";
 import Cpu from "lucide-react-native/icons/cpu";
 import CreditCard from "lucide-react-native/icons/credit-card";
+import Package from "lucide-react-native/icons/package";
 import Plus from "lucide-react-native/icons/plus";
 import Rocket from "lucide-react-native/icons/rocket";
 import Smartphone from "lucide-react-native/icons/smartphone";
@@ -72,9 +74,7 @@ import WalletCards from "lucide-react-native/icons/wallet-cards";
 import Zap from "lucide-react-native/icons/zap";
 import { useEffect, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
 import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
-import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CHOICE_GRID_CLASS,
 	EntityAddCard,
@@ -146,6 +146,7 @@ import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
+import { routeSearch } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import {
@@ -160,10 +161,13 @@ import { computeProductPlan } from "@/platform/store/compute-subscription";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import { StorePurchaseError, storePurchaseError } from "@/platform/store/store-error";
 import { currentStorePlatform } from "@/platform/store/store-platform";
-import { useMobileStore, useStoreSurfaces } from "@/platform/store/store-provider";
+import { useMobileStore } from "@/platform/store/store-provider";
 
-/** A new draft seeded like Web: the device language and timezone, when supported. */
-function newDraft(): HostedDeployWizardDraft {
+/**
+ * A new draft seeded like Web: the device language and timezone, when supported, and the
+ * channel link's plugin bundle, preinstalled until deselected.
+ */
+function newDraft(channel: HostedDeployPluginBundle | null): HostedDeployWizardDraft {
 	return {
 		runtime: DEFAULT_HOSTED_DEPLOY_RUNTIME,
 		computePlanSlug: DEFAULT_HOSTED_DEPLOY_COMPUTE_PLAN,
@@ -171,6 +175,7 @@ function newDraft(): HostedDeployWizardDraft {
 		language: hostedDeployLanguageFromLocales([resolvedLocale()]),
 		timezone: resolvedTimezone(),
 		ai: { mode: "managed", model: DEFAULT_HOSTED_DEPLOY_PRIMARY_MODEL },
+		...(channel ? { pluginBundle: channel } : {}),
 	};
 }
 
@@ -193,40 +198,24 @@ function providerChoiceFor(ai: HostedDeployWizardDraft["ai"]): string {
 			: ai.providerId;
 }
 
-export function CreateAgentScreen() {
-	const t = useI18n();
+/** Web's /deploy page; the deploy API being unconfigured redirects home like Web's product gate. */
+export function DeployScreen() {
 	const scope = useAccountScope();
-	const params = useLocalSearchParams<{ tab?: string }>();
-	const [tab, setTab] = useState(params.tab === "connect" ? "connect" : "deploy");
+	const { compute, hosted } = useMobileApi();
+	const channel = resolveDeployChannel(routeSearch(useLocalSearchParams()));
+	if (!compute || !hosted) return <Redirect href="/" />;
 	return (
 		<SafeAreaScreen>
-			<WebView recipe={agentsIndexClasses.page}>
-				{/* One screen hosts both segments, so its title stays Web's "Add an agent". */}
-				<PageHeader title={t("agents.add")} />
-				<NativeSegments
-					value={tab}
-					onChange={setTab}
-					options={[
-						{ value: "deploy", label: agentSurfaceCopy.deployAnAgent },
-						{ value: "connect", label: t("agents.connect") },
-					]}
-				/>
-			</WebView>
-			{tab === "deploy" ? (
-				<CreationForm key={`${scope.accountKey}:${scope.generation}`} />
-			) : (
-				<AppScrollView
-					contentInsetAdjustmentBehavior="automatic"
-					contentContainerClassName={webView(agentsIndexClasses.page)}
-				>
-					<AddAgentSetup key={`${scope.accountKey}:${scope.generation}`} />
-				</AppScrollView>
-			)}
+			{/* A new channel link reseeds the draft; a saved request is restored from storage. */}
+			<CreationForm
+				key={`${scope.accountKey}:${scope.generation}:${channel ?? ""}`}
+				channel={channel}
+			/>
 		</SafeAreaScreen>
 	);
 }
 
-function CreationForm() {
+function CreationForm({ channel }: { channel: HostedDeployPluginBundle | null }) {
 	const cache = useQueryClient();
 	const { compute, hosted, aiProviders, store: storeClient } = useMobileApi();
 	const scope = useAccountScope();
@@ -234,12 +223,9 @@ function CreationForm() {
 	const t = useI18n();
 	const router = useRouter();
 	const action = useAuthAction(scope);
-	// Store builds fund new compute only from the Wallet; card checkout is hidden.
-	const surfaces = useStoreSurfaces();
-	const fundingDefault: HostedDeploySubscriptionSelection["fundingSource"] = surfaces.cardBilling
-		? "stripe"
-		: "wallet";
-	const [draft, setDraft] = useState(newDraft);
+	// The app has no card checkout, so a new subscription is funded from the Wallet.
+	const fundingDefault: HostedDeploySubscriptionSelection["fundingSource"] = "wallet";
+	const [draft, setDraft] = useState(() => newDraft(channel));
 	const [source, setSource] = useState<"included" | "existing" | "new" | "store" | null>(null);
 	// The reusable subscription row chosen for `existing`.
 	const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
@@ -463,7 +449,7 @@ function CreationForm() {
 	/** Back to a new draft, as after Start over. */
 	const resetForm = () => {
 		setAttempt(null);
-		setDraft(newDraft());
+		setDraft(newDraft(channel));
 		setSource(null);
 		setSubscriptionId(null);
 		setProviderChoice(MANAGED_AI_CHOICE);
@@ -985,6 +971,7 @@ function CreationForm() {
 		});
 	// A Wallet quote below the debit can be funded through the store, then re-quoted.
 	const shortfall = walletDebitShortfallUsd(walletDebit);
+	const walletTopUp = walletSelected && (shortfall !== null || walletFundingRefused);
 	const update = (patch: Partial<HostedDeployWizardDraft>) => {
 		setDraft((previous) => ({ ...previous, ...patch }));
 		setMessage("");
@@ -1001,11 +988,6 @@ function CreationForm() {
 			? planOffers(previewPlan)
 			: explicitPlanOffers(previewPlan)
 		: [];
-	const selectedOffer =
-		draft.computePlanSlug === "compute_performance"
-			? comparison.performanceOffer
-			: comparison.basicOffer;
-	const amount = selectedOffer ? cardDeployAmountPresentation(selectedOffer) : null;
 	const aiSelection = draft.ai;
 	const selectedModel =
 		aiSelection.mode === "configured" ||
@@ -1031,7 +1013,7 @@ function CreationForm() {
 				: personaIssue
 					? personaIssue.message
 					: source === "new" && !walletSelected
-						? t("creation.cardUnavailable")
+						? deployFormCopy.choosePlan
 						: source !== "store" && !creationEligible
 							? t("creation.blocked")
 							: walletQuoting && quote.isError
@@ -1042,12 +1024,8 @@ function CreationForm() {
 			<AppScrollView
 				contentContainerClassName={webView(`${styles.form} ${agentsIndexClasses.page}`)}
 			>
-				{!compute || !hosted ? (
-					<EmptyState
-						title={agentSurfaceCopy.unavailable}
-						description={t("creation.unavailable")}
-					/>
-				) : (
+				<PageHeader title={agentSurfaceCopy.deployAnAgent} />
+				{!compute || !hosted ? null : (
 					<>
 						{storageError ? (
 							<AppText className="text-destructive">{t("creation.storageError")}</AppText>
@@ -1137,6 +1115,30 @@ function CreationForm() {
 								))}
 							</WebView>
 						</SettingsSection>
+						{channel || draft.pluginBundle ? (
+							<SettingsSection title={DEPLOY_CHANNEL_COPY.preinstalledPlugins}>
+								<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
+									<EntityChoiceCard
+										selected={draft.pluginBundle !== undefined}
+										disabled={locked}
+										onClick={() =>
+											setDraft(({ pluginBundle, ...previous }) =>
+												pluginBundle || !channel
+													? previous
+													: { ...previous, pluginBundle: channel },
+											)
+										}
+										icon={
+											<IconChip tint={hostedAgentOverviewClasses.mutedTint}>
+												<Icon as={Package} />
+											</IconChip>
+										}
+										title={DEPLOY_CHANNEL_COPY.suiBundleTitle}
+										description={DEPLOY_CHANNEL_COPY.suiBundleDescription}
+									/>
+								</WebView>
+							</SettingsSection>
+						) : null}
 						<SettingsSection title={agentSurfaceCopy.aIProviders2}>
 							<AiBindingChoices
 								providers={inventory.data?.providers ?? []}
@@ -1510,67 +1512,27 @@ function CreationForm() {
 										<WebView recipe={styles.paymentMethods}>
 											<WebText recipe={styles.fieldTitle}>{deployFormCopy.paymentMethod}</WebText>
 											<WebView recipe={ENTITY_CHOICE_GRID_CLASS}>
-												{(
-													[
-														{
-															source: "stripe",
-															title: deployFormCopy.cardTitle,
-															description: deployFormCopy.cardDescription,
-															icon: CreditCard,
-														},
-														{
-															source: "wallet",
-															title: deployFormCopy.walletTitle,
-															description: deployFormCopy.walletDescription,
-															icon: WalletCards,
-														},
-													] as const
-												)
-													.filter((payment) => surfaces.cardBilling || payment.source === "wallet")
-													.map((payment) => (
-														<EntityChoiceCard
-															key={payment.source}
-															selected={quoteSelection?.fundingSource === payment.source}
-															disabled={locked || !quoteSelection}
-															title={payment.title}
-															description={payment.description}
-															icon={
-																<IconChip
-																	tint={
-																		payment.source === "stripe"
-																			? hostedAgentOverviewClasses.mutedTint
-																			: hostedAgentOverviewClasses.browserTint
-																	}
-																>
-																	<Icon as={payment.icon} />
-																</IconChip>
-															}
-															onClick={() => {
-																if (quoteSelection) {
-																	setQuoteSelection({
-																		...quoteSelection,
-																		fundingSource: payment.source,
-																	});
-																}
-															}}
-														/>
-													))}
+												<EntityChoiceCard
+													selected={quoteSelection?.fundingSource === "wallet"}
+													disabled={locked || !quoteSelection}
+													title={deployFormCopy.walletTitle}
+													description={deployFormCopy.walletDescription}
+													icon={
+														<IconChip tint={hostedAgentOverviewClasses.browserTint}>
+															<Icon as={WalletCards} />
+														</IconChip>
+													}
+													onClick={() => {
+														if (quoteSelection)
+															setQuoteSelection({ ...quoteSelection, fundingSource: "wallet" });
+													}}
+												/>
 											</WebView>
 										</WebView>
 										{walletQuoting && quote.isError ? (
 											<ApiErrorPanel error={quote.error} onRetry={() => void quote.refetch()} />
 										) : walletDebit ? (
 											<WalletDebitEquation debit={walletDebit} />
-										) : null}
-										{(shortfall || walletFundingRefused) && surfaces.addCredits ? (
-											<>
-												{shortfall ? (
-													<AppText>
-														{t("store.shortfall", { amount: formatUsdExact(shortfall) })}
-													</AppText>
-												) : null}
-												<AddCreditsAction onFunded={() => void quote.refetch()} />
-											</>
 										) : null}
 									</WebView>
 								) : null}
@@ -1590,7 +1552,7 @@ function CreationForm() {
 									/>
 								</WebView>
 								<WebView recipe={styles.languageField} className="w-full">
-									<Label>{t("creation.language")}</Label>
+									<Label>{deployFormCopy.language}</Label>
 									<NativePicker
 										value={draft.language}
 										options={[
@@ -1734,16 +1696,7 @@ function CreationForm() {
 					</WebText>
 
 					{/* A settled request charges and sends nothing more, so it shows neither. */}
-					{resolved ? null : source === "new" &&
-						quoteSelection?.fundingSource === "stripe" &&
-						amount ? (
-						<WebView recipe={styles.amount}>
-							<WebText recipe={styles.amountValue}>{amount.amount}</WebText>
-							{amount.caption ? (
-								<WebText recipe={styles.amountCaption}>{amount.caption}</WebText>
-							) : null}
-						</WebView>
-					) : walletAmount ? (
+					{!resolved && walletAmount ? (
 						<WebView recipe={styles.amount} accessibilityLiveRegion="polite">
 							<WebText recipe={styles.amountValue}>{walletAmount.amount}</WebText>
 							{walletAmount.caption ? (
@@ -1789,6 +1742,15 @@ function CreationForm() {
 							}
 							onPress={() => {
 								void subscribe();
+							}}
+						/>
+					) : walletTopUp ? (
+						// Web's "Top up wallet" primary: store builds buy credits through the Paywall.
+						<AddCreditsAction
+							label={deployFormCopy.topUpWallet}
+							onFunded={() => {
+								setWalletFundingRefused(false);
+								void quote.refetch();
 							}}
 						/>
 					) : (
