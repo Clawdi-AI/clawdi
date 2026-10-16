@@ -92,6 +92,10 @@ and resolution failures return `503` with `Retry-After: 1`; unsafe URL shapes an
 private targets return `400`. Gateway worker failures use its existing reconnect
 boundary. See [URL validation](../backend/app/services/url_security.py).
 
+The Telegram `channel_url_validation_ms` request stage measures the synchronous
+URL parsing and public-host checks. DNS and connection setup are measured in
+`channel_provider_ms`.
+
 The public URL resolver uses `loop.getaddrinfo` with its existing three-second
 deadline. Uvicorn's uvloop resolver runs independently of application
 `asyncio.to_thread` work, such as S3 I/O and archive processing. The standard

@@ -132,6 +132,7 @@ async def test_public_resolver_rejects_mixed_dns_even_after_address_cap(
 
 def test_public_resolver_uses_native_dns_when_default_executor_is_busy() -> None:
     """Use real uvloop/libc DNS and an occupied executor, without external DNS."""
+    worker_threads: list[threading.Thread] = []
 
     async def exercise() -> None:
         loop = asyncio.get_running_loop()
@@ -140,6 +141,7 @@ def test_public_resolver_uses_native_dns_when_default_executor_is_busy() -> None
         release = threading.Event()
 
         def occupy_executor() -> None:
+            worker_threads.append(threading.current_thread())
             loop.call_soon_threadsafe(started.set)
             release.wait()
 
@@ -159,7 +161,11 @@ def test_public_resolver_uses_native_dns_when_default_executor_is_busy() -> None
             await busy
 
     with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+        resolver_loop = runner.get_loop()
         runner.run(exercise())
+    assert resolver_loop.is_closed()
+    assert len(worker_threads) == 1
+    assert not worker_threads[0].is_alive()
 
 
 @pytest.mark.asyncio
