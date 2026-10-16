@@ -1,6 +1,6 @@
 import { shouldShowAccountDeletionPage } from "@clawdi/shared/view";
 import { useUser } from "@clerk/expo";
-import { type UserProfileCustomPage, UserProfileView } from "@clerk/expo/native";
+import { type UserProfileCustomPage, UserProfileView } from "@clerk/expo/native-components";
 import { Stack, useRouter } from "expo-router";
 import { useMemo } from "react";
 import { DeleteAccountPage } from "@/hosted/account/delete-account-page";

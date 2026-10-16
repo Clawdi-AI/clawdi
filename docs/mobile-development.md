@@ -67,6 +67,8 @@ Use the root `packageManager` (`bun@1.4.2`) and committed root lock. Common
 versions belong in the root Bun catalog; SDK-constrained native packages use
 `catalog:expo57`. Do not flatten the Web/Desktop and native React versions or
 install an independent mobile lockfile.
+Mobile React and React DOM types also use `expo57` to stay on SDK 57's
+19.2 line while Web uses the default catalog.
 
 Import Lucide runtime icons from the official per-icon entries, for example
 `import Camera from "lucide-react-native/icons/camera"`, to keep Metro from
@@ -189,7 +191,7 @@ its imports remain. `expo export --dev` must retain both gallery implementations
 ### Clerk native authentication
 
 Sign-in, sign-up and account management use Clerk's prebuilt native components
-from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
+from `@clerk/expo/native-components` (clerk-ios / clerk-android), matching Web's Clerk
 `<SignIn/>`, `<SignUp/>` and `openUserProfile`:
 
 - `/sign-in` and `/sign-up` render the same non-dismissible `AuthView` in Clerk's
@@ -223,20 +225,22 @@ from `@clerk/expo/native` (clerk-ios / clerk-android), matching Web's Clerk
   with Clerk's documented `setActive({ session: null })` and waits for the
   change through `addListener` (10 s bound).
   Disable self-delete before store auto-renewing subscriptions ship.
-  On Android, clerk-android 1.1.11 still crashes right after a successful
+  On Android, clerk-android 1.1.11 crashed right after a successful
   built-in delete (`NavDisplay backstack cannot be empty`); the fix
-  (clerk/clerk-android #1010) is not included in this release, so upgrading to
-  `@clerk/expo` 4.10.0 does not clear the Android store gate. It stays closed
-  until `@clerk/expo` pins a clerk-android release that contains the fix, or the
-  custom-page alternative below passes its owner-run check.
+  (clerk/clerk-android #1010) was not included in `@clerk/expo` 4.10.0.
+  The upgrade to `@clerk/expo-native-components` 0.1.1 pins clerk-android
+  1.2.1; the Android store gate still requires an owner-run deletion check.
   The custom page counts as an alternative only after an owner-run check: on a
   real device, with self-delete disabled, a real deletion against a dev hosted
   environment returns to sign-in. That check has not happened yet.
 
-The native views are **Beta** in `@clerk/expo` 4.10.0, which bundles clerk-ios
-1.6.1 (previously 1.5.7) and clerk-android 1.1.11 (previously 1.1.10), and need
-a development build (not Expo Go). Rebuild native clients after this upgrade.
-Mobile's direct `@clerk/shared` dependency is aligned to `^4.39.1` with the
+The Beta native views require `@clerk/expo-native-components` 0.1.1 with
+`@clerk/expo` 4.12.0. The native package pins clerk-ios 1.6.1 and clerk-android
+1.2.1 and needs a development build (not Expo Go). Install it before using the
+`@clerk/expo/native-components` imports and rebuild native clients; this
+migration requires a new binary and must not ship as an OTA update. See
+[Clerk's migration notes](https://github.com/clerk/javascript/blob/main/packages/expo/CHANGELOG.md#4110).
+Mobile's direct `@clerk/shared` dependency is aligned to `^4.40.0` with the
 `@clerk/expo`'s dependency; verify frozen installs with both the repository's Bun
 1.4.2 and Vercel's Bun 1.3.14 when updating the root lock.
 Clerk 4.9 deprecated `useLocalCredentials()`; the app does not use it. Clerk's
@@ -244,7 +248,8 @@ Clerk 4.9 deprecated `useLocalCredentials()`; the app does not use it. Clerk's
 uses `expo-secure-store` with `requireAuthentication` and a sign-in with the
 stored identifier/password for apps that need that flow.
 
-The `@clerk/expo` config plugin raises the iOS deployment
+The `@clerk/expo` config plugin forwards native configuration to
+`@clerk/expo-native-components`, which raises the iOS deployment
 target to 17.0, adds the Sign in with Apple entitlement and Android packaging
 and Kotlin settings, and embeds `clerk-theme.generated.json`. `bun run theme`
 generates that theme from the shared Web tokens (OKLCH → sRGB via culori);
