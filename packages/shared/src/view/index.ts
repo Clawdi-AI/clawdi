@@ -11,6 +11,7 @@ export * from "./agent-overview";
 export * from "./agent-profiles";
 export * from "./agent-registration-status";
 export * from "./agent-routes";
+export * from "./agent-settings";
 export * from "./agent-skill-inventory";
 export * from "./agent-surfaces";
 export * from "./agent-tiles";

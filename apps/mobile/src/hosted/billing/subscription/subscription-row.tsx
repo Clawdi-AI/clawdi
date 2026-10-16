@@ -1,4 +1,4 @@
-import type { DeploymentRead } from "@clawdi/shared/api";
+import type { ComputeSubscriptionTarget, DeploymentRead } from "@clawdi/shared/api";
 import { computeSubscriptionRecoveryPresentation } from "@clawdi/shared/api";
 import {
 	type AgentTile,
@@ -57,6 +57,7 @@ import { useStoreSurfaces } from "@/platform/store/store-provider";
 /** Reads a subscription command can change. */
 const SUBSCRIPTION_READS = [
 	"deployments",
+	"deployment",
 	"billing-subscriptions",
 	"billing-reusable",
 	"creation-inventory",
@@ -67,12 +68,20 @@ const SUBSCRIPTION_READS = [
  * Web's card/Wallet commands on the card, filtered for store builds (D-1). Results show
  * under the actions, as Web's toasts would.
  */
-function SubscriptionCommands({
-	item,
+export function SubscriptionCommands({
+	target,
 	kinds,
+	cancelTitle,
+	isTrial,
+	periodEnd,
+	hasRetainedDeployment,
 }: {
-	item: Subscription;
+	target: ComputeSubscriptionTarget;
 	kinds: readonly AppSubscriptionActionKind[];
+	cancelTitle: string;
+	isTrial: boolean;
+	periodEnd: string | null | undefined;
+	hasRetainedDeployment: boolean;
 }) {
 	const { compute } = useMobileApi();
 	const scope = useAccountScope();
@@ -82,14 +91,11 @@ function SubscriptionCommands({
 	const [running, setRunning] = useState<AppSubscriptionActionKind | null>(null);
 	const [notice, setNotice] = useState<{ title: string; description?: string } | null>(null);
 	if (!compute || kinds.length === 0) return null;
-	const isTrial = item.actions?.cancel === "end_trial";
-	const hasRetainedDeployment = !item.is_orphan && item.deployment_id != null;
 	const cancellation = computeSubscriptionCancellationCopy({
 		isTrial,
-		periodEndLabel: item.current_period_end ? formatShortDate(item.current_period_end) : null,
+		periodEndLabel: periodEnd ? formatShortDate(periodEnd) : null,
 		hasRetainedDeployment,
 	});
-	const target = { subscription_id: item.subscription_id };
 	const execute = (kind: AppSubscriptionActionKind) =>
 		action.runOrThrow(async (current) => {
 			setRunning(kind);
@@ -131,7 +137,7 @@ function SubscriptionCommands({
 				kind === "cancel" || kind === "end_trial" ? (
 					<ConfirmAction
 						key={kind}
-						title={computeSubscriptionCancelTitle(computeSubscriptionPlanLabel(item.plan_slug))}
+						title={cancelTitle}
 						description={cancellation.description}
 						confirmLabel={cancellation.confirmLabel}
 						cancelLabel={cancellation.dismissLabel}
@@ -321,7 +327,16 @@ export function SubscriptionRow({
 								<Text>{computeSubscriptionListCopy.openAgentSettings}</Text>
 							</Button>
 						) : null}
-						<SubscriptionCommands item={item} kinds={commands} />
+						<SubscriptionCommands
+							target={{ subscription_id: item.subscription_id }}
+							kinds={commands}
+							cancelTitle={computeSubscriptionCancelTitle(
+								computeSubscriptionPlanLabel(item.plan_slug),
+							)}
+							isTrial={item.actions?.cancel === "end_trial"}
+							periodEnd={item.current_period_end}
+							hasRetainedDeployment={!item.is_orphan && item.deployment_id != null}
+						/>
 					</>
 				) : null
 			}

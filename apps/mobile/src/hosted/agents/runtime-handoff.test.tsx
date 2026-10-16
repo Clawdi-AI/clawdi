@@ -46,9 +46,7 @@ function harness() {
 		visible: true,
 		active: true,
 		busy: false,
-		onPress: undefined as (() => void) | undefined,
-		confirm: undefined as (() => unknown) | undefined,
-		description: "",
+		onPress: undefined as (() => Promise<void>) | undefined,
 		mint: async () => handoff,
 	};
 	const getDeployment = mock(async (_id: string, _signal?: AbortSignal) => state.fresh);
@@ -74,7 +72,7 @@ mock.module("expo-web-browser", () => ({
 	openBrowserAsync: (url: string) => h.openBrowserAsync(url),
 }));
 mock.module("lucide-react-native/icons/panels-top-left", () => ({ default: () => null }));
-const button = ({ onPress }: { onPress?: () => void }) => {
+const button = ({ onPress }: { onPress?: () => Promise<void> }) => {
 	h.onPress = onPress;
 	return null;
 };
@@ -85,18 +83,8 @@ mock.module("@/components/dashboard/agent-overview-layout", () => ({
 mock.module("@/components/ui/text", () => ({
 	Text: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
-mock.module("@/components/ui/use-confirmation", () => ({
-	useConfirmation: () => ({
-		dialog: null,
-		show: (
-			_title: string,
-			description: string,
-			buttons: { style?: string; onPress?: () => unknown }[],
-		) => {
-			h.description = description;
-			h.confirm = buttons.find((item) => item.style !== "cancel")?.onPress;
-		},
-	}),
+mock.module("@/components/ui/web-layout", () => ({
+	WebView: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 mock.module("@/lib/api-provider", () => ({
 	useMobileApi: () => ({
@@ -122,7 +110,7 @@ mock.module("@/platform/auth/use-auth-action", () => ({
 	useAuthAction: () => ({
 		busy: h.busy,
 		error: false,
-		runOrThrow: (action: (active: () => boolean) => Promise<void>) => action(() => h.active),
+		run: (action: (active: () => boolean) => Promise<void>) => action(() => h.active),
 	}),
 }));
 mock.module("@/platform/use-foreground-lease", () => ({
@@ -135,16 +123,12 @@ beforeEach(() => {
 	h = harness();
 });
 
-test("Hermes mints only after confirmation and opens the returned Hosted URL in the browser", async () => {
+test("Hermes opens directly, minting the one-time handoff and opening the Hosted URL", async () => {
 	for (const overview of [false, true]) {
 		h = harness();
 		renderToStaticMarkup(<RuntimeBrowser deployment={deployment()} overview={overview} />);
-		h.onPress?.();
-		expect(h.description).toContain(dashboard);
-		expect(h.description).not.toContain("?code=");
 		expect(h.getDeployment).not.toHaveBeenCalled();
-		expect(h.createHermesDashboardHandoff).not.toHaveBeenCalled();
-		await h.confirm?.();
+		await h.onPress?.();
 		expect(h.getDeployment).toHaveBeenCalledWith("dep_test", h.controller.signal);
 		expect(h.createHermesDashboardHandoff).toHaveBeenCalledWith(
 			"dep_test",
@@ -168,8 +152,7 @@ test("changed deployment identity, dashboard URL or runtime blocks Hermes issuan
 		h = harness();
 		h.fresh = fresh;
 		renderToStaticMarkup(<RuntimeBrowser deployment={deployment()} />);
-		h.onPress?.();
-		await expect(Promise.resolve(h.confirm?.())).rejects.toHaveProperty(
+		await expect(Promise.resolve(h.onPress?.())).rejects.toHaveProperty(
 			"name",
 			"RuntimeEndpointChangedError",
 		);
@@ -179,7 +162,7 @@ test("changed deployment identity, dashboard URL or runtime blocks Hermes issuan
 	}
 });
 
-test("retired confirmation cannot read, mint or open", async () => {
+test("a press after sign-out, account change or backgrounding cannot read, mint or open", async () => {
 	for (const retire of [
 		() => h.controller.abort(),
 		() => {
@@ -191,9 +174,8 @@ test("retired confirmation cannot read, mint or open", async () => {
 	]) {
 		h = harness();
 		renderToStaticMarkup(<RuntimeBrowser deployment={deployment()} />);
-		h.onPress?.();
 		retire();
-		await h.confirm?.();
+		await h.onPress?.();
 		expect(h.getDeployment).not.toHaveBeenCalled();
 		expect(h.createHermesDashboardHandoff).not.toHaveBeenCalled();
 		expect(h.openBrowserAsync).not.toHaveBeenCalled();
@@ -220,8 +202,7 @@ test("late handoff after background or account change never opens the browser", 
 				finish = resolve;
 			});
 		renderToStaticMarkup(<RuntimeBrowser deployment={deployment()} />);
-		h.onPress?.();
-		const pending = h.confirm?.();
+		const pending = h.onPress?.();
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		expect(h.createHermesDashboardHandoff).toHaveBeenCalledTimes(1);
 		retire();
@@ -235,9 +216,7 @@ test("OpenClaw keeps its exact runtime credential request and returned browser h
 	h.fresh = deployment("openclaw");
 	h.fresh.resource.metadata.resourceVersion = "fresh-version";
 	renderToStaticMarkup(<RuntimeBrowser deployment={deployment("openclaw")} />);
-	h.onPress?.();
-	expect(h.runtimeCredentials).not.toHaveBeenCalled();
-	await h.confirm?.();
+	await h.onPress?.();
 	expect(h.runtimeCredentials).toHaveBeenCalledTimes(1);
 	expect(h.runtimeCredentials).toHaveBeenCalledWith(
 		"dep_test",
@@ -257,8 +236,7 @@ test("Hermes mint failure never opens, retries or falls back to runtime credenti
 		throw new Error("Handoff unavailable");
 	};
 	renderToStaticMarkup(<RuntimeBrowser deployment={deployment()} />);
-	h.onPress?.();
-	await expect(Promise.resolve(h.confirm?.())).rejects.toThrow("Handoff unavailable");
+	await expect(Promise.resolve(h.onPress?.())).rejects.toThrow("Handoff unavailable");
 	expect(h.createHermesDashboardHandoff).toHaveBeenCalledTimes(1);
 	expect(h.openBrowserAsync).not.toHaveBeenCalled();
 	expect(h.runtimeCredentials).not.toHaveBeenCalled();

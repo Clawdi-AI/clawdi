@@ -7,11 +7,11 @@ import { agentsIndexClasses } from "@clawdi/shared/ui";
 import {
 	agentFilesPresentation,
 	agentOverviewCopy,
+	agentSettingsCopy,
 	agentSurfaceCopy,
 	agentToolSectionCopy,
 	billingRecoveryRefetchIntervalFor,
 	canRetryInitialDeployment,
-	computeStatusDetailsCopy,
 	deploymentAwaitingRuntimeUi,
 	deploymentFailurePresentation,
 	deploymentFilesUrl,
@@ -21,6 +21,7 @@ import {
 	deploymentStatusFromResource,
 	hostedDeploymentSetupInProgress,
 	INITIAL_DEPLOYMENT_COMPLETE_PAUSE_MS,
+	INITIAL_DEPLOYMENT_SUPPORT_LABEL,
 	type InitialDeploymentSupportState,
 	initialDeploymentCopy,
 	initialDeploymentStartedAtMs,
@@ -39,6 +40,7 @@ import { focusManager, onlineManager, useQuery, useQueryClient } from "@tanstack
 import { Redirect, useRouter } from "expo-router";
 import { useIsFocused } from "expo-router/react-navigation";
 import FolderOpen from "lucide-react-native/icons/folder-open";
+import LifeBuoy from "lucide-react-native/icons/life-buoy";
 import MonitorPlay from "lucide-react-native/icons/monitor-play";
 import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, Alert, Linking } from "react-native";
@@ -54,11 +56,14 @@ import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
+import { Icon } from "@/components/ui/icon";
 import { Text as AppText } from "@/components/ui/text";
 import { AppScrollView } from "@/components/ui/view";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { isNotFound, useCloudAgent } from "@/hooks/cloud-inventory";
+import { useSupportChat } from "@/hooks/use-support-chat";
 import { hostedAgentTitle } from "@/hosted/agent-title";
+import { ComputePlanSection } from "@/hosted/agents/compute-plan-section";
 import { ComputeStatusDetails } from "@/hosted/agents/compute-status-details";
 import { CancelOperation } from "@/hosted/agents/deployment-cancel-action";
 import { DeploymentControls } from "@/hosted/agents/deployment-controls";
@@ -66,7 +71,6 @@ import { FilesBrowser } from "@/hosted/agents/files-handoff";
 import { InitialDeploymentPage } from "@/hosted/agents/initial-deployment-page";
 import { RuntimeBrowser } from "@/hosted/agents/runtime-handoff";
 import { StartComputeAction } from "@/hosted/agents/start-compute-action";
-import { StoreUpgradeAction } from "@/hosted/billing/store/compute-store";
 import { operationIdFromName } from "@/hosted/deployment-status";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { useMobileApi } from "@/lib/api-provider";
@@ -206,7 +210,8 @@ function DeploymentDetail({
 	};
 	const activeOperation = operation.data ?? accepted ?? deployment?.accepted_operation;
 	const cancellableOperation =
-		activeOperation?.name === operationName &&
+		activeOperation &&
+		activeOperation.name === operationName &&
 		activeOperation?.metadata.deploymentId === deploymentId &&
 		!operation.isError
 			? activeOperation
@@ -246,11 +251,12 @@ function DeploymentDetail({
 	};
 
 	// Web shows the start control when stopped, and otherwise only while start is available.
-	const startAction = (deployment: DeploymentRead, stopped: boolean) =>
+	const startAction = (deployment: DeploymentRead, stopped: boolean, inSettings = false) =>
 		stopped || deploymentLifecycleAvailable("start", status.kind) ? (
 			<StartComputeAction
 				deployment={deployment}
-				startLabel={stopped ? "Start" : undefined}
+				startLabel={stopped ? agentSettingsCopy.controls.start : undefined}
+				inSettings={inSettings}
 				blocked={query.isError}
 				transitioning={Boolean(activeOperation && !activeOperation.done)}
 				onAccepted={async (result) => {
@@ -408,57 +414,20 @@ function DeploymentDetail({
 				}}
 				statusDetails={
 					<>
-						{deployment ? <ComputeStatusDetails deployment={deployment} /> : null}
-						{deployment ? <StoreUpgradeAction deployment={deployment} /> : null}
-						<ActionButton
-							label={t("deployments.refresh")}
-							className="self-start"
-							disabled={query.isFetching || operation.isFetching}
-							onPress={() => {
-								void query.refetch();
-								if (operationId) void operation.refetch();
-							}}
-						/>
-						{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
-						{query.isPending ? <AppText>{t("loading.app")}</AppText> : null}
-						{operation.data ? (
-							<AppText className="text-sm text-muted-foreground">
-								{t("deployments.operation")}:{" "}
-								{operation.data.done ? t("deployments.complete") : t("deployments.progress")}
-							</AppText>
-						) : null}
-						{operation.data?.error ? (
-							<AppText className="text-destructive">
-								{t(
-									operation.data.error.code === 1
-										? "deployments.operationCancelled"
-										: "deployments.failed",
-								)}
-							</AppText>
-						) : null}
-						{operation.isError ? <ResourceError missing={false} /> : null}
-						{operation.data &&
-						!operation.isError &&
-						operation.data.name === operationName &&
-						operation.data.metadata?.deploymentId === deploymentId ? (
-							<CancelOperation
-								key={operation.data.name}
-								operation={operation.data}
-								onRequested={async () => {
-									await operation.refetch();
-									await query.refetch();
-								}}
+						{deployment ? (
+							<ComputeStatusDetails
+								deployment={deployment}
+								timedOut={transition === "timed_out"}
+								escalated={transition === "escalated"}
+								operation={cancellableOperation}
+								onCancelRequested={checkAgain}
 							/>
 						) : null}
-						{transition === "timed_out" || transition === "escalated" ? (
-							<AppText className="text-sm text-muted-foreground">
-								{transition === "escalated"
-									? computeStatusDetailsCopy.stuck
-									: computeStatusDetailsCopy.slow}
-							</AppText>
-						) : null}
+						{query.isError ? <ResourceError missing={isNotFound(query.error)} /> : null}
 					</>
 				}
+				computePlan={deployment ? <ComputePlanSection deployment={deployment} /> : null}
+				startFallback={deployment ? startAction(deployment, true, true) : null}
 			/>
 		);
 	return (
@@ -566,8 +535,8 @@ function DeploymentDetail({
 }
 
 /**
- * The app has no live chat, so support opens as an email to the address Web uses,
- * prefilled with the same setup context. Polling continues in the background.
+ * Web's Contact support: live chat with the setup context and label. Without live chat the
+ * app falls back to an email with the same context. Polling continues in the background.
  */
 function ContactSupportAction({
 	deployment,
@@ -576,14 +545,21 @@ function ContactSupportAction({
 	deployment: DeploymentRead;
 	state: InitialDeploymentSupportState;
 }) {
+	const openSupportChat = useSupportChat();
 	return (
 		<ActionButton
 			label={initialDeploymentCopy.contactSupport}
+			icon={<Icon as={LifeBuoy} />}
 			onPress={() => {
-				const href = initialDeploymentSupportMailto(
-					initialDeploymentSupportContext(deployment, state, Date.now()),
-				);
-				Linking.openURL(href).catch(() =>
+				const context = initialDeploymentSupportContext(deployment, state, Date.now());
+				if (openSupportChat) {
+					openSupportChat({
+						conversationAttributes: context,
+						label: INITIAL_DEPLOYMENT_SUPPORT_LABEL,
+					});
+					return;
+				}
+				Linking.openURL(initialDeploymentSupportMailto(context)).catch(() =>
 					Alert.alert(initialDeploymentCopy.contactSupport, SUPPORT_EMAIL),
 				);
 			}}

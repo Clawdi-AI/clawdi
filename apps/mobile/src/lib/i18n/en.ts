@@ -23,15 +23,9 @@ const agentExtensionsEn = {
 	view: "View Library Skill",
 };
 const agentSettingsEn = {
-	defaultName: "Default:",
-	useDefaultName: "Use default name",
-	uploadImage: "Upload image",
-	name: "Agent display name",
 	unsavedTitle: "Discard unsaved name?",
 	unsavedMessage: "Your Agent name changes have not been saved.",
 	discard: "Discard changes",
-	failed:
-		"We couldn't confirm this change. Refresh before trying again — it may already be saved. For avatars, check the image format and size.",
 };
 const billingEn = {
 	unknown: "Unavailable",
@@ -148,7 +142,6 @@ const storeComputeEn = {
 	deletionContinue: "I've cancelled — continue",
 } as const;
 const creationEn = {
-	selectTimezone: "Select a timezone",
 	storeRowUnavailable:
 		"This {store} subscription isn't free for a new agent from this account right now. Check Compute for its status.",
 	subscriptionUnavailable:
@@ -186,27 +179,12 @@ const creationEn = {
 } as const;
 const runtimeEn = {
 	stoppedLabel: "Stopped",
-	controlsTitle: "Agent controls",
-	controlsDescription: agentSurfaceCopy.restartStopOrStartThisAgent,
-	dangerTitle: "Danger zone",
-	dangerDescription: agentSurfaceCopy.permanentlyDeleteThisAgent,
-	localeDescription: agentSurfaceCopy.languageAndTimeZoneUsedByThisAgent,
-	confirm: "Apply Agent change?",
-	warning:
-		"Changes may interrupt active work and channel connections. Resetting dashboard access invalidates existing browser access.",
-	apply: "Apply confirmed change",
-	start: "Start runtime",
-	stop: "Stop runtime",
-	restart: "Restart runtime",
-	resetAccess: "Reset dashboard access",
-	deleteAgent: "Delete Agent",
 	deleteKeepChoice: "Keep subscription",
 	deleteCancelChoice: "Cancel subscription",
 	deleteCancelsSubscription: "This request also cancels the Agent's subscription.",
 	deleteReported:
 		"The server reports this Agent deleted for your account. Cleanup may still be in progress.",
 	supportFailed: "Couldn't open your email app. Email support@clawdi.ai.",
-	paymentRequired: "Starting needs an active subscription. These controls never charge you.",
 	uncertain:
 		"We couldn't confirm the last change. Retry it before making another — retrying won't apply it twice.",
 	prepared: "Your change wasn't sent. Retry it or discard it.",
@@ -220,12 +198,6 @@ const runtimeEn = {
 	discardUncertainWarning:
 		"We couldn't confirm whether this change was applied. Discarding only removes it from this device. Check the agent's status before making another change.",
 	failed: "We couldn't confirm this change. Refresh and try again.",
-	locale: "Language and timezone",
-	default: "Agent default",
-	timezone: "IANA timezone (for example America/Los_Angeles)",
-	invalidLocale:
-		"Choose a supported language and valid timezone, or leave them at the Agent default.",
-	saveLocale: "Review language and timezone change",
 	modelId: "Model ID",
 	modelsInAgent:
 		"This connection's models are configured inside the Agent. Applying it will not overwrite its model catalog.",
@@ -235,36 +207,7 @@ const runtimeEn = {
 		"The Agent reported a provider configuration conflict. Its own settings may take precedence. Review the binding before changing it.",
 };
 const deploymentsEn = {
-	openDashboard: "Open Agent dashboard",
-	browserWarningOpenClaw:
-		"Open the runtime in the system browser. OpenClaw receives an access credential; the browser may retain access after you sign out of this app. Closing the browser does not revoke access; use Reset dashboard access when needed.",
-	browserWarningHermes:
-		"Open the runtime in the system browser. Hermes signs in with your current Clawdi session. Closing the browser does not revoke access; use Reset dashboard access when needed.",
-	browserUnavailable:
-		"An authenticated browser endpoint is not available yet. Refresh deployment status.",
-	browserFailed:
-		"Could not open the dashboard. Refresh deployment status and try again. No credentials have been saved by this app.",
-	browserFailedChanged:
-		"This Agent changed. Refresh deployment status and review before trying again.",
-	browserFailedUnavailable:
-		"The dashboard is unavailable. Refresh deployment status and try again.",
-	browserFailedSignedOut: "Your session ended. Sign in again before opening the dashboard.",
-	browserFailedRateLimited: "Too many attempts. Wait a moment before opening the dashboard again.",
-	browserFailedOffline: "Couldn't connect. Check your connection and try again.",
 	unavailable: "Cloud deployment access is not configured.",
-	refresh: "Refresh status",
-	operation: "Operation",
-	complete: "Complete",
-	operationCancelled: "Operation cancelled",
-	progress: "In progress",
-	cancelChange: "Request cancellation of this change",
-	cancelWarning:
-		"Cancellation is not immediate and may be rejected or require recovery. Do not assume already-applied work is undone, or that the Agent or its subscription is stopped. Check the final operation status before making another change.",
-	cancelRequested:
-		"Cancellation requested. Waiting for the server's final operation status; the Agent and its billing have not been declared stopped.",
-	cancelUncertain:
-		"Cancellation was not confirmed. Refresh the operation status. Retrying this same operation reuses the original cancellation key; no new Agent change is sent.",
-	failed: "Deployment failed",
 } as const;
 const workspaceSkillsEn = {
 	commandDescription: agentSurfaceCopy.enterAGitHubSkillPathThenRunTheGeneratedCommand,
@@ -278,9 +221,6 @@ const workspaceSkillsEn = {
 	inventoryEmpty: "No Skills have synced from this Agent yet.",
 	source: "GitHub owner/repo or owner/repo/path",
 	install: "Install",
-	confirm: "Change Workspace Skills?",
-	warning:
-		"This updates the Skills installed on this agent. It may take a moment to apply. Your Library Skills aren't changed.",
 	unavailable: "Changes are unavailable until this agent finishes loading. Refresh to try again.",
 	accepted: "Change requested. It may take a moment to apply.",
 	open: "Read Skill",
@@ -375,7 +315,6 @@ export const en = {
 		uninstallSkill: "Uninstall {name} from agent",
 		openAgent: "Open {name}{status}",
 		agentStatus: ". Status: {status}",
-		defaultAgent: "{type} default",
 		openSession: "Open session {title}",
 		message: "message",
 		messages: "messages",
@@ -414,33 +353,6 @@ export const en = {
 		confirm: "Confirm",
 		cancel: "Cancel",
 		codeText: "text",
-	},
-	terminal: {
-		unavailable:
-			"Terminal access requires a configured compute API and an eligible running deployment. Reload to check its current state.",
-		reconnect: "Reconnect terminal",
-		title: "Terminal",
-		connect: "Connect terminal",
-		disconnect: "Disconnect terminal",
-		reload: "Reload deployment",
-		warning:
-			"Commands run on your Agent. Leaving this screen or backgrounding the app disconnects this terminal; it does not stop Agent compute or guarantee running commands are terminated.",
-		connecting: "Connecting…",
-		connected: "Connected",
-		reconnecting: "Reconnecting…",
-		disconnected: "Disconnected",
-	},
-	files: {
-		open: "Open Files",
-		browserWarning:
-			"Files opens in the system browser with a one-time sign-in link. The browser keeps access until you sign out of this app or reset dashboard access; closing the browser does not end it.",
-		failedTitle: agentSurfaceCopy.filesCouldnTBeOpened,
-		failedChanged: "This agent changed. Try again.",
-		failedUnavailable: "Files isn't ready yet. Try again in a moment.",
-		failedSignedOut: "Your session ended. Sign in again, then retry.",
-		failedRateLimited: "Too many attempts. Wait a minute and try again.",
-		failedOffline: "Check your connection and try again.",
-		failed: "Something went wrong. Try again.",
 	},
 	profile: {
 		unsavedTitle: "Discard profile changes?",

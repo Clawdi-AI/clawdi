@@ -1,4 +1,8 @@
-import type { DeploymentRead } from "../api";
+import {
+	type DeploymentRead,
+	deploymentTerminalIsAvailable,
+	type FilesHandoffFailure,
+} from "../api";
 import { runtimeBrowserUiLabel } from "./agent-overview";
 import { computeSubscriptionRequiredToStart } from "./compute-dunning";
 import {
@@ -16,6 +20,40 @@ export const runtimeConsoleCopy = {
 	terminalNow: "Use Terminal now",
 	terminal: "Use Terminal",
 	channels: "Open channels",
+	open: (label: string) => `Open ${label}`,
+	openFailed: (label: string) => `${label} couldn't be opened`,
+} as const;
+
+/** The app opens Chat on the web and Files in the browser; why a one-time handoff failed. */
+export function browserHandoffFailureMessage(failure: FilesHandoffFailure, label: string): string {
+	switch (failure) {
+		case "changed":
+			return "This agent changed. Try again.";
+		case "unavailable":
+			return `${label} isn't ready yet. Try again in a moment.`;
+		case "signed_out":
+			return "Your session ended. Sign in again, then retry.";
+		case "rate_limited":
+			return "Too many attempts. Wait a minute and try again.";
+		case "offline":
+			return "Check your connection and try again.";
+		default:
+			return "Clawdi couldn't establish this browser session.";
+	}
+}
+
+export const terminalCopy = {
+	title: "Terminal",
+	status: {
+		connecting: "Connecting",
+		connected: "Connected",
+		reconnecting: "Reconnecting",
+		disconnected: "Disconnected",
+	},
+	retry: "Retry",
+	reconnect: "Reconnect",
+	retryLabel: "Retry terminal",
+	reconnectLabel: "Reconnect terminal",
 } as const;
 
 export function runtimeConsolePresentation(
@@ -88,5 +126,29 @@ export function agentFilesPresentation(deployment: DeploymentRead) {
 				state: "not_running",
 				title: "Agent is not running",
 				description: `Start the agent to browse its workspace. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`,
+			} as const);
+}
+
+/** Web TerminalTab states; only the available state connects the terminal. */
+export function agentTerminalPresentation(deployment: DeploymentRead) {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	if (status.kind === "stopped")
+		return {
+			state: "stopped",
+			title: "Stopped",
+			description: stoppedAgentDescription(deployment),
+		} as const;
+	if (deploymentTerminalIsAvailable(deployment)) return { state: "available" } as const;
+	return status.kind === "creating" || status.kind === "starting"
+		? ({
+				state: "starting",
+				title: "Starting your agent…",
+				description:
+					"The browser terminal opens once your agent is running. This page updates automatically.",
+			} as const)
+		: ({
+				state: "not_running",
+				title: "Agent is not running",
+				description: `Start the agent to open a terminal. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`,
 			} as const);
 }

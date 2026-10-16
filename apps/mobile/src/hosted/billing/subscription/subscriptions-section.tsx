@@ -8,7 +8,6 @@ import {
 	shouldBlockQueryError,
 	sortLoadedSubscriptions,
 } from "@clawdi/shared/view";
-import { useQuery } from "@tanstack/react-query";
 import RotateCcwClock from "lucide-react-native/icons/rotate-ccw-clock";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -25,14 +24,14 @@ import { WebText, WebView } from "@/components/ui/web-layout";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { uniqueBillingItems } from "@/hosted/billing/format";
-import { useReusableSubscriptions, useSubscriptions } from "@/hosted/billing/hooks";
+import { usePlans, useReusableSubscriptions, useSubscriptions } from "@/hosted/billing/hooks";
 import { useCreditsNotice } from "@/hosted/billing/store/add-credits";
 import { StoreComputeBillingSection } from "@/hosted/billing/store/compute-store";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { SubscriptionRow } from "@/hosted/billing/subscription/subscription-row";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
-import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useAccountScope } from "@/platform/account-lifecycle";
 
 export function BillingScreen() {
 	const scope = useAccountScope();
@@ -42,24 +41,13 @@ export function BillingScreen() {
 /** Web's Compute page: subscriptions with inline actions and history, then the plans. */
 function BillingView() {
 	const t = useI18n();
-	const scope = useAccountScope();
 	const { compute } = useMobileApi();
-	const read = useAccountRead();
 	const creditsNotice = useCreditsNotice();
 	const subscriptions = useSubscriptions();
 	const reusable = useReusableSubscriptions();
 	const { inventory, tiles } = useDashboardAgents();
 	const [showHistory, setShowHistory] = useState(false);
-	const plans = useQuery({
-		queryKey: accountQueryKey(scope, "billing-plans"),
-		queryFn: ({ signal }) =>
-			read((s) => {
-				if (!compute) throw new Error("Compute API unavailable");
-				return compute.listPlans(s);
-			}, signal),
-		enabled: scope.isReady && Boolean(compute),
-		retry: false,
-	});
+	const plans = usePlans();
 	const items = uniqueBillingItems(
 		subscriptions.data?.pages.flatMap((page) => page.items ?? []) ?? [],
 		(item) => item.subscription_id,

@@ -285,6 +285,7 @@ export * from "./general-panel";
 export * from "./global-wallet-balance";
 export * from "./header-action-group";
 export * from "./hosted-agent-overview";
+export * from "./hosted-agent-settings";
 export * from "./icon-chip";
 export * from "./initial-deployment";
 export * from "./input-group";

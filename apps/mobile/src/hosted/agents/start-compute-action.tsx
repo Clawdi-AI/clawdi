@@ -24,6 +24,7 @@ export function StartComputeAction({
 	onAccepted,
 	onAbsent,
 	onFunded,
+	inSettings = false,
 }: {
 	deployment: DeploymentRead;
 	startLabel?: string;
@@ -33,6 +34,8 @@ export function StartComputeAction({
 	onAbsent: () => Promise<void>;
 	/** Wallet credits changed; refresh the deployment's start action. */
 	onFunded: () => void;
+	/** Already on the agent's Settings, where "Subscribe to start" has nowhere further to go. */
+	inSettings?: boolean;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -73,7 +76,7 @@ export function StartComputeAction({
 	return (
 		<ActionButton
 			label={action.label}
-			disabled={!action.enabled}
+			disabled={!action.enabled || inSettings}
 			onPress={() => router.push(agentSectionHref(deployment.agent_id ?? "", "settings"))}
 		/>
 	);

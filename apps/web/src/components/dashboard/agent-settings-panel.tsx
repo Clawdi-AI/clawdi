@@ -12,6 +12,7 @@ import {
 	agentDisplayName,
 	agentSurfaceCopy,
 	agentTypeLabel,
+	agentProfileSettingsCopy as copy,
 	errorMessage,
 } from "@clawdi/shared/view";
 import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -96,7 +97,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Agent updated");
 		},
-		onError: toastApiError("Couldn't update agent"),
+		onError: toastApiError(copy.updateFailed),
 	});
 
 	const uploadMutation = useMutation({
@@ -105,7 +106,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Avatar uploaded");
 		},
-		onError: toastApiError("Couldn't upload avatar"),
+		onError: toastApiError(copy.uploadFailed),
 	});
 
 	const clearAvatar = useMutation({
@@ -119,7 +120,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Avatar removed");
 		},
-		onError: toastApiError("Couldn't remove avatar"),
+		onError: toastApiError(copy.removeFailed),
 	});
 
 	const disconnect = useMutation({
@@ -144,7 +145,7 @@ export function AgentSettingsPanel({
 			});
 			void router.navigate({ href: "/agents" });
 		},
-		onError: toastApiError("Couldn't disconnect agent"),
+		onError: toastApiError(copy.disconnectFailed),
 	});
 
 	const onUploadChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -152,14 +153,14 @@ export function AgentSettingsPanel({
 		event.target.value = "";
 		if (!file) return;
 		if (!AGENT_AVATAR_MIME_TYPES.some((type) => type === file.type)) {
-			toast.error("Unsupported avatar file", {
-				description: "Upload a PNG, JPEG, or WebP image.",
+			toast.error(copy.unsupportedAvatar.title, {
+				description: copy.unsupportedAvatar.description,
 			});
 			return;
 		}
 		if (file.size > MAX_AGENT_AVATAR_BYTES) {
-			toast.error("Avatar image is too large", {
-				description: "Upload an image up to 2 MB.",
+			toast.error(copy.avatarTooLarge.title, {
+				description: copy.avatarTooLarge.description,
 			});
 			return;
 		}
@@ -214,7 +215,7 @@ export function AgentSettingsPanel({
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar
 		? agentSurfaceCopy.customUpload
-		: `${runtimeLabel} default`;
+		: copy.defaultAvatar(runtimeLabel);
 	const legacyDashboardUrl = ownershipKind === "legacy" ? projectedLegacyDashboardUrl : null;
 
 	return (
@@ -260,7 +261,7 @@ export function AgentSettingsPanel({
 							htmlFor="agent-display-name"
 							className={agentSettingsPanelClasses.screenReaderOnly}
 						>
-							Agent name
+							{copy.nameLabel}
 						</Label>
 						<Input
 							id="agent-display-name"
@@ -284,12 +285,12 @@ export function AgentSettingsPanel({
 							) : (
 								<Save data-icon="inline-start" />
 							)}
-							Save
+							{copy.save}
 						</Button>
 					</div>
 					<div className={agentSettingsPanelClasses.nameHelp}>
 						<span className={agentSettingsPanelClasses.defaultName}>
-							Default: {defaultDisplayName}
+							{copy.defaultName(defaultDisplayName)}
 						</span>
 						<Button
 							type="button"
@@ -300,7 +301,7 @@ export function AgentSettingsPanel({
 							onClick={() => updateIdentity.mutate({ display_name: null })}
 						>
 							<RotateCcw data-icon="inline-start" />
-							Use default name
+							{copy.useDefaultName}
 						</Button>
 					</div>
 				</div>
@@ -333,7 +334,7 @@ export function AgentSettingsPanel({
 							) : (
 								<Upload data-icon="inline-start" />
 							)}
-							Upload image
+							{copy.uploadImage}
 						</Button>
 						<Button
 							type="button"
@@ -348,7 +349,7 @@ export function AgentSettingsPanel({
 							) : (
 								<Trash2 data-icon="inline-start" />
 							)}
-							Remove
+							{copy.remove}
 						</Button>
 					</div>
 				</div>

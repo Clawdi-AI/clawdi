@@ -122,6 +122,13 @@ export function mergeTimezoneOptions(
 	return validatedTimezones([...options, ...additional]);
 }
 
+export const timezonePickerCopy = {
+	placeholder: "Select a timezone",
+	options: "Timezone options",
+	search: "Search timezones…",
+	empty: "No timezone found.",
+} as const;
+
 export function timezoneLabel(timezone: string): string {
 	return timezone.replaceAll("_", " ");
 }
