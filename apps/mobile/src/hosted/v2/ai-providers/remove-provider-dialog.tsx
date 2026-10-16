@@ -1,6 +1,11 @@
 import type { AiProviderRemovalImpact, AiProviderRemovalResult } from "@clawdi/shared/api";
 import { aiProvidersPageClasses } from "@clawdi/shared/ui";
-import { providerRemovalCopy as copy, settingsCopy } from "@clawdi/shared/view";
+import {
+	providerRemovalCopy as copy,
+	providerRemovalRevokesChatGpt,
+	providerRemovalTitle,
+	settingsCopy,
+} from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useLocalSearchParams } from "expo-router";
 import Trash2 from "lucide-react-native/icons/trash";
@@ -33,9 +38,7 @@ export function ProviderRemove({ providerId }: { providerId: string }) {
 	const { providerRemoval } = useMobileApi();
 	return (
 		<Button
-			accessibilityLabel={t(
-				providerRemoval ? "providers.reviewRemoval" : "providers.removalUnavailable",
-			)}
+			accessibilityLabel={providerRemoval ? copy.remove : t("providers.removalUnavailable")}
 			variant="ghost"
 			size="icon-sm"
 			className={webView(aiProvidersPageClasses.removeAction)}
@@ -73,73 +76,66 @@ export function ProviderRemoveScreen() {
 			key={`${scope.accountKey}:${scope.generation}:${providerId}`}
 			providerId={providerId}
 			providerLabel={provider.label ?? providerId}
+			revokesChatGpt={providerRemovalRevokesChatGpt(provider.auth)}
 			onRemoved={async () => {
 				await refresh();
 			}}
 		/>
 	);
 }
+/** Web's RemoveProviderAction dialog; a repeated Remove reuses the same idempotency key. */
 function ProviderRemoveForm({
 	providerId,
 	providerLabel,
+	revokesChatGpt,
 	onRemoved,
 }: {
 	providerId: string;
 	providerLabel: string;
+	revokesChatGpt: boolean;
 	onRemoved: (result: AiProviderRemovalResult) => Promise<void>;
 }) {
-	const t = useI18n();
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const capture = useForegroundLease();
 	const { providerRemoval } = useMobileApi();
+	const check = useAuthAction(scope.identity);
 	const action = useAuthAction(scope.identity);
 	const sheet = useSheet<boolean>({ fallback: "/ai-providers", busy: action.busy });
 	const [impact, setImpact] = useState<AiProviderRemovalImpact | null>(null);
 	const [acknowledged, setAcknowledged] = useState(false);
-	const [uncertain, setUncertain] = useState(false);
 	const [result, setResult] = useState<AiProviderRemovalResult | null>(null);
 	const attempt = useRef<{ impact: AiProviderRemovalImpact; key: string } | null>(null);
 	const review = () =>
-		action.run(async (current) => {
+		check.run(async (current) => {
 			if (!providerRemoval) return;
 			const visible = capture();
 			if (!visible()) return;
 			setImpact(null);
 			setAcknowledged(false);
-			const result = await read((signal) => providerRemoval.impact(providerId, signal));
-			if (current() && visible()) setImpact(result);
+			const loaded = await read((signal) => providerRemoval.impact(providerId, signal));
+			if (current() && visible()) setImpact(loaded);
 		});
-	const remove = (retry: boolean) =>
+	const acknowledgementRequired = Boolean(impact?.agents.length);
+	const remove = () =>
 		action.run(async (current) => {
-			if (!providerRemoval) return;
+			if (!providerRemoval || !impact || (acknowledgementRequired && !acknowledged)) return;
 			const visible = capture();
 			if (!visible()) return;
-			let saved = attempt.current;
-			if (!retry) {
-				if (!impact || !acknowledged) return;
-				if (
-					!saved ||
-					saved.impact.impact_revision !== impact.impact_revision ||
-					saved.impact.provider_incarnation_token !== impact.provider_incarnation_token
-				) {
-					saved = { impact, key: randomUUID() };
-					attempt.current = saved;
-				}
-			}
-			if (!saved) return;
-			setUncertain(true);
-			const submitting = saved;
-			const result = await read((signal) =>
+			if (
+				!attempt.current ||
+				attempt.current.impact.impact_revision !== impact.impact_revision ||
+				attempt.current.impact.provider_incarnation_token !== impact.provider_incarnation_token
+			)
+				attempt.current = { impact, key: randomUUID() };
+			const submitting = attempt.current;
+			const removed = await read((signal) =>
 				providerRemoval.remove(submitting.impact, submitting.key, signal),
 			);
 			if (!current() || !visible()) return;
 			attempt.current = null;
-			setUncertain(false);
-			setImpact(null);
-			setAcknowledged(false);
-			setResult(result);
-			await onRemoved(result);
+			setResult(removed);
+			await onRemoved(removed);
 		});
 
 	const reviewRef = useRef(review);
@@ -149,94 +145,79 @@ function ProviderRemoveForm({
 	}, []);
 	if (result)
 		return (
-			<SheetPage
-				title={t("providers.removed")}
-				fallback="/ai-providers"
-				busy={action.busy}
-				sheet={sheet}
-			>
+			<SheetPage title={copy.removed} fallback="/ai-providers" busy={action.busy} sheet={sheet}>
 				<AppText accessibilityRole="alert">
-					{result.remote_revoke_status === "pending"
-						? t("providers.removedPending")
-						: t("providers.removedConfirmed")}
+					{result.remote_revoke_status === "pending" ? copy.removedPending : copy.removedConfirmed}
 				</AppText>
-				{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 				<ActionButton
 					label={settingsCopy.done}
 					disabled={action.busy}
-					onPress={() =>
-						void action.run(async () => {
-							await onRemoved(result);
-							await sheet.close(true);
-						})
-					}
+					onPress={() => void action.run(() => sheet.close(true))}
 				/>
 			</SheetPage>
 		);
 	return (
 		<SheetPage
-			title={t("labels.removeProvider", { name: providerLabel })}
-			description={copy.description}
+			title={providerRemovalTitle(providerLabel)}
 			fallback="/ai-providers"
 			busy={action.busy}
 			sheet={sheet}
 		>
-			{uncertain ? (
-				<AppText accessibilityRole="alert">{t("providers.removalUncertain")}</AppText>
+			<WebView recipe={aiProvidersPageClasses.removalDescription}>
+				<AppText>{copy.description}</AppText>
+				{revokesChatGpt ? <AppText>{copy.revocation}</AppText> : null}
+				{check.busy ? (
+					<AppText className={webView(aiProvidersPageClasses.impactLoading)}>
+						{copy.checking}
+					</AppText>
+				) : check.error ? (
+					<ApiErrorPanel
+						error={check.failure}
+						title={copy.impactError}
+						onRetry={() => void review()}
+					/>
+				) : impact?.agents.length ? (
+					<>
+						<AppText>{copy.affected}</AppText>
+						{impact.agents.map((agent) => (
+							<AppText selectable key={agent.deployment_id}>
+								{agent.name}
+							</AppText>
+						))}
+					</>
+				) : impact ? (
+					<AppText>{copy.noAgents}</AppText>
+				) : null}
+			</WebView>
+			{acknowledgementRequired ? (
+				<WebView recipe={aiProvidersPageClasses.acknowledgement} className="flex-row">
+					<Checkbox
+						checked={acknowledged}
+						disabled={action.busy}
+						onCheckedChange={setAcknowledged}
+						accessibilityLabel={copy.acknowledge}
+					/>
+					<Label
+						className="flex-1"
+						accessibilityElementsHidden
+						importantForAccessibility="no"
+						onPress={action.busy ? undefined : () => setAcknowledged(!acknowledged)}
+					>
+						{copy.acknowledge}
+					</Label>
+				</WebView>
 			) : null}
-			{attempt.current ? (
-				<ActionButton
-					label={t("providers.retryRemoval")}
-					disabled={action.busy}
-					onPress={() => void remove(true)}
-				/>
-			) : null}
-			{impact || attempt.current || uncertain ? (
-				<ActionButton
-					label={t("providers.reviewCurrentImpact")}
-					disabled={action.busy}
-					onPress={() => void review()}
-				/>
-			) : null}
-			{impact ? (
-				<>
-					<AppText>{impact.agents.length ? copy.affected : copy.noAgents}</AppText>
-					{impact.agents.map((agent) => (
-						<AppText selectable key={agent.deployment_id}>
-							{agent.name}
-						</AppText>
-					))}
-					<WebView recipe={aiProvidersPageClasses.acknowledgement} className="flex-row">
-						<Checkbox
-							checked={acknowledged}
-							disabled={action.busy}
-							onCheckedChange={setAcknowledged}
-							accessibilityLabel={copy.acknowledge}
-						/>
-						<Label
-							className="flex-1"
-							accessibilityElementsHidden
-							importantForAccessibility="no"
-							onPress={action.busy ? undefined : () => setAcknowledged(!acknowledged)}
-						>
-							{copy.acknowledge}
-						</Label>
-					</WebView>
-				</>
-			) : null}
-			{action.error && !attempt.current && !uncertain ? (
-				<ApiErrorPanel
-					error={action.failure}
-					title={copy.impactError}
-					onRetry={() => void review()}
-				/>
-			) : action.error ? (
-				<AppText accessibilityRole="alert">{t("providers.removalFailed")}</AppText>
-			) : null}
+			{action.error ? <ApiErrorPanel error={action.failure} title={copy.removeFailed} /> : null}
 			<Button
 				variant="destructive"
-				disabled={action.busy || !impact || !acknowledged}
-				onPress={() => void remove(false)}
+				disabled={
+					action.busy ||
+					check.busy ||
+					check.error ||
+					!impact ||
+					(acknowledgementRequired && !acknowledged)
+				}
+				onPress={() => void remove()}
 			>
 				<Text>{copy.remove}</Text>
 			</Button>

@@ -436,7 +436,6 @@ export const en = {
 		learnedOn: "Learned on {machine}",
 		editProvider: "Edit {name}",
 		setupProvider: "Set up {name}",
-		removeProvider: "Remove {name}?",
 		editable: "Editable",
 		readOnly: "Read-only",
 	},
@@ -530,29 +529,13 @@ export const en = {
 	whatsapp: whatsappEn,
 	providers: {
 		ready: "Ready",
-		removedPending: "Provider removed. Remote access revocation is pending.",
-		removedConfirmed: "Provider removed.",
 		setupRequired: "Setup required",
-		removed: "Provider removed",
 		removalUnavailable: "Provider removal requires a configured Hosted API.",
-		reviewRemoval: "Review provider removal",
-		reviewCurrentImpact: "Review current impact again",
-		removalUncertain:
-			"The previous removal may already have unset Agent configurations. Retry its exact confirmation to recover. Reviewing a new impact does not undo that request.",
-		retryRemoval: "Retry previous removal",
-		removalFailed:
-			"Removal was not confirmed. Retry the original request, or review current impact and explicitly approve it again if the provider changed.",
 		connectOAuth: "Connect ChatGPT",
 		reconnectOAuth: "Reconnect ChatGPT",
 		stopOAuth: "Stop waiting",
 		oauthOffline: "Offline. Checking will resume when connectivity returns.",
 		oauthReady: "Connection authorized.",
-		retrySame: "Retry the same request",
-		uncertain:
-			"A save may have reached the server. Retry the same request, or refresh the list before starting another connection. Leaving this screen clears the entered key.",
-		validate: "Validate configuration",
-		valid: "Configuration is valid. This does not test the upstream connection.",
-		invalid: "Configuration needs attention. Review this connection's settings.",
 		failed:
 			"Could not complete the action. Refresh to check the current state before trying again.",
 	},

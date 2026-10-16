@@ -15,6 +15,7 @@ import {
 	providerFieldsFormCopy as copy,
 	providerCredentialLinkLabel,
 	providerPresentation,
+	providerSaveCopy,
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
@@ -28,7 +29,6 @@ import { ResourceError } from "@/components/resource-error";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { Icon } from "@/components/ui/icon";
 import { SheetPage } from "@/components/ui/sheet-page";
-import { Text as AppText } from "@/components/ui/text";
 import { WebView } from "@/components/ui/web-layout";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
 import { ProviderOAuthFlow } from "@/hosted/v2/ai-providers/provider-oauth-flow";
@@ -125,7 +125,6 @@ function ProviderEditForm({
 			}
 		: undefined;
 	const [locked, setLocked] = useState(false);
-	const [uncertain, setUncertain] = useState(false);
 	const attempt = useRef<{
 		operation: ReturnType<typeof providerEditOperation>;
 		key: string;
@@ -187,7 +186,6 @@ function ProviderEditForm({
 				attempt.current = saved;
 				setLocked(true);
 			}
-			setUncertain(true);
 			const submitting = saved;
 			if (submitting.operation.kind === "accept") {
 				const body = submitting.operation.body;
@@ -199,7 +197,6 @@ function ProviderEditForm({
 			}
 			if (!current() || !visible()) return;
 			clear();
-			setUncertain(false);
 			await refresh();
 			await sheet.close(true);
 		});
@@ -210,7 +207,6 @@ function ProviderEditForm({
 			busy={action.busy || oauthBusy}
 			sheet={sheet}
 		>
-			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			<WebView
 				recipe={dialogStyles.body}
 				className="flex-none"
@@ -274,13 +270,15 @@ function ProviderEditForm({
 					}
 				/>
 				<ActionButton
-					label={locked ? t("providers.retrySame") : copy.save}
+					label={copy.save}
 					variant="default"
 					disabled={action.busy || !scope.isReady || !baseUrl.trim()}
 					onPress={() => void save()}
 				/>
 			</WebView>
-			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
+			{action.error ? (
+				<ApiErrorPanel error={action.failure} title={providerSaveCopy.updateFailed} />
+			) : null}
 		</SheetPage>
 	);
 }

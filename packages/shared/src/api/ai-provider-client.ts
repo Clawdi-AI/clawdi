@@ -68,15 +68,6 @@ export function createAiProviderClient(options: ApiClientOptions) {
 					}),
 				signal,
 			),
-		validate: (id: string, signal?: AbortSignal) =>
-			transport.read(
-				(init) =>
-					api.POST("/v1/ai-providers/{provider_id}/validate", {
-						...init,
-						params: { path: path(id) },
-					}),
-				signal,
-			),
 	};
 }
 

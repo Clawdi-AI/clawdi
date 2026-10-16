@@ -16,16 +16,17 @@ import {
 	type ProviderChoice,
 	type ProviderGroup,
 	providerCredentialLinkLabel,
+	providerSaveCopy,
 } from "@clawdi/shared/view";
 import { randomUUID } from "expo-crypto";
 import { router, useFocusEffect } from "expo-router";
 import Plus from "lucide-react-native/icons/plus";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { ActionButton, ChoiceSelect } from "@/components/dashboard/controls";
 import { Icon } from "@/components/ui/icon";
 import { SheetPage } from "@/components/ui/sheet-page";
-import { Text as AppText } from "@/components/ui/text";
 import { WebView } from "@/components/ui/web-layout";
 import { ProviderChooser } from "@/hosted/v2/ai-providers/provider-chooser";
 import { ProviderFieldsForm } from "@/hosted/v2/ai-providers/provider-fields-form";
@@ -91,7 +92,6 @@ function ProviderCreateView() {
 	const [secret, setSecret] = useState("");
 	const [baseUrl, setBaseUrl] = useState("");
 	const [apiMode, setApiMode] = useState<ApiMode>("openai_chat");
-	const [uncertain, setUncertain] = useState(false);
 	const attempt = useRef<{ body: AcceptRequest; key: string } | null>(null);
 	const [locked, setLocked] = useState(false);
 	const clearSensitive = useCallback(() => {
@@ -178,12 +178,10 @@ function ProviderCreateView() {
 				attempt.current = saved;
 				setLocked(true);
 			}
-			setUncertain(true);
 			const result = await read((signal) => aiProviders.accept(saved.body, saved.key, signal));
 			if (!current() || !visible()) return;
 			if (result.status !== "ready") throw new Error("Unexpected provider authorization");
 			clearSensitive();
-			setUncertain(false);
 			setLabel("");
 			await refresh();
 			await sheet.close(true);
@@ -218,9 +216,8 @@ function ProviderCreateView() {
 			}
 		>
 			{inventory.isError ? (
-				<AppText accessibilityRole="alert">{t("providers.failed")}</AppText>
+				<ApiErrorPanel error={inventory.error} onRetry={() => void inventory.refetch()} />
 			) : null}
-			{uncertain ? <AppText accessibilityRole="alert">{t("providers.uncertain")}</AppText> : null}
 			<WebView
 				// The chooser's NativeList already pads the page; the dialog body inset would double it.
 				recipe={step === "choose" ? "min-h-0" : dialogStyles.body}
@@ -311,7 +308,7 @@ function ProviderCreateView() {
 			{step === "configure" && !oauth ? (
 				<WebView recipe={dialogStyles.footer}>
 					<ActionButton
-						label={locked ? t("providers.retrySame") : copy.add}
+						label={copy.add}
 						variant="default"
 						disabled={
 							action.busy ||
@@ -323,7 +320,9 @@ function ProviderCreateView() {
 					/>
 				</WebView>
 			) : null}
-			{action.error ? <AppText accessibilityRole="alert">{t("providers.failed")}</AppText> : null}
+			{action.error ? (
+				<ApiErrorPanel error={action.failure} title={providerSaveCopy.saveFailed} />
+			) : null}
 		</SheetPage>
 	);
 }

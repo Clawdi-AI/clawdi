@@ -1,7 +1,12 @@
 "use client";
 
 import { aiProvidersPageClasses } from "@clawdi/shared/ui";
-import { agentSurfaceCopy, providerRemovalCopy as removalCopy } from "@clawdi/shared/view";
+import {
+	agentSurfaceCopy,
+	providerRemovalRevokesChatGpt,
+	providerRemovalTitle,
+	providerRemovalCopy as removalCopy,
+} from "@clawdi/shared/view";
 
 import { CircleAlert, Pencil, Plus, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -223,9 +228,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 	const affectedAgents = impact.data?.agents ?? [];
 	const acknowledgementRequired = affectedAgents.length > 0;
 	const impactError = impact.error;
-	const revokesChatGpt =
-		(provider.auth.type === "agent_profile" && provider.auth.tool === "codex") ||
-		provider.auth.type === "oauth_profile";
+	const revokesChatGpt = providerRemovalRevokesChatGpt(provider.auth);
 	const acknowledgementId = `remove-provider-ack-${provider.provider_id}`;
 
 	function changeOpen(next: boolean) {
@@ -286,7 +289,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 			</AlertDialogTrigger>
 			<AlertDialogContent>
 				<AlertDialogHeader>
-					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
+					<AlertDialogTitle>{providerRemovalTitle(providerLabel)}</AlertDialogTitle>
 					<AlertDialogDescription
 						render={<div className={aiProvidersPageClasses.removalDescription} />}
 					>
@@ -295,7 +298,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 						{impact.isFetching ? (
 							<p className={aiProvidersPageClasses.impactLoading}>
 								<Spinner />
-								Checking affected agents…
+								{removalCopy.checking}
 							</p>
 						) : impactError ? (
 							<ApiErrorPanel
@@ -333,7 +336,7 @@ function RemoveProviderAction({ provider }: { provider: AiProvider }) {
 					</div>
 				) : null}
 				<AlertDialogFooter>
-					<AlertDialogCancel disabled={del.isPending}>Cancel</AlertDialogCancel>
+					<AlertDialogCancel disabled={del.isPending}>{removalCopy.cancel}</AlertDialogCancel>
 					<AlertDialogAction
 						onClick={(event) => {
 							event.preventDefault();

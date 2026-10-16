@@ -1,6 +1,7 @@
 "use client";
 
 import { projectUserSelectableAiProviders } from "@clawdi/shared";
+import { providerRemovalCopy, providerSaveCopy } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
@@ -60,7 +61,7 @@ export function useAcceptProvider() {
 				void qc.invalidateQueries({ queryKey: KEY });
 				return result;
 			} catch (error) {
-				toastApiError("Couldn't save provider")(error);
+				toastApiError(providerSaveCopy.saveFailed)(error);
 				throw error;
 			}
 		},
@@ -72,7 +73,7 @@ export function usePatchProvider() {
 	const qc = useQueryClient();
 	return api.useMutation("patch", "/v1/ai-providers/{provider_id}", {
 		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-		onError: toastApiError("Couldn't update provider"),
+		onError: toastApiError(providerSaveCopy.updateFailed),
 	});
 }
 
@@ -91,7 +92,7 @@ export function useUpdateConnectionProvider() {
 				void qc.invalidateQueries({ queryKey: KEY });
 				return saved;
 			} catch (error) {
-				toastApiError("Couldn't update provider")(error);
+				toastApiError(providerSaveCopy.updateFailed)(error);
 				throw error;
 			}
 		},
@@ -119,15 +120,15 @@ export function useDeleteProvider() {
 				qc.invalidateQueries({ queryKey: KEY }),
 				qc.invalidateQueries({ queryKey: billingKeys.deployments }),
 			]);
-			toast.success("Provider removed", {
+			toast.success(providerRemovalCopy.removed, {
 				description:
 					result.remote_revoke_status === "pending"
-						? "Local access is removed immediately. Upstream ChatGPT revocation will finish asynchronously."
-						: "Local access is removed immediately.",
+						? providerRemovalCopy.removedPending
+						: providerRemovalCopy.removedConfirmed,
 			});
 		},
 		onError: (error) => {
-			toast.error("Couldn't remove provider", {
+			toast.error(providerRemovalCopy.removeFailed, {
 				description: normalizeBillingError(error),
 			});
 		},

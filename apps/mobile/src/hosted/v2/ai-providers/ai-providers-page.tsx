@@ -17,9 +17,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import BrainCircuit from "lucide-react-native/icons/brain-circuit";
-import CheckCircle2 from "lucide-react-native/icons/circle-check";
 import ShieldCheck from "lucide-react-native/icons/shield-check";
-import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentCollection } from "@/components/dashboard/collection";
 import { AgentSectionNavigation } from "@/components/dashboard/navigation";
@@ -30,7 +28,6 @@ import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { SectionLabel } from "@/components/section-label";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -45,7 +42,6 @@ import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
-import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function AiProvidersScreen() {
@@ -154,12 +150,7 @@ function ProvidersView() {
 }
 
 function ProviderCard({ provider }: { provider: SavedAiProvider }) {
-	const t = useI18n(),
-		scope = useAccountScope(),
-		read = useAccountRead(),
-		{ aiProviders } = useMobileApi(),
-		action = useAuthAction(scope.identity);
-	const [valid, setValid] = useState<{ revision: string; value: boolean } | null>(null);
+	const t = useI18n();
 	const presentation = providerPresentation(provider),
 		ready = (provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
 	return (
@@ -195,30 +186,7 @@ function ProviderCard({ provider }: { provider: SavedAiProvider }) {
 				{provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile" ? (
 					<ProviderOAuth provider={provider} />
 				) : null}
-				<Button
-					variant="ghost"
-					size="icon-sm"
-					accessibilityLabel={t("providers.validate")}
-					disabled={action.busy || !scope.isReady}
-					onPress={() =>
-						action.run(async (current) => {
-							setValid(null);
-							const result = await read((signal) =>
-								aiProviders.validate(provider.provider_id, signal),
-							);
-							if (current()) setValid({ revision: provider.updated_at, value: result.valid });
-						})
-					}
-				>
-					<Icon as={CheckCircle2} />
-				</Button>
 			</WebView>
-			{valid?.revision === provider.updated_at ? (
-				<Text accessibilityRole="alert">
-					{t(valid.value ? "providers.valid" : "providers.invalid")}
-				</Text>
-			) : null}
-			{action.error ? <ApiErrorPanel error={action.failure} title={t("providers.failed")} /> : null}
 		</WebView>
 	);
 }
