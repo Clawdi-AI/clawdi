@@ -1,6 +1,16 @@
 import type { ProjectMetadata } from "./project-metadata";
 import { displayProjectName } from "./project-metadata";
 
+const INTEGER = new Intl.NumberFormat("en-US");
+
+/** Connector catalog counts, grouped the same way wherever they appear: "1,408 available". */
+export function connectorsAvailableLabel(count: number): string {
+	return `${INTEGER.format(count)} available`;
+}
+export function connectorsActiveLabel(count: number): string {
+	return `${INTEGER.format(count)} active`;
+}
+
 export function skillsPageDescription(project?: ProjectMetadata) {
 	return project
 		? `Skills in ${displayProjectName(project)}. Linked agents use the whole project.`

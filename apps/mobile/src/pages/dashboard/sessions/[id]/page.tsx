@@ -64,6 +64,7 @@ export default function SessionDetailRoute() {
 			<PageHeader
 				testID={`session-detail-${session.id}`}
 				title={sessionTitle(session)}
+				contentTitle
 				className={webView(styles.header)}
 				status={
 					<DetailMeta>

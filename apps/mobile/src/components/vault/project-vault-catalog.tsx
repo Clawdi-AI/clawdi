@@ -200,7 +200,7 @@ export function ProjectVaultCatalog({
 	);
 	return (
 		<>
-			<Stack.Screen options={{ headerSearchBarOptions: searchOptions }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={listRows}
 				keyExtractor={(row) => row.item.id}

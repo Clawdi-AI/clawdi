@@ -16,6 +16,7 @@ import {
 	agentDisplayName,
 	agentOverviewSummary,
 	agentSectionCopy,
+	agentSkillInventory,
 	agentToolSectionCopy,
 	agentOverviewCopy as copy,
 	daemonStatusPresentation,
@@ -403,13 +404,14 @@ export function AgentOverview({
 						title={agentSectionCopy.skills.label}
 						description={summary(
 							"skills",
-							new Set([
-								...(skills.data ?? [])
-									.filter((skill) => !deployment || skill.authority === "agent_sync")
-									.map((skill) => skill.skill_key),
-								...(runtimeSkills.data?.items ?? []).map((skill) => skill.skill_key),
-								...(managedSkills.data?.skills ?? []).map((skill) => skill.skill_key),
-							]).size,
+							// A Cloud Agent counts the rows its Skills list shows; a Connected Agent its workspace.
+							deployment
+								? agentSkillInventory(
+										managedSkills.data?.skills ?? [],
+										(skills.data ?? []).filter((skill) => skill.authority === "agent_sync"),
+										runtimeSkills.data?.items ?? [],
+									).length
+								: new Set((skills.data ?? []).map((skill) => skill.skill_key)).size,
 							bindings.isPending ||
 								skills.isLoading ||
 								(Boolean(deployment) && (runtimeSkills.isPending || managedSkills.isPending)),

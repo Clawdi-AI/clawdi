@@ -880,7 +880,7 @@ function VaultDetail({
 	];
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen options={{ headerSearchBarOptions: searchOptions }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={cells}
 				keyExtractor={(cell, index) => String(cell.key ?? index)}

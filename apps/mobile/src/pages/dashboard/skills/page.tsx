@@ -166,12 +166,8 @@ function SkillsView({ project }: { project?: Project }) {
 	);
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen
-				options={{
-					headerSearchBarOptions: project ? searchOptions : undefined,
-					headerLargeTitleEnabled: !project,
-				}}
-			/>
+			<Stack.Screen options={{ headerLargeTitleEnabled: !project }} />
+			{project ? <Stack.SearchBar {...searchOptions} /> : null}
 			{project ? (
 				<NativeList
 					data={items}

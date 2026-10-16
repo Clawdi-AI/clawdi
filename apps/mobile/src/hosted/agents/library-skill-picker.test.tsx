@@ -125,6 +125,7 @@ function harness() {
 				undefined,
 		),
 		close: mock(async (_result?: boolean) => undefined),
+		pushes: [] as unknown[],
 		controller: new AbortController(),
 	};
 }
@@ -155,9 +156,9 @@ mock.module("@tanstack/react-query", () => ({
 	},
 }));
 mock.module("expo-router", () => ({
-	Stack: { Screen: () => null },
+	Stack: { Screen: () => null, SearchBar: () => null },
 	useLocalSearchParams: () => ({ id: "agent-1" }),
-	useRouter: () => ({ push: () => undefined, replace: () => undefined }),
+	useRouter: () => ({ push: (href: unknown) => h.pushes.push(href), replace: () => undefined }),
 }));
 mock.module("expo-router/react-navigation", () => ({ useIsFocused: () => h.focused }));
 mock.module("@/components/api-error-panel", () => ({
@@ -639,4 +640,29 @@ test("the Skills list includes agent-synced workspace skills, as Web's tab and t
 	);
 	expect(markup).toContain(`Plan|${agentSurfaceCopy.syncedFromAgent}`);
 	expect(markup).toContain("Pending|");
+});
+
+test("View Library Skill opens the Library skill inside the agent route", () => {
+	h.inventory = {
+		...h.inventory,
+		data: {
+			skills: [
+				skill({
+					skill_key: "brand",
+					name: "Brand",
+					skill_id: "skill-1",
+					project_id: "own-project",
+					source_skill_key: "team/brand",
+				}),
+			],
+		},
+	};
+	renderToStaticMarkup(<HostedAgentLibrarySkillsScreen deploymentId="deployment-1" />);
+	h.buttons.find((button) => button.label === en.agentExtensions.view)?.onPress?.();
+	expect(h.pushes).toEqual([
+		{
+			pathname: "/agents/[id]/skills/[...key]",
+			params: { id: "agent-1", project: "own-project", key: ["team", "brand"] },
+		},
+	]);
 });

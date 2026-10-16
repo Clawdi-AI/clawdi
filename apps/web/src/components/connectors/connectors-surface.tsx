@@ -2,6 +2,8 @@
 
 import { connectorsSurfaceClasses } from "@clawdi/shared/ui";
 import {
+	connectorsActiveLabel,
+	connectorsAvailableLabel,
 	connectorsEmptyCopy,
 	getProjectResourceDefinition,
 	LIBRARY_COPY,
@@ -182,9 +184,9 @@ function ConnectorsList({
 	const headerStatus =
 		total > 0 || connected.activeConnections.length > 0 ? (
 			<div className={connectorsSurfaceClasses.filters}>
-				{total > 0 ? <Badge variant="secondary">{total.toLocaleString()} available</Badge> : null}
+				{total > 0 ? <Badge variant="secondary">{connectorsAvailableLabel(total)}</Badge> : null}
 				{connected.activeConnections.length > 0 ? (
-					<Badge>{connected.activeConnections.length} active</Badge>
+					<Badge>{connectorsActiveLabel(connected.activeConnections.length)}</Badge>
 				) : null}
 			</div>
 		) : null;
@@ -328,7 +330,7 @@ function CatalogSection({
 	onNext: () => void;
 	scope: ResourceNavigationScope;
 }) {
-	const count = !isLoading && total > 0 ? `${total.toLocaleString()} available` : undefined;
+	const count = !isLoading && total > 0 ? connectorsAvailableLabel(total) : undefined;
 	let content: ReactNode;
 	if (error) {
 		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load connectors" />;

@@ -204,9 +204,8 @@ function VaultCatalog({
 	});
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen
-				options={{ headerSearchBarOptions: searchOptions, headerLargeTitleEnabled: !agentId }}
-			/>
+			<Stack.Screen options={{ headerLargeTitleEnabled: !agentId }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={listRows}
 				keyExtractor={(item) => item.id}

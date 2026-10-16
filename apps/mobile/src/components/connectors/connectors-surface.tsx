@@ -19,6 +19,8 @@ import {
 	connectorConnectTitle,
 	connectorDetailCopy,
 	connectorDisconnectTitle,
+	connectorsActiveLabel,
+	connectorsAvailableLabel,
 	connectorsEmptyCopy,
 	connectorFormCopy as copy,
 	formatCount,
@@ -181,7 +183,7 @@ function Catalog() {
 					...connectedCells,
 				]
 			: []),
-		<SectionLabel key="catalog-heading" count={`${total} available`}>
+		<SectionLabel key="catalog-heading" count={connectorsAvailableLabel(total)}>
 			{t("libraryPort.allConnectors")}
 		</SectionLabel>,
 		...apps.map((app) => (
@@ -203,9 +205,8 @@ function Catalog() {
 	];
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen
-				options={{ headerSearchBarOptions: searchOptions, headerLargeTitleEnabled: true }}
-			/>
+			<Stack.Screen options={{ headerLargeTitleEnabled: true }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={cells}
 				keyExtractor={(cell, index) => String(cell.key ?? index)}
@@ -229,16 +230,12 @@ function Catalog() {
 									<WebView recipe={connectorsSurfaceClasses.filters}>
 										{total > 0 ? (
 											<Badge variant="secondary">
-												<Text>
-													{total.toLocaleString()} {t("connectors.availableCount")}
-												</Text>
+												<Text>{connectorsAvailableLabel(total)}</Text>
 											</Badge>
 										) : null}
 										{connectedNames.length > 0 ? (
 											<Badge>
-												<Text>
-													{connectedNames.length} {t("connectors.activeCount")}
-												</Text>
+												<Text>{connectorsActiveLabel(connectedNames.length)}</Text>
 											</Badge>
 										) : null}
 									</WebView>
@@ -519,7 +516,7 @@ function Detail({ name, form }: { name?: string; form: boolean }) {
 	];
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen options={{ headerSearchBarOptions: searchOptions }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={cells}
 				keyExtractor={(cell, index) => String(cell.key ?? index)}

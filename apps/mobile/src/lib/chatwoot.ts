@@ -85,6 +85,15 @@ export function chatwootWidgetScript({
 				]
 			: []),
 	];
+	return widgetEventsScript(events);
+}
+
+/** Follows a theme change in the loaded widget, as Web calls the SDK's `setColorScheme`. */
+export function chatwootColorSchemeScript(colorScheme: "light" | "dark"): string {
+	return widgetEventsScript([{ event: "set-color-scheme", darkMode: colorScheme }]);
+}
+
+function widgetEventsScript(events: readonly object[]): string {
 	return `${events
 		.map(
 			(event) =>

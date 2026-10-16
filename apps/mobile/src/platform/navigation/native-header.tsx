@@ -1,8 +1,8 @@
 import { Stack } from "expo-router";
 import type { NativeStackNavigationOptions } from "expo-router/native-stack";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useWindowDimensions } from "react-native";
-import type { SearchBarCommands } from "react-native-screens";
+import type { SearchBarCommands, SearchBarProps } from "react-native-screens";
 import { useCSSVariable } from "uniwind";
 import { barFontSize } from "@/platform/navigation/bar-font-size";
 import { HeaderActions } from "@/platform/navigation/header-actions";
@@ -40,7 +40,11 @@ export function NativeHeader({
 	);
 }
 
-/** Controlled search: native edits update existing state; resets sync back to the search bar. */
+/**
+ * Controlled search for `<Stack.SearchBar {...search} />`: native edits update existing state;
+ * resets sync back to the search bar. Expo Router removes the bar with its component, so it
+ * never outlives the content that owns it. Props stay stable across renders.
+ */
 export function useHeaderSearch({
 	value,
 	onChange,
@@ -51,15 +55,18 @@ export function useHeaderSearch({
 	onChange: (value: string) => void;
 	placeholder: string;
 	maxLength?: number;
-}): NativeStackNavigationOptions["headerSearchBarOptions"] {
+}): SearchBarProps {
 	const ref = useRef<SearchBarCommands | null>(null);
 	const nativeValue = useRef("");
+	const latest = useRef({ onChange, maxLength });
+	useLayoutEffect(() => {
+		latest.current = { onChange, maxLength };
+	});
 	const [foreground, muted, background] = useCSSVariable([
 		"--color-foreground",
 		"--color-muted-foreground",
 		"--color-background",
 	]);
-	const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
 	useEffect(() => {
 		// Echoing every native keystroke can overwrite newer edits before React commits.
 		if (value !== nativeValue.current) {
@@ -67,20 +74,24 @@ export function useHeaderSearch({
 			ref.current?.setText(value);
 		}
 	}, [value]);
-	return {
-		ref,
-		placeholder,
-		autoCapitalize: "none",
-		hideWhenScrolling: false,
-		textColor: color(foreground),
-		tintColor: color(foreground),
-		headerIconColor: color(foreground),
-		hintTextColor: color(muted),
-		barTintColor: color(background),
-		onChangeText: ({ nativeEvent }) => {
-			nativeValue.current = nativeEvent.text;
-			onChange(maxLength ? nativeEvent.text.slice(0, maxLength) : nativeEvent.text);
-		},
-		onCancelButtonPress: () => onChange(""),
-	};
+	return useMemo(() => {
+		const color = (v: string | number | undefined) => (typeof v === "string" ? v : undefined);
+		return {
+			ref,
+			placeholder,
+			autoCapitalize: "none",
+			hideWhenScrolling: false,
+			textColor: color(foreground),
+			tintColor: color(foreground),
+			headerIconColor: color(foreground),
+			hintTextColor: color(muted),
+			barTintColor: color(background),
+			onChangeText: ({ nativeEvent }) => {
+				nativeValue.current = nativeEvent.text;
+				const { onChange, maxLength } = latest.current;
+				onChange(maxLength ? nativeEvent.text.slice(0, maxLength) : nativeEvent.text);
+			},
+			onCancelButtonPress: () => latest.current.onChange(""),
+		};
+	}, [placeholder, foreground, muted, background]);
 }

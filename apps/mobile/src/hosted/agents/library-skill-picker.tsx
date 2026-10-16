@@ -183,9 +183,8 @@ function AgentLibrarySkills({
 						},
 					]}
 				/>
-				<Stack.Screen
-					options={{ ...sheetCancelHeaderOptions, headerSearchBarOptions: headerSearch }}
-				/>
+				<Stack.Screen options={sheetCancelHeaderOptions} />
+				<Stack.SearchBar {...headerSearch} />
 				<NativeList
 					data={libraryIsError ? [] : items}
 					keyExtractor={(item) => item.id}
@@ -356,10 +355,11 @@ function AgentLibrarySkills({
 										disabled={!item.project_id || !item.source_skill_key}
 										onPress={() =>
 											router.push({
-												pathname: "/skills/[key]",
+												pathname: "/agents/[id]/skills/[...key]",
 												params: {
-													projectId: item.project_id ?? "",
-													key: item.source_skill_key ?? "",
+													id,
+													project: item.project_id ?? "",
+													key: (item.source_skill_key ?? "").split("/"),
 												},
 											})
 										}
