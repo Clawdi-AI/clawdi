@@ -747,7 +747,6 @@ export const en = {
 		all: "All projects",
 		choose: "Choose a project",
 		sharing: "Manage sharing",
-		leave: "Leave project",
 		create: "New project",
 		edit: "Edit project",
 		name: "Project name",
@@ -761,23 +760,7 @@ export const en = {
 		shared: "Shared",
 	},
 	sharing: {
-		joinLink: "Join using an invite link",
-		joinDescription:
-			"Paste an HTTPS invite link to preview it against your configured Clawdi server. Joining grants project membership but does not attach an Agent. The link is cleared when you leave or background the app.",
-		pasteLink: "Invite link",
-		invalidLink: "Enter a valid HTTPS project invite link.",
-		preview: "Preview project",
-		joined: "Joined. The project is now available in your project list.",
-		joinFailed:
-			"This link may be invalid, expired, revoked, or belong to your own project. Check your project list before retrying a join.",
 		vaults: "Vaults",
-		received: "Project invitations",
-		receivedDescription:
-			"Review projects shared with you. Accepting adds membership; it does not automatically attach any Agent.",
-		noInvitations: "No pending invitations.",
-		accept: "Accept invitation",
-		decline: "Decline invitation",
-		responseFailed: "The invitation may have changed or expired. Refresh before trying again.",
 		unavailable: "Only the owner of an active user-created project can manage sharing.",
 		email: "Existing account email",
 		label: "Link label (optional)",

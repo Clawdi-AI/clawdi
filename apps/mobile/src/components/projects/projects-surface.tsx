@@ -1,22 +1,18 @@
-import type { Project } from "@clawdi/shared/api";
-import { createProjectDialogClasses, projectDetailClasses } from "@clawdi/shared/ui";
+import { createProjectDialogClasses } from "@clawdi/shared/ui";
 import {
-	archiveProjectTitle,
 	canManageCustomProject,
 	compareProjectsForUse,
-	displayProjectName,
 	formatResourceCount,
 	createProjectDialogCopy as formCopy,
 	getProjectResourceDefinition,
 	isCustomProject,
-	leaveProjectTitle,
+	LIBRARY_COPY,
 	projectMatchesSearch,
 	projectSearchRank,
-	projectSharingFormCopy,
+	projectsEmptyDescription,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import MoreHorizontal from "lucide-react-native/icons/ellipsis";
 import Pencil from "lucide-react-native/icons/pencil";
 import Plus from "lucide-react-native/icons/plus";
 import { useEffect, useRef, useState } from "react";
@@ -24,21 +20,15 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
+import { ProjectCardActions } from "@/components/projects/project-actions";
 import { ProjectResourceCard } from "@/components/projects/project-resource-card";
 import { ResourceError } from "@/components/resource-error";
 import { Button } from "@/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { NativeList } from "@/components/ui/native-list";
 import { SheetPage } from "@/components/ui/sheet-page";
 import { Text } from "@/components/ui/text";
-import { useConfirmation } from "@/components/ui/use-confirmation";
 import { WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -69,63 +59,9 @@ export function ProjectsScreen() {
 
 function ProjectsView() {
 	const t = useI18n();
-	const confirmationDialog = useConfirmation();
-	const cache = useQueryClient();
 	const router = useRouter();
 	const projects = useCloudProjects();
-	const scope = useAccountScope();
-	const read = useAccountRead();
-	const { cloud, sharing } = useMobileApi();
-	const action = useAuthAction(scope);
 	const [search, setSearch] = useState("");
-	const archive = (project: Project) => {
-		const signal = scope.signal;
-		confirmationDialog.show(
-			archiveProjectTitle(project.name),
-			projectSharingFormCopy.archiveDescription,
-			[
-				{ text: t("account.cancel"), style: "cancel" },
-				{
-					text: projectSharingFormCopy.archive,
-					style: "destructive",
-					onPress: () => {
-						if (signal.aborted || !scope.isCurrent()) return;
-						return action.runOrThrow(async (isCurrent) => {
-							await read((requestSignal) => cloud.archiveProject(project.id, requestSignal));
-							if (!isCurrent()) return;
-
-							await projects.refetch();
-						});
-					},
-				},
-			],
-		);
-	};
-	const leave = (project: Project) => {
-		const signal = scope.signal;
-		confirmationDialog.show(
-			leaveProjectTitle(project.name),
-			projectSharingFormCopy.leaveDescription,
-			[
-				{ text: t("account.cancel"), style: "cancel" },
-				{
-					text: projectSharingFormCopy.leave,
-					style: "destructive",
-					className: projectDetailClasses.destructiveButton,
-					onPress: () => {
-						if (signal.aborted || !scope.isCurrent()) return;
-						return action.runOrThrow(async (isCurrent) => {
-							await read(
-								(requestSignal) => sharing.leaveProject(project.id, requestSignal),
-								signal,
-							);
-							if (isCurrent()) await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-						});
-					},
-				},
-			],
-		);
-	};
 	const rows = (projects.data ?? [])
 		.filter(isCustomProject)
 		.filter((p) => projectMatchesSearch(p, search))
@@ -154,30 +90,20 @@ function ProjectsView() {
 						<PageHeader
 							title={t("projects.title")}
 							description={getProjectResourceDefinition("projects").managementDescription}
-							headerMenu={{
-								label: t("sessionDetail.more"),
-								items: [
-									{
-										id: "create",
-										label: t("libraryPort.createProject"),
-										disabled: action.busy,
-										onPress: () => router.push("/projects/new"),
-									},
-									{
-										id: "join",
-										label: t("sharing.joinLink"),
-										onPress: () => router.push("/projects/join"),
-									},
-									{
-										id: "invitations",
-										label: t("sharing.received"),
-										onPress: () => router.push("/projects/invitations"),
-									},
-								],
-							}}
+							headerActions={[
+								{
+									id: "create",
+									label: LIBRARY_COPY.createProject,
+									onPress: () => router.push("/projects/new"),
+								},
+							]}
 						/>
 						{projects.error ? (
-							<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
+							<ApiErrorPanel
+								error={projects.error}
+								onRetry={() => void projects.refetch()}
+								title={LIBRARY_COPY.loadProjectsFailed}
+							/>
 						) : null}
 					</>
 				}
@@ -193,55 +119,7 @@ function ProjectsView() {
 								? t("labels.projectOwner", { name: project.owner_display || project.owner_handle })
 								: null,
 						]}
-						actions={
-							<DropdownMenu>
-								<DropdownMenuTrigger
-									disabled={action.busy}
-									render={
-										<Button
-											variant="ghost"
-											size="icon-sm"
-											accessibilityLabel={t("labels.actionsFor", {
-												name: displayProjectName(project),
-											})}
-										>
-											<Icon as={MoreHorizontal} />
-										</Button>
-									}
-								/>
-								<DropdownMenuContent>
-									{canManageCustomProject(project) ? (
-										<>
-											<DropdownMenuItem
-												label={t("projects.sharing")}
-												onSelect={() =>
-													router.push({
-														pathname: "/projects/[id]/sharing",
-														params: { id: project.id },
-													})
-												}
-											/>
-											<DropdownMenuItem
-												label={t("libraryPort.edit")}
-												onSelect={() => {
-													router.push({
-														pathname: "/projects/[id]/edit",
-														params: { id: project.id },
-													});
-												}}
-											/>
-											<DropdownMenuItem
-												label={t("projects.archive")}
-												variant="destructive"
-												onSelect={() => archive(project)}
-											/>
-										</>
-									) : (
-										<DropdownMenuItem label={t("projects.leave")} onSelect={() => leave(project)} />
-									)}
-								</DropdownMenuContent>
-							</DropdownMenu>
-						}
+						actions={<ProjectCardActions project={project} />}
 					/>
 				)}
 				empty={
@@ -249,26 +127,23 @@ function ProjectsView() {
 						<HeroCardSkeleton />
 					) : !projects.error ? (
 						<EmptyState
-							title={t(search.trim() ? "libraryPort.noProjectMatches" : "libraryPort.noProjects")}
-							description={t("libraryPort.emptyProjects")}
-							action={search.trim() ? undefined : <CreateProjectButton disabled={action.busy} />}
+							title={search.trim() ? LIBRARY_COPY.noProjectMatches : LIBRARY_COPY.noProjects}
+							description={projectsEmptyDescription(search.trim())}
 						/>
 					) : null
 				}
 			/>
-			{confirmationDialog.dialog}
 		</SafeAreaScreen>
 	);
 }
 
 /** Empty-state entry to the same create sheet as the header menu, like Web's Skills chooser. */
-export function CreateProjectButton({ disabled }: { disabled?: boolean }) {
-	const t = useI18n();
+export function CreateProjectButton() {
 	const router = useRouter();
 	return (
-		<Button disabled={disabled} onPress={() => router.push("/projects/new")}>
+		<Button onPress={() => router.push("/projects/new")}>
 			<Icon as={Plus} />
-			<Text>{t("libraryPort.createProject")}</Text>
+			<Text>{LIBRARY_COPY.createProject}</Text>
 		</Button>
 	);
 }

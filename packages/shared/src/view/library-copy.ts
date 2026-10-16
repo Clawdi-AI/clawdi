@@ -146,6 +146,11 @@ export function skillsEmptyMessage({ search, writable }: { search: string; writa
 export function importSkillDescription(project: ProjectMetadata) {
 	return `Copy a GitHub skill into ${displayProjectName(project)}. This project owns the imported copy.`;
 }
+export function projectsEmptyDescription(search: string) {
+	return search
+		? `Nothing matches “${search}”. Try a different search.`
+		: LIBRARY_COPY.emptyProjects;
+}
 export const PROJECT_LOCAL_TABS = [
 	{ id: "overview", label: "Overview" },
 	{ id: "skills", label: "Skills" },

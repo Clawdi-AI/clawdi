@@ -1267,9 +1267,9 @@ On an authorized simulator/device build, verify:
    changes refresh account-owned caches and no Agent is bound implicitly.
    Background or navigate away during link creation: a late response must not
    redisplay the URL. Verify native sharing and destructive confirmation behavior.
-   Paste a link, preview its owner/project and explicitly join. The pasted host
-   must never become a fetch destination: requests use the configured Cloud API.
-   Cancel/blur/background pending previews and verify they do not restore a token.
+   Open a `/share/<token>` link, check the preview and explicitly accept it; the
+   project then opens. Invitations are answered from the notification center,
+   as on Web. Leave a shared project from its detail page.
 8. Link, reorder and unlink context Projects without changing the primary
    Workspace. Create/import a cloud Skill, edit it concurrently on Web, and
    confirm native save reports conflict without losing the draft. Delete after

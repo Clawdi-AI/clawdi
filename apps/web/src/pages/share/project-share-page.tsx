@@ -2,10 +2,12 @@
 
 import { projectSharePageClasses as shareStyles } from "@clawdi/shared/ui";
 import {
+	type ProjectShareErrorCode,
 	projectDetailHref,
 	projectInvitationAccess,
 	projectInvitationCopy,
 	projectInvitationCounts,
+	projectShareErrorCopy,
 } from "@clawdi/shared/view";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { AlertCircle, CheckCircle2, KeyRound, LogIn, ShieldCheck, Sparkles } from "lucide-react";
@@ -39,11 +41,9 @@ function buildLandingUrl(token: string): string {
 	return `${window.location.origin}/share/${token}`;
 }
 
-type ShareErrorCode = "not_found" | "revoked" | "already_member" | "already_owner" | "unknown";
-
 class ShareError extends Error {
 	constructor(
-		public code: ShareErrorCode,
+		public code: ProjectShareErrorCode,
 		public status?: number,
 	) {
 		super(code);
@@ -170,8 +170,8 @@ export default function SharePage({ token }: { token: string }) {
 					{upgradeSucceeded ? (
 						<Alert>
 							<CheckCircle2 />
-							<AlertTitle>Invitation accepted</AlertTitle>
-							<AlertDescription>Opening project…</AlertDescription>
+							<AlertTitle>{projectInvitationCopy.accepted}</AlertTitle>
+							<AlertDescription>{projectInvitationCopy.opening}</AlertDescription>
 						</Alert>
 					) : isOwner ? (
 						<Alert>
@@ -193,15 +193,13 @@ export default function SharePage({ token }: { token: string }) {
 							{upgrade.error instanceof ShareError && upgrade.error.code === "already_member" ? (
 								<Alert>
 									<CheckCircle2 />
-									<AlertDescription>
-										You already have access. Open this project from your dashboard.
-									</AlertDescription>
+									<AlertDescription>{projectInvitationCopy.alreadyAccess}</AlertDescription>
 								</Alert>
 							) : upgrade.error ? (
 								<Alert variant="destructive">
 									<AlertCircle />
 									<AlertDescription>
-										{describeError((upgrade.error as ShareError).code)}
+										{projectShareErrorCopy((upgrade.error as ShareError).code).description}
 									</AlertDescription>
 								</Alert>
 							) : null}
@@ -278,7 +276,7 @@ function ErrorView({ error }: { error: unknown }) {
 			<Shell>
 				<Alert variant="destructive">
 					<AlertCircle />
-					<AlertTitle>Couldn't load invitation</AlertTitle>
+					<AlertTitle>{projectShareErrorCopy("unknown").title}</AlertTitle>
 					<AlertDescription>Try again.</AlertDescription>
 				</Alert>
 			</Shell>
@@ -288,41 +286,11 @@ function ErrorView({ error }: { error: unknown }) {
 		<Shell>
 			<Alert variant="destructive">
 				<AlertCircle />
-				<AlertTitle>{titleForError(error.code)}</AlertTitle>
-				<AlertDescription>{describeError(error.code)}</AlertDescription>
+				<AlertTitle>{projectShareErrorCopy(error.code).title}</AlertTitle>
+				<AlertDescription>{projectShareErrorCopy(error.code).description}</AlertDescription>
 			</Alert>
 		</Shell>
 	);
-}
-
-function titleForError(code: ShareErrorCode): string {
-	switch (code) {
-		case "not_found":
-			return "Invite link not found";
-		case "revoked":
-			return "Invite link unavailable";
-		case "already_member":
-			return "Already joined";
-		case "already_owner":
-			return "This is your project";
-		default:
-			return "Couldn't load invitation";
-	}
-}
-
-function describeError(code: ShareErrorCode): string {
-	switch (code) {
-		case "not_found":
-			return "Ask the owner for a new invite link.";
-		case "revoked":
-			return "This invite link is no longer active. Ask the owner for a new one.";
-		case "already_member":
-			return "You already have access. Open this project from your dashboard.";
-		case "already_owner":
-			return "You own this project. There is nothing to accept.";
-		default:
-			return "Try again. If the problem continues, contact the owner.";
-	}
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

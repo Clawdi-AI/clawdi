@@ -82,7 +82,7 @@ function ImportSkill({ project }: { project: Project }) {
 				/>
 			</WebView>
 			{action.error ? (
-				<ApiErrorPanel error={action.error} title={SKILLS_LIST_COPY.importFailed} />
+				<ApiErrorPanel error={action.failure} title={SKILLS_LIST_COPY.importFailed} />
 			) : null}
 			<WebView recipe={dialogClasses.footer}>
 				<Button disabled={disabled} onPress={() => void submit()}>

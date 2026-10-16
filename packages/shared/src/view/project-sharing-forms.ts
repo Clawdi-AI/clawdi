@@ -1,5 +1,7 @@
 export const projectSharingFormCopy = {
 	leave: "Leave project",
+	leaving: "Leaving…",
+	leaveFailed: "Couldn't leave shared project",
 	leaveDescription:
 		"This removes your access and unlinks the project from your agents. Those agents will stop using its skills and vaults.",
 	archiveDescription:
@@ -50,7 +52,44 @@ export const projectInvitationCopy = {
 	sharedBy: "Shared by ",
 	accept: "Accept invitation",
 	joining: "Joining…",
+	accepted: "Invitation accepted",
+	opening: "Opening project…",
+	alreadyAccess: "You already have access. Open this project from your dashboard.",
 };
+
+export type ProjectShareErrorCode =
+	| "not_found"
+	| "revoked"
+	| "already_member"
+	| "already_owner"
+	| "unknown";
+
+export function projectShareErrorCopy(code: ProjectShareErrorCode) {
+	switch (code) {
+		case "not_found":
+			return {
+				title: "Invite link not found",
+				description: "Ask the owner for a new invite link.",
+			};
+		case "revoked":
+			return {
+				title: "Invite link unavailable",
+				description: "This invite link is no longer active. Ask the owner for a new one.",
+			};
+		case "already_member":
+			return { title: "Already joined", description: projectInvitationCopy.alreadyAccess };
+		case "already_owner":
+			return {
+				title: "This is your project",
+				description: "You own this project. There is nothing to accept.",
+			};
+		default:
+			return {
+				title: "Couldn't load invitation",
+				description: "Try again. If the problem continues, contact the owner.",
+			};
+	}
+}
 export function projectInvitationCounts(skills: number, vaults: number) {
 	return `${skills} ${skills === 1 ? "Skill" : "Skills"} · ${vaults} ${vaults === 1 ? "Vault" : "Vaults"}`;
 }

@@ -141,7 +141,7 @@ function SendSkill({ projectId, skillKey }: { projectId: string; skillKey: strin
 				{partial ? (
 					<Alert title={sendSkillResult(false, "").title}>{partial}</Alert>
 				) : action.error ? (
-					<ApiErrorPanel error={action.error} title={copy.sendFailed} />
+					<ApiErrorPanel error={action.failure} title={copy.sendFailed} />
 				) : null}
 				<WebView recipe={dialogClasses.footer}>
 					<Button variant="outline" disabled={disabled} onPress={() => void send(false)}>

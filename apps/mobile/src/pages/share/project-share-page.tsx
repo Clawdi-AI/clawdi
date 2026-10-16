@@ -1,164 +1,126 @@
-import type { components } from "@clawdi/shared/api";
+import { ApiClientError } from "@clawdi/shared/api";
 import { projectSharePageClasses as styles } from "@clawdi/shared/ui";
 import {
 	projectInvitationCopy as copy,
+	type ProjectShareErrorCode,
 	projectInvitationAccess,
 	projectInvitationCounts,
+	projectShareErrorCopy,
 } from "@clawdi/shared/view";
-import { useQueryClient } from "@tanstack/react-query";
-import { useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
-import { shareTokenFromUrl } from "@/components/sharing/project-sharing-state";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { router, useLocalSearchParams } from "expo-router";
+import AlertCircle from "lucide-react-native/icons/circle-alert";
+import CheckCircle2 from "lucide-react-native/icons/circle-check";
+import Sparkles from "lucide-react-native/icons/sparkles";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Icon } from "@/components/ui/icon";
 import { Separator } from "@/components/ui/separator";
 import { SheetPage } from "@/components/ui/sheet-page";
-import { Text as AppText, Text } from "@/components/ui/text";
-import { WebText, webView } from "@/components/ui/web-layout";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Text } from "@/components/ui/text";
+import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
-import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 
-export function ProjectJoinScreen() {
+/** Web's `/share/:token` landing page; the token arrives only through the link. */
+export function ProjectShareScreen() {
 	const scope = useAccountScope();
 	const { token } = useLocalSearchParams<{ token?: string }>();
-	const initialLink =
-		token && /^[A-Za-z0-9_-]{43}$/.test(token) ? `https://local.invalid/share/${token}` : "";
-	return (
-		<JoinView key={`${scope.identity}:${scope.generation}:${token}`} initialLink={initialLink} />
-	);
+	const valid = token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null;
+	return <ProjectShare key={`${scope.identity}:${scope.generation}:${token}`} token={valid} />;
 }
 
-function JoinView({ initialLink }: { initialLink: string }) {
-	const t = useI18n();
+function shareErrorCode(error: unknown): ProjectShareErrorCode {
+	if (!(error instanceof ApiClientError)) return "unknown";
+	if (error.status === 404) return "not_found";
+	if (error.status === 410) return "revoked";
+	// The shared transport keeps only `code`; Web's owner case reads `detail.error`.
+	if (error.status === 409) return "already_member";
+	return "unknown";
+}
+
+function ProjectShare({ token }: { token: string | null }) {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { sharing } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
-	const [input, setInput] = useState(initialLink);
-	const [preview, setPreview] = useState<{
-		token: string;
-		data: components["schemas"]["ShareRedeemResponse"];
-	} | null>(null);
-	const [joined, setJoined] = useState(false);
-	const presentation = useRef(0);
-	const focused = useRef(false);
-	const clear = useCallback(() => {
-		presentation.current += 1;
-		setInput("");
-		setPreview(null);
-		setJoined(false);
-	}, []);
-	useFocusEffect(
-		useCallback(() => {
-			focused.current = true;
-			return () => {
-				focused.current = false;
-				clear();
-			};
-		}, [clear]),
-	);
-	useEffect(() => {
-		const listener = AppState.addEventListener("change", (state) => {
-			if (state !== "active") clear();
-		});
-		return () => listener.remove();
-	}, [clear]);
-	const token = shareTokenFromUrl(input);
-	const load = () =>
-		action.run(async (isCurrent) => {
+	const preview = useQuery({
+		// The capability token stays out of query keys.
+		queryKey: accountQueryKey(scope, "project-share-preview"),
+		queryFn: ({ signal }) => read((s) => sharing.previewLink(token ?? "", s), signal),
+		enabled: scope.isReady && Boolean(token),
+		retry: false,
+		gcTime: 0,
+	});
+	const accept = () =>
+		action.run(async (current) => {
 			if (!token) return;
-			setPreview(null);
-			setJoined(false);
-			const epoch = presentation.current;
-			const data = await read((signal) => sharing.previewLink(token, signal));
-			if (
-				isCurrent() &&
-				epoch === presentation.current &&
-				focused.current &&
-				AppState.currentState === "active"
-			)
-				setPreview({ token, data });
-		});
-	const join = () =>
-		action.run(async (isCurrent) => {
-			if (!preview) return;
-			const epoch = presentation.current;
-			await read((signal) => sharing.joinLink(preview.token, signal));
-			if (!isCurrent()) return;
-			setInput("");
-			setPreview(null);
-			if (epoch === presentation.current && focused.current && AppState.currentState === "active")
-				setJoined(true);
+			const joined = await read((s) => sharing.joinLink(token, s));
+			if (!current()) return;
 			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+			if (current())
+				router.replace({ pathname: "/projects/[id]", params: { id: joined.project_id } });
 		});
+	const failure = !token
+		? projectShareErrorCopy("not_found")
+		: preview.error
+			? projectShareErrorCopy(shareErrorCode(preview.error))
+			: null;
+	const acceptFailure = action.error ? shareErrorCode(action.failure) : null;
+	const data = preview.data;
 	return (
-		<SheetPage title={t("sharing.joinLink")} fallback="/projects" busy={action.busy}>
-			<AppText>{t("sharing.joinDescription")}</AppText>
-			<Input
-				accessibilityLabel={t("sharing.pasteLink")}
-				placeholder={t("sharing.pasteLink")}
-				secureTextEntry
-				autoCapitalize="none"
-				autoCorrect={false}
-				value={input}
-				editable={!action.busy}
-				maxLength={4096}
-				onChangeText={(value) => {
-					presentation.current += 1;
-					setInput(value);
-					setPreview(null);
-					setJoined(false);
-					action.clearError();
-				}}
-			/>
-			{input.trim() && !token ? (
-				<AppText accessibilityRole="alert">{t("sharing.invalidLink")}</AppText>
-			) : null}
-			<Button
-				variant="outline"
-				size="sm"
-				disabled={action.busy || !token}
-				onPress={() => void load()}
-			>
-				<Text>{t("sharing.preview")}</Text>
-			</Button>
-			{preview ? (
+		<SheetPage title={copy.title} fallback="/projects" busy={action.busy}>
+			{failure ? (
+				<Alert variant="destructive" icon={AlertCircle} title={failure.title}>
+					{failure.description}
+				</Alert>
+			) : !data ? (
+				<Skeleton className="h-64 w-full" />
+			) : (
 				<Card>
 					<CardHeader>
-						<WebText recipe={styles.invitation}>{copy.title}</WebText>
-						<CardTitle className={webView(styles.title)}>{preview.data.project_name}</CardTitle>
+						<WebView recipe={styles.invitation} className="flex-row">
+							<Icon as={Sparkles} />
+							<WebText recipe={styles.invitation}>{copy.title}</WebText>
+						</WebView>
+						<CardTitle className={webView(styles.title)}>{data.project_name}</CardTitle>
 						<WebText recipe={styles.description}>
 							{copy.sharedBy}
-							<WebText recipe={styles.owner}>{preview.data.owner_display}</WebText>{" "}
-							<WebText recipe={styles.handle}>@{preview.data.owner_handle}</WebText>
+							<WebText recipe={styles.owner}>{data.owner_display}</WebText>{" "}
+							<WebText recipe={styles.handle}>@{data.owner_handle}</WebText>
 						</WebText>
 					</CardHeader>
 					<CardContent className={webView(styles.body)}>
 						<WebText recipe={styles.description}>
-							{projectInvitationCounts(preview.data.skill_count, preview.data.vault_count)}
+							{projectInvitationCounts(data.skill_count, data.vault_count)}
 						</WebText>
 						<WebText recipe={styles.description}>
-							{projectInvitationAccess(preview.data.vault_count > 0)}
+							{projectInvitationAccess(data.vault_count > 0)}
 						</WebText>
 						<Separator />
 						<Button
 							className={webView(styles.action)}
 							size="lg"
 							disabled={action.busy}
-							onPress={() => void join()}
+							onPress={() => void accept()}
 						>
+							<Icon as={CheckCircle2} />
 							<Text>{action.busy ? copy.joining : copy.accept}</Text>
 						</Button>
+						{acceptFailure === "already_member" ? (
+							<Alert icon={CheckCircle2}>{copy.alreadyAccess}</Alert>
+						) : acceptFailure ? (
+							<Alert variant="destructive" icon={AlertCircle}>
+								{projectShareErrorCopy(acceptFailure).description}
+							</Alert>
+						) : null}
 					</CardContent>
 				</Card>
-			) : null}
-			{joined ? <AppText accessibilityLiveRegion="polite">{t("sharing.joined")}</AppText> : null}
-			{action.error ? <AppText accessibilityRole="alert">{t("sharing.joinFailed")}</AppText> : null}
+			)}
 		</SheetPage>
 	);
 }

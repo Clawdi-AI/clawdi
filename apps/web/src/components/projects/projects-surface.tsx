@@ -10,6 +10,7 @@ import {
 	LIBRARY_COPY,
 	projectMatchesSearch,
 	projectSearchRank,
+	projectsEmptyDescription,
 } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
@@ -194,7 +195,7 @@ export function ProjectsSurface({
 					>
 						<Button size="sm" disabled={actionsDisabled}>
 							<Plus className={projectsSurfaceClasses.createIcon} />
-							Create project
+							{LIBRARY_COPY.createProject}
 						</Button>
 					</CreateProjectDialog>
 				}
@@ -237,12 +238,8 @@ export function ProjectsSurface({
 			) : shouldBlockQueryError(projects.error, projects.data) ? null : rows.length === 0 &&
 				missingBindings.length === 0 ? (
 				<EmptyState
-					title={search.trim() ? "No matching projects" : "No projects yet"}
-					description={
-						search.trim()
-							? `Nothing matches “${search.trim()}”. Try a different search.`
-							: "Create a project to bundle skills and vaults for your agents."
-					}
+					title={search.trim() ? LIBRARY_COPY.noProjectMatches : LIBRARY_COPY.noProjects}
+					description={projectsEmptyDescription(search.trim())}
 				/>
 			) : (
 				groups.map((group) =>

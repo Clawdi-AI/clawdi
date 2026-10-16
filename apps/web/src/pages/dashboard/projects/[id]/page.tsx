@@ -414,7 +414,7 @@ export default function ProjectDetailPage({
 			void router.navigate({ href: projectsTarget.href });
 		},
 		onError: (error) => {
-			toast.error("Couldn't leave shared project", {
+			toast.error(projectSharingFormCopy.leaveFailed, {
 				description: normalizeApiError(error),
 			});
 		},
@@ -1238,7 +1238,7 @@ function SharedAccessPanel({
 					}
 				>
 					<LogOut className={projectDetailClasses.inlineActionIcon} />
-					{isLeaving ? "Leaving…" : "Leave project"}
+					{isLeaving ? projectSharingFormCopy.leaving : projectSharingFormCopy.leave}
 				</AlertDialogTrigger>
 				<AlertDialogContent>
 					<AlertDialogHeader>
@@ -1250,7 +1250,7 @@ function SharedAccessPanel({
 					<AlertDialogFooter>
 						<AlertDialogCancel>{LIBRARY_COPY.cancel}</AlertDialogCancel>
 						<AlertDialogAction onClick={onLeave} className={projectDetailClasses.destructiveButton}>
-							Leave project
+							{projectSharingFormCopy.leave}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
