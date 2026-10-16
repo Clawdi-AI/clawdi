@@ -23,12 +23,6 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
-### CLI
-
-- **Runtime installation:** Git transfers below 100 KiB/s for 60 seconds now
-  abort so upstream installers can retry on a fresh connection. Existing
-  `GIT_HTTP_LOW_SPEED_LIMIT` and `GIT_HTTP_LOW_SPEED_TIME` overrides are preserved.
-
 ### Analytics
 
 The unmerged product-metrics change now extends the existing PostHog and
@@ -56,6 +50,12 @@ not removed. `$host` is retained only as a hostname; URL/path fields stay
 filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
+
+### CLI 0.16.16
+
+- **Runtime installation:** Git transfers below 100 KiB/s for 60 seconds now
+  abort so upstream installers can retry on a fresh connection. Existing
+  `GIT_HTTP_LOW_SPEED_LIMIT` and `GIT_HTTP_LOW_SPEED_TIME` overrides are preserved.
 
 ### CLI 0.16.15
 
