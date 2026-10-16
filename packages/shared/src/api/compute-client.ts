@@ -3,12 +3,22 @@ import type { components as DeployComponents, paths as DeployPaths } from "./dep
 import {
 	buildHostedDeployCheckoutRequest,
 	type HostedDeployCheckoutRequest,
+	type HostedDeployCheckoutSubscriptionSelection,
 	type HostedDeployRequest,
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionQuoteRequest,
 	type HostedDeploySubscriptionSelection,
 	isHostedDeployComputePlan,
 } from "./deploy-wizard";
+import {
+	type ComputePlanChangeQuoteRequest,
+	type ComputePlanChangeRequest,
+	type ComputePortalRequest,
+	type PlanChangeOperationOutcome,
+	planChangeOperationId,
+	planChangeOperationOutcome,
+	readPlanChangeOperation,
+} from "./plan-change";
 import {
 	ApiClientError,
 	ApiClientNetworkError,
@@ -56,13 +66,23 @@ export type AccountNotificationsQuery = NonNullable<
 	DeployPaths["/v1/me/notifications"]["get"]["parameters"]["query"]
 >;
 
+/** Web's plan-change polling cadence: one read per second for up to two minutes. */
+export type PlanChangePollOptions = {
+	pollIntervalMs?: number;
+	pollLimit?: number;
+	sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
+};
+
+/** A plan-change reading the caller acts on; an invalid operation throws instead. */
+export type PlanChangeOutcome = Exclude<PlanChangeOperationOutcome, { kind: "invalid" }>;
+
 export function createHostedComputeClient(options: ApiClientOptions) {
 	const transport = createReadTransport(options);
 	const api = createClient<DeployPaths>({
 		baseUrl: readApiBaseUrl(options.baseUrl, true),
 		fetch: transport.fetch,
 	});
-	const validateCreation = (body: HostedDeployRequest, idempotencyKey: string) => {
+	const validateIdempotencyKey = (idempotencyKey: string) => {
 		if (
 			typeof idempotencyKey !== "string" ||
 			idempotencyKey.length < 1 ||
@@ -71,6 +91,9 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 		) {
 			throw new ApiClientError(400, "invalid_idempotency_key");
 		}
+	};
+	const validateCreation = (body: HostedDeployRequest, idempotencyKey: string) => {
+		validateIdempotencyKey(idempotencyKey);
 		if (!isHostedDeployComputePlan(body?.compute_plan_slug))
 			throw new ApiClientError(400, "invalid_compute_plan");
 		if (body.deploy_request_id != null && body.deploy_request_id !== idempotencyKey)
@@ -138,6 +161,28 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 				}),
 			signal,
 		);
+	const getOperation = (operationId: string, signal?: AbortSignal) =>
+		transport.read(
+			(init) =>
+				api.GET("/v2/operations/{operation_id}", {
+					...init,
+					params: { path: { operation_id: readResourceId(operationId) } },
+				}),
+			signal,
+		);
+	/** Reads one plan-change operation; a contract violation is an unreadable response. */
+	const planChangeOutcome = (value: unknown, expectedName?: string): PlanChangeOutcome => {
+		const operation = readPlanChangeOperation(value);
+		if (
+			!operation ||
+			operation.progress.operationId !== planChangeOperationId(operation.name) ||
+			(expectedName !== undefined && operation.name !== expectedName)
+		)
+			throw new ApiClientResponseError();
+		const outcome = planChangeOperationOutcome(operation);
+		if (outcome.kind === "invalid") throw new ApiClientResponseError();
+		return outcome;
+	};
 	return {
 		/** Starts durable account termination, including hosted resources and Clerk identity.
 		 * A 204 acknowledges the request; asynchronous cleanup is not proven complete.
@@ -218,6 +263,103 @@ export function createHostedComputeClient(options: ApiClientOptions) {
 				signal,
 			);
 		},
+		/**
+		 * Web's "Choose a paid subscription" for an existing Agent (`upgrade_deployment_id`):
+		 * assigns one reusable card or Wallet subscription, or starts a new Wallet one with
+		 * the quote the user confirmed. Hosted requires the Idempotency-Key and keys the
+		 * Wallet replay by it: the same key and body replay the original activation. Card
+		 * checkout is never started here.
+		 */
+		activateDeploymentSubscription: async (
+			{
+				deploymentId,
+				subscriptionSelection,
+				selection,
+				idempotencyKey,
+				quote,
+			}: {
+				deploymentId: string;
+				subscriptionSelection: HostedDeployCheckoutSubscriptionSelection;
+				selection: HostedDeploySubscriptionSelection;
+				idempotencyKey: string;
+				quote: HostedDeploySubscriptionQuote | null;
+			},
+			signal?: AbortSignal,
+		) => {
+			validateIdempotencyKey(idempotencyKey);
+			if (subscriptionSelection.mode === "existing") {
+				if (quote !== null) throw new ApiClientError(400, "unexpected_quote");
+				readResourceId(subscriptionSelection.subscription_id);
+			} else if (
+				selection.fundingSource !== "wallet" ||
+				quote?.funding_source !== "wallet" ||
+				quote.plan_slug !== selection.planSlug ||
+				quote.billing_term_months !== selection.billingTermMonths
+			)
+				throw new ApiClientError(400, "wallet_quote_required");
+			return activateSubscription(
+				buildHostedDeployCheckoutRequest({
+					selection,
+					subscriptionSelection,
+					target: { kind: "upgrade_deployment", deploymentId: readResourceId(deploymentId) },
+					idempotencyKey,
+					quote,
+					uiMode: "custom",
+				}),
+				idempotencyKey,
+				signal,
+			);
+		},
+		/** Explicit preview of a plan change; moves no money. The quote's `operation_id` keys the change. */
+		quotePlanChange: (body: ComputePlanChangeQuoteRequest, signal?: AbortSignal) =>
+			transport.read((init) => api.POST("/v2/subscription/plan/quote", { ...init, body }), signal),
+		/**
+		 * Accepts a quoted plan change with `Idempotency-Key = operation_id`. Acceptance only
+		 * persists the change; a durable worker applies any charge, and the same request
+		 * replays the same operation. Follows it like Web: `onAccepted` names it, then the
+		 * operation is polled until it settles, fails or is still running at the limit.
+		 */
+		changePlan: async (
+			body: ComputePlanChangeRequest,
+			{
+				onAccepted,
+				signal,
+				pollIntervalMs = 1_000,
+				pollLimit = 120,
+				sleep = waitForRetry,
+			}: PlanChangePollOptions & {
+				onAccepted?: (operationName: string) => void;
+				signal?: AbortSignal;
+			} = {},
+		): Promise<PlanChangeOutcome> => {
+			const operationId = readResourceId(body.operation_id);
+			const accepted = await transport.read(
+				(init) =>
+					api.POST("/v2/subscription/plan/change", {
+						...init,
+						body,
+						params: { header: { "Idempotency-Key": operationId } },
+					}),
+				signal,
+			);
+			let outcome = planChangeOutcome(accepted);
+			if (outcome.operationName !== `operations/${operationId}`) throw new ApiClientResponseError();
+			onAccepted?.(outcome.operationName);
+			for (let poll = 0; outcome.kind === "pending" && poll < pollLimit; poll += 1) {
+				await sleep(pollIntervalMs, signal);
+				outcome = planChangeOutcome(await getOperation(operationId, signal), outcome.operationName);
+			}
+			return outcome;
+		},
+		/** Re-reads an accepted plan change once; never resubmits or charges. */
+		checkPlanChange: async (operationName: string, signal?: AbortSignal) => {
+			const operationId = planChangeOperationId(operationName);
+			if (!operationId) throw new ApiClientError(400, "invalid_operation_name");
+			return planChangeOutcome(await getOperation(operationId, signal), operationName);
+		},
+		/** Card billing settings in Stripe's portal (non-store builds only). */
+		openBillingPortal: (body: ComputePortalRequest, signal?: AbortSignal) =>
+			transport.read((init) => api.POST("/v2/subscription/portal", { ...init, body }), signal),
 		/** Ownership protection only; this does not expose legacy product actions. */
 		getLegacyAgentIds: async (signal?: AbortSignal) => {
 			const result = await transport.read(

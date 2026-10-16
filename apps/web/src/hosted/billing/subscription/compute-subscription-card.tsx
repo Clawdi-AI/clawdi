@@ -2,6 +2,7 @@ import { computeSubscriptionCardClasses } from "@clawdi/shared/ui";
 import {
 	billingCopy,
 	type ComputeSubscriptionIdentity,
+	computeSubscriptionActionCopy,
 	type StoreManagement,
 	storeBillingNotice,
 	storeRenewalIssue,
@@ -105,7 +106,9 @@ export function ComputeSubscriptionPlanAction({
 			) : (
 				<Settings data-icon="inline-start" />
 			)}
-			{action === "upgrade" ? "Upgrade" : "Manage"}
+			{action === "upgrade"
+				? computeSubscriptionActionCopy.upgrade
+				: computeSubscriptionActionCopy.manage}
 		</Button>
 	);
 }

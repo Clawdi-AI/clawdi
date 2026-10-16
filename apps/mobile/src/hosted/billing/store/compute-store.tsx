@@ -1,4 +1,9 @@
-import type { DeploymentRead, StoreComputeSlot, StorePlatform } from "@clawdi/shared/api";
+import type {
+	ComputeRecoveryTarget,
+	DeploymentRead,
+	StoreComputeSlot,
+	StorePlatform,
+} from "@clawdi/shared/api";
 import {
 	agentDisplayName,
 	billingTermLabel,
@@ -19,6 +24,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import ArrowUp from "lucide-react-native/icons/arrow-up";
 import RotateCcw from "lucide-react-native/icons/rotate-ccw";
 import Settings from "lucide-react-native/icons/settings";
+import Store from "lucide-react-native/icons/store";
 import { useState } from "react";
 import { Linking } from "react-native";
 import type { PurchasesPackage } from "react-native-purchases";
@@ -37,6 +43,7 @@ import {
 	computePurchaseNotice,
 	restorePurchasesNotices,
 	type StoreNotice,
+	storeComputeEntry,
 } from "@/hosted/billing/store/store-presentation";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
 import { useI18n } from "@/lib/i18n";
@@ -131,8 +138,18 @@ export function useComputePaywallPurchase() {
 	};
 }
 
-/** Agent → Compute on Included Basic: upgrade through the store Paywall. */
-export function StoreUpgradeAction({ deployment }: { deployment: DeploymentRead }) {
+/**
+ * Agent → Compute: the store Paywall for an existing Agent. Included Basic upgrades; an
+ * Agent that needs a subscription to start subscribes (`recoveryTarget` is `start_new`).
+ * The purchase targets this deployment, so hosted binds the store contract to it.
+ */
+export function StoreUpgradeAction({
+	deployment,
+	recoveryTarget,
+}: {
+	deployment: DeploymentRead;
+	recoveryTarget?: Pick<ComputeRecoveryTarget, "kind"> | null;
+}) {
 	const t = useI18n();
 	const scope = useAccountScope();
 	const gate = useComputePurchaseGate();
@@ -141,9 +158,12 @@ export function StoreUpgradeAction({ deployment }: { deployment: DeploymentRead 
 	const action = useAuthAction(scope);
 	const [notice, setNotice] = useState<StoreNotice | null>(null);
 	const subscription = deployment.commercial_display?.compute_subscription;
-	// Card/Wallet and store-funded Agents never see this entry; the server would refuse it.
-	if (computeFundingMode(deployment.current_plan_slug, subscription) !== "included_basic")
-		return null;
+	// Card/Wallet and store-funded Agents with a live subscription never see this entry.
+	const entry = storeComputeEntry(
+		computeFundingMode(deployment.current_plan_slug, subscription),
+		recoveryTarget,
+	);
+	if (!entry) return null;
 	if (!gate.available && !notice) return null;
 	const upgrade = () =>
 		action.run(async (owns) => {
@@ -167,23 +187,27 @@ export function StoreUpgradeAction({ deployment }: { deployment: DeploymentRead 
 			setNotice(next);
 			if (next?.refresh) await refresh();
 		});
+	const label = t(entry === "subscribe" ? "storeCompute.subscribeTitle" : "storeCompute.upgrade", {
+		store: gate.storeName,
+	});
 	return (
 		<AppView className="gap-2">
 			<Text className="text-muted-foreground">
-				{t("storeCompute.upgradeDescription", { store: gate.storeName })}
+				{t(
+					entry === "subscribe"
+						? "storeCompute.subscribeDescription"
+						: "storeCompute.upgradeDescription",
+					{ store: gate.storeName },
+				)}
 			</Text>
 			<Button
 				size="sm"
 				disabled={!gate.available || action.busy}
 				onPress={() => void upgrade()}
-				accessibilityLabel={t("storeCompute.upgrade", { store: gate.storeName })}
+				accessibilityLabel={label}
 			>
-				<Icon as={ArrowUp} />
-				<Text>
-					{action.busy
-						? t("storeCompute.purchasing")
-						: t("storeCompute.upgrade", { store: gate.storeName })}
-				</Text>
+				<Icon as={entry === "subscribe" ? Store : ArrowUp} />
+				<Text>{action.busy ? t("storeCompute.purchasing") : label}</Text>
 			</Button>
 			{notice ? <StoreNoticeText notice={notice} /> : null}
 		</AppView>

@@ -1,6 +1,12 @@
 "use client";
 
-import { formatShortDate } from "@clawdi/shared/view";
+import {
+	planChangeCopy as copy,
+	formatShortDate,
+	type PlanChangeManagementMode,
+	planChangeDialogStep,
+	planChangeManagementModes,
+} from "@clawdi/shared/view";
 import { CalendarClock, CreditCard, RefreshCw, TriangleAlert, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -59,46 +65,12 @@ const PLAN_ITEMS = [
 	{ value: "compute_performance", label: "Performance" },
 ] as const;
 
-type ManagementMode = "plan-billing" | "payment-source";
+export { planChangeDialogStep, planChangeManagementModes };
 
-export function planChangeManagementModes({
-	allowCombinedChange,
-	paymentSourceOnly,
-	hasUsablePlans,
-}: {
-	allowCombinedChange: boolean;
-	paymentSourceOnly: boolean;
-	hasUsablePlans: boolean;
-}): {
-	hasModePicker: boolean;
-	initialMode: ManagementMode;
-	planBillingAvailable: boolean;
-} {
-	const planBillingAvailable = allowCombinedChange || hasUsablePlans;
-	return {
-		hasModePicker: !allowCombinedChange && !paymentSourceOnly,
-		initialMode: paymentSourceOnly || !planBillingAvailable ? "payment-source" : "plan-billing",
-		planBillingAvailable,
-	};
-}
+type ManagementMode = PlanChangeManagementMode;
 
 function planSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
-}
-
-export function planChangeDialogStep({
-	hasAcceptedChange,
-	hasQuote,
-	paymentMethodRequired,
-}: {
-	hasAcceptedChange: boolean;
-	hasQuote: boolean;
-	paymentMethodRequired: boolean;
-}): "pending" | "payment_method_required" | "quote" | "selection" {
-	if (hasAcceptedChange) return "pending";
-	if (paymentMethodRequired) return "payment_method_required";
-	if (hasQuote) return "quote";
-	return "selection";
 }
 
 export function PaymentMethodRequiredRecovery({
@@ -114,15 +86,12 @@ export function PaymentMethodRequiredRecovery({
 		<div className="flex flex-col gap-4">
 			<Alert variant="destructive">
 				<CreditCard aria-hidden />
-				<AlertTitle>A card is required</AlertTitle>
-				<AlertDescription>
-					Opening billing settings does not complete this payment source change. After you return,
-					request a fresh quote and submit it again.
-				</AlertDescription>
+				<AlertTitle>{copy.cardRequiredTitle}</AlertTitle>
+				<AlertDescription>{copy.cardRequiredDescription}</AlertDescription>
 			</Alert>
 			<DialogFooter>
 				<Button variant="ghost" onClick={onClose} disabled={isManagingPaymentMethods}>
-					Close
+					{copy.close}
 				</Button>
 				<Button onClick={onManagePaymentMethods} disabled={isManagingPaymentMethods}>
 					{isManagingPaymentMethods ? (
@@ -130,7 +99,7 @@ export function PaymentMethodRequiredRecovery({
 					) : (
 						<CreditCard data-icon="inline-start" />
 					)}
-					Manage payment methods
+					{copy.managePaymentMethods}
 				</Button>
 			</DialogFooter>
 		</div>
@@ -144,26 +113,23 @@ export function FundingSourceSwitchSummary({
 	amountCents: number;
 	fundingSource: PlanChangeSelection["funding_source"];
 }) {
-	const paymentSourceLabel = fundingSource === "wallet" ? "Wallet" : "Card";
+	const paymentSourceLabel = fundingSource === "wallet" ? copy.wallet : copy.card;
 	return (
 		<>
 			<div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
 				<dl>
-					<dt className="text-xs text-muted-foreground">Payment source</dt>
+					<dt className="text-xs text-muted-foreground">{copy.paymentSource}</dt>
 					<dd className="font-medium">{paymentSourceLabel}</dd>
 				</dl>
 				<dl>
-					<dt className="text-xs text-muted-foreground">Due now</dt>
+					<dt className="text-xs text-muted-foreground">{copy.dueNow}</dt>
 					<dd className="font-medium tabular-nums">{formatCents(amountCents)}</dd>
 				</dl>
 			</div>
 			<Alert>
 				{fundingSource === "wallet" ? <WalletCards aria-hidden /> : <CreditCard aria-hidden />}
-				<AlertTitle>Future renewals use {paymentSourceLabel.toLowerCase()}</AlertTitle>
-				<AlertDescription>
-					Your plan, billing term, price, and renewal date stay the same. This change does not{" "}
-					{fundingSource === "wallet" ? "debit your wallet" : "charge your card"} today.
-				</AlertDescription>
+				<AlertTitle>{copy.futureRenewalsUse(fundingSource)}</AlertTitle>
+				<AlertDescription>{copy.fundingSwitchDescription(fundingSource)}</AlertDescription>
 			</Alert>
 		</>
 	);
@@ -347,21 +313,9 @@ export function PlanChangeDialog({
 		);
 	}
 
-	const quoteTitle = fundingSourceSwitch
-		? "Confirm payment source change"
-		: displayedQuote?.change_kind === "immediate_upgrade"
-			? "Confirm immediate upgrade"
-			: "Schedule downgrade";
-	const confirmLabel = fundingSourceSwitch
-		? "Update payment source"
-		: displayedQuote?.change_kind === "immediate_upgrade"
-			? "Confirm upgrade"
-			: "Schedule downgrade";
-	const busyLabel = fundingSourceSwitch
-		? "Updating payment source…"
-		: displayedQuote?.change_kind === "immediate_upgrade"
-			? "Confirming plan change…"
-			: "Scheduling downgrade…";
+	const quoteTitle = copy.quoteTitle(displayedQuote);
+	const confirmLabel = copy.confirmLabel(displayedQuote);
+	const busyLabel = copy.busyLabel(displayedQuote);
 	const blocksClose = isQuoting || (isConfirming && !hasAcceptedChange);
 	function requestOpenChange(nextOpen: boolean) {
 		if (blocksClose) return;
@@ -389,33 +343,33 @@ export function PlanChangeDialog({
 				<DialogHeader>
 					<DialogTitle>
 						{step === "pending"
-							? "Check subscription change status"
+							? copy.pendingTitle
 							: step === "payment_method_required"
-								? "Add a card to continue"
+								? copy.cardRequiredStepTitle
 								: step === "quote"
 									? quoteTitle
 									: paymentSourceOnly
-										? "Change payment source"
+										? copy.changePaymentSourceTitle
 										: hasManagementModes
-											? "Manage compute subscription"
-											: "Change compute subscription"}
+											? copy.manageTitle
+											: copy.changeTitle}
 					</DialogTitle>
 					<DialogDescription>
 						{step === "pending"
-							? "This subscription change was already accepted. Checking its status will not submit another request or charge."
+							? copy.pendingDescription
 							: step === "payment_method_required"
-								? "Add or choose a card in secure billing settings, then return and request a new quote."
+								? copy.cardRequiredStepDescription
 								: step === "quote" && displayedQuote
 									? fundingSourceSwitch
-										? `No payment is due now. Future renewals will use ${quoteFundingSource === "wallet" ? "wallet" : "card"}.`
+										? copy.fundingSwitchQuoteDescription(quoteFundingSource)
 										: displayedQuote.change_kind === "immediate_upgrade"
-											? "The quoted proration is charged now. The new plan applies after payment is confirmed."
-											: `The current plan remains active until ${formatShortDate(displayedQuote.effective_at)}.`
+											? copy.upgradeQuoteDescription
+											: copy.downgradeQuoteDescription(formatShortDate(displayedQuote.effective_at))
 									: paymentSourceMode
-										? "Choose a new payment source. Your plan and billing term stay the same; eligibility is verified before the change is applied."
+										? copy.paymentSourceModeDescription
 										: allowCombinedChange
-											? "Choose a compute plan, billing term, and payment source, then review the exact price and timing."
-											: "Choose a compute plan and billing term. Your payment source stays the same."}
+											? copy.combinedSelectionDescription
+											: copy.planSelectionDescription}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -423,11 +377,8 @@ export function PlanChangeDialog({
 					<div className="flex flex-col gap-4">
 						<Alert>
 							<CalendarClock aria-hidden />
-							<AlertTitle>Still waiting for confirmation</AlertTitle>
-							<AlertDescription>
-								Don't submit another change. You can close this window and check again in a few
-								minutes. Contact support if it doesn't finish.
-							</AlertDescription>
+							<AlertTitle>{copy.stillWaitingTitle}</AlertTitle>
+							<AlertDescription>{copy.stillWaitingDescription}</AlertDescription>
 						</Alert>
 						<DialogFooter>
 							<Button
@@ -435,7 +386,7 @@ export function PlanChangeDialog({
 								onClick={() => requestOpenChange(false)}
 								disabled={blocksClose}
 							>
-								Close
+								{copy.close}
 							</Button>
 							<Button onClick={onCheckStatus} disabled={isConfirming}>
 								{isConfirming ? (
@@ -443,7 +394,7 @@ export function PlanChangeDialog({
 								) : (
 									<RefreshCw data-icon="inline-start" />
 								)}
-								{isConfirming ? "Checking status…" : "Check status"}
+								{isConfirming ? copy.checkingStatus : copy.checkStatus}
 							</Button>
 						</DialogFooter>
 					</div>
@@ -458,7 +409,7 @@ export function PlanChangeDialog({
 						<div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
 							<dl>
 								<dt className="text-xs text-muted-foreground">
-									{fundingSourceSwitch ? "Subscription" : "New subscription"}
+									{fundingSourceSwitch ? copy.subscription : copy.newSubscription}
 								</dt>
 								<dd className="font-medium">
 									{computeTierLabel(planSlug(displayedQuote.target_plan_slug))} ·{" "}
@@ -469,8 +420,8 @@ export function PlanChangeDialog({
 								<dl>
 									<dt className="text-xs text-muted-foreground">
 										{displayedQuote.change_kind === "immediate_upgrade"
-											? "Due now"
-											: "Effective date"}
+											? copy.dueNow
+											: copy.effectiveDate}
 									</dt>
 									<dd className="font-medium tabular-nums">
 										{displayedQuote.change_kind === "immediate_upgrade"
@@ -504,22 +455,19 @@ export function PlanChangeDialog({
 						{displayedQuote.change_kind === "scheduled_downgrade" ? (
 							<Alert>
 								<CalendarClock aria-hidden />
-								<AlertTitle>No charge today</AlertTitle>
-								<AlertDescription>
-									The downgrade is scheduled for the current period boundary. Your current plan and
-									resources remain active until then.
-								</AlertDescription>
+								<AlertTitle>{copy.noChargeTodayTitle}</AlertTitle>
+								<AlertDescription>{copy.noChargeTodayDescription}</AlertDescription>
 							</Alert>
 						) : null}
 						{walletInsufficient ? (
 							<Alert variant="destructive">
 								<TriangleAlert aria-hidden />
-								<AlertTitle>Not enough wallet balance</AlertTitle>
+								<AlertTitle>{copy.insufficientBalanceTitle}</AlertTitle>
 								<AlertDescription className="flex flex-col items-start gap-3">
-									<span>Top up the shortfall, then request a fresh price.</span>
+									<span>{copy.insufficientBalanceDescription}</span>
 									{onTopUp ? (
 										<Button type="button" size="sm" variant="outline" onClick={onTopUp}>
-											<WalletCards data-icon="inline-start" /> Top up wallet
+											<WalletCards data-icon="inline-start" /> {copy.topUp}
 										</Button>
 									) : null}
 								</AlertDescription>
@@ -528,20 +476,15 @@ export function PlanChangeDialog({
 						{walletQuoteMissingAmount ? (
 							<Alert variant="destructive">
 								<TriangleAlert aria-hidden />
-								<AlertTitle>Wallet quote is incomplete</AlertTitle>
-								<AlertDescription>
-									Request a fresh quote before confirming this plan change.
-								</AlertDescription>
+								<AlertTitle>{copy.walletQuoteIncompleteTitle}</AlertTitle>
+								<AlertDescription>{copy.walletQuoteIncompleteDescription}</AlertDescription>
 							</Alert>
 						) : null}
 						{invalidFundingSourceSwitchQuote ? (
 							<Alert variant="destructive">
 								<TriangleAlert aria-hidden />
-								<AlertTitle>Payment source quote is invalid</AlertTitle>
-								<AlertDescription>
-									A payment source-only change must keep the current plan and term, have $0 due now,
-									and apply to future renewals. Go back and request a fresh quote.
-								</AlertDescription>
+								<AlertTitle>{copy.invalidSwitchQuoteTitle}</AlertTitle>
+								<AlertDescription>{copy.invalidSwitchQuoteDescription}</AlertDescription>
 							</Alert>
 						) : null}
 						<DialogFooter>
@@ -550,7 +493,7 @@ export function PlanChangeDialog({
 								onClick={() => requestOpenChange(false)}
 								disabled={blocksClose}
 							>
-								Back
+								{copy.back}
 							</Button>
 							<Button
 								onClick={() => onConfirm(displayedQuote.operation_id)}
@@ -586,35 +529,35 @@ export function PlanChangeDialog({
 								variant="outline"
 								size="sm"
 								className="grid w-full grid-cols-2"
-								aria-label="Subscription management mode"
+								aria-label={copy.managementModeLabel}
 							>
 								<ToggleGroupItem
 									value="plan-billing"
 									className="min-w-0 px-2"
 									disabled={!managementModes.planBillingAvailable}
 								>
-									Plan &amp; billing
+									{copy.planAndBilling}
 								</ToggleGroupItem>
 								<ToggleGroupItem value="payment-source" className="min-w-0 px-2">
-									Payment source
+									{copy.paymentSource}
 								</ToggleGroupItem>
 							</ToggleGroup>
 						) : null}
 						{paymentSourceMode ? (
 							<div className="grid gap-3 border-y py-3 sm:grid-cols-2">
 								<dl>
-									<dt className="text-xs text-muted-foreground">Current plan</dt>
+									<dt className="text-xs text-muted-foreground">{copy.currentPlan}</dt>
 									<dd className="font-medium">{computeTierLabel(currentPlanSlug)}</dd>
 								</dl>
 								<dl>
-									<dt className="text-xs text-muted-foreground">Billing term</dt>
+									<dt className="text-xs text-muted-foreground">{copy.billingTerm}</dt>
 									<dd className="font-medium">{billingTermLabel(currentBillingTermMonths)}</dd>
 								</dl>
 							</div>
 						) : (
 							<div className="grid gap-4 sm:grid-cols-2">
 								<div className="flex flex-col gap-1.5">
-									<Label htmlFor="plan-change-tier">Compute plan</Label>
+									<Label htmlFor="plan-change-tier">{copy.computePlan}</Label>
 									<Select
 										items={PLAN_ITEMS}
 										value={selection.target_plan_slug}
@@ -635,7 +578,7 @@ export function PlanChangeDialog({
 									</Select>
 								</div>
 								<div className="flex flex-col gap-1.5">
-									<Label>Billing term</Label>
+									<Label>{copy.billingTerm}</Label>
 									<TermSwitcher
 										offers={offers}
 										value={selection.target_billing_term_months}
@@ -656,7 +599,7 @@ export function PlanChangeDialog({
 						)}
 						{allowCombinedChange || paymentSourceMode ? (
 							<div className="flex flex-col gap-1.5">
-								<Label id="plan-change-funding-label">Payment source</Label>
+								<Label id="plan-change-funding-label">{copy.paymentSource}</Label>
 								<ToggleGroup
 									value={[selection.funding_source]}
 									onValueChange={(value) => {
@@ -678,35 +621,37 @@ export function PlanChangeDialog({
 									aria-labelledby="plan-change-funding-label"
 								>
 									<ToggleGroupItem value="stripe">
-										<CreditCard data-icon="inline-start" /> Card
+										<CreditCard data-icon="inline-start" /> {copy.card}
 									</ToggleGroupItem>
 									<ToggleGroupItem value="wallet">
-										<WalletCards data-icon="inline-start" /> Wallet
+										<WalletCards data-icon="inline-start" /> {copy.wallet}
 									</ToggleGroupItem>
 								</ToggleGroup>
 							</div>
 						) : null}
 						{selection.funding_source === "wallet" && !walletReady ? (
 							<p className="text-sm text-muted-foreground" role="status">
-								Loading wallet balance…
+								{copy.loadingWalletBalance}
 							</p>
 						) : null}
 						{selectedOffer && !paymentSourceMode ? (
 							<p className="text-sm text-muted-foreground">
-								Listed recurring price {formatCents(selectedOffer.price_cents)}
-								{selectedOffer.billing_term_months === 1 ? "/month" : "/year"}
+								{copy.listedPrice(
+									formatCents(selectedOffer.price_cents),
+									selectedOffer.billing_term_months,
+								)}
 							</p>
 						) : null}
 						<DialogFooter>
 							<Button variant="ghost" onClick={() => requestOpenChange(false)} disabled={isQuoting}>
-								Cancel
+								{copy.cancel}
 							</Button>
 							<Button
 								onClick={() => onQuote(selection)}
 								disabled={isQuoting || noChange || !offerReady || !walletReady}
 							>
 								{isQuoting ? <Spinner data-icon="inline-start" /> : null}
-								Review change
+								{copy.reviewChange}
 							</Button>
 						</DialogFooter>
 					</div>

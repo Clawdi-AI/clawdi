@@ -74,6 +74,9 @@ for (const [name, allowed, fallback] of [
 	["subscription-actions", ["false", "true"], "false"],
 	["wallet-balance", ["default", "low"], "default"],
 	["subscription-history", ["false", "true"], "false"],
+	["existing-agent-subscription", ["false", "true"], "false"],
+	["checkout-response", ["normal", "lost-first"], "normal"],
+	["plan-change", ["complete", "pending"], "complete"],
 ] satisfies [string, string[], string][]) {
 	if (!allowed.includes(readFlag(name, fallback))) {
 		console.error(`Invalid --${name}; expected ${allowed.join("|")}`);
@@ -2053,6 +2056,70 @@ const deployments: DeploySchemas["V2HostedDeploymentReadResponse"][] = [
 	}),
 ] satisfies DeploySchemas["V2HostedDeploymentReadResponse"][];
 
+/**
+ * `--existing-agent-subscription true`: Ended Hermes, a stopped Agent whose Wallet
+ * subscription ended ("Subscribe to start"), and Stopped Hermes funded by card, so store
+ * builds show card rows with only the commands that never charge them.
+ */
+const ENDED_AGENT_ID = "4e2e5000-0009-4c00-8000-000000000009";
+if (readFlag("existing-agent-subscription", "false") === "true") {
+	const ended = hostedDeployment(
+		"hdep_ParityEnded",
+		ENDED_AGENT_ID,
+		"hermes",
+		"Ended Hermes",
+		false,
+	);
+	const status = ended.resource.status;
+	if (!status) throw new Error("Missing fixture deployment status");
+	ended.resource.spec.desired_lifecycle = "stopped";
+	ended.resource.spec.resources = { vcpu: 1, memory_mib: 2048, disk_gib: 20 };
+	status.summary_state = "stopped";
+	status.conditions = [
+		{
+			type: "Ready",
+			status: "False",
+			observedGeneration: 1,
+			reason: "RuntimeStopped",
+			message: "Fixture runtime observation",
+			lastTransitionTime: ago(2 * DAY),
+		},
+	];
+	ended.current_plan_slug = "compute_basic";
+	ended.upgrade_available = false;
+	ended.start_action = "subscribe";
+	ended.commercial_display = {
+		compute_subscription: {
+			status: "canceled",
+			funding_source: "wallet",
+			payment_state: "ok",
+			billing_term_months: 1,
+			price_cents: 1000,
+			currency: "usd",
+			cancel_at_period_end: false,
+			current_period_end: ago(2 * DAY),
+			recovery_action: "start_new",
+		},
+	};
+	deployments.push(ended);
+	hostedStateAgents.push({
+		...agents[2],
+		id: ENDED_AGENT_ID,
+		name: "Ended Hermes",
+		display_name: "Ended Hermes",
+		agent_type: "hermes",
+		machine_id: "machine-fixture-hdep_ParityEnded",
+		machine_name: "Clawdi Cloud",
+		sort_order: 9,
+		last_seen_at: null,
+		last_sync_at: null,
+		explicit_identity: true,
+	});
+	const card = deployments.find((item) => item.resource.id === "hdep_ParityStopped");
+	const cardSubscription = card?.commercial_display?.compute_subscription;
+	if (cardSubscription) cardSubscription.funding_source = "stripe";
+}
+
 const deploymentOperations = deployments.map(
 	(deployment) =>
 		({
@@ -2079,6 +2146,17 @@ const deploymentOperations = deployments.map(
 						}),
 		}) satisfies DeploySchemas["LongRunningOperation"],
 );
+
+function listStatus(
+	status: string | undefined,
+): DeploySchemas["V2ComputeSubscriptionListItem"]["status"] {
+	return status === "canceled" ||
+		status === "canceling" ||
+		status === "past_due" ||
+		status === "trialing"
+		? status
+		: "active";
+}
 
 /** `--subscription-history true`: an ended Wallet subscription whose Agent was deleted. */
 const endedSubscriptions: DeploySchemas["V2ComputeSubscriptionListItem"][] =
@@ -2120,12 +2198,20 @@ const computeSubscriptions = {
 								: `csub_${deployment.resource.id.slice(5)}`,
 					subscription_kind: index === 0 ? "included_basic" : "paid",
 					plan_slug: deployment.current_plan_slug,
-					funding_source: index === 0 ? null : "wallet",
-					status: deployment.resource.id === "hdep_ParityDunning" ? "past_due" : "active",
-					price_cents: index === 0 ? 0 : 2500,
+					funding_source:
+						index === 0
+							? null
+							: (deployment.commercial_display?.compute_subscription?.funding_source ?? "wallet"),
+					status: listStatus(deployment.commercial_display?.compute_subscription?.status),
+					price_cents:
+						index === 0
+							? 0
+							: (deployment.commercial_display?.compute_subscription?.price_cents ?? 2500),
 					currency: "usd",
 					billing_term_months: 1,
-					current_period_end: ago(-20 * DAY),
+					current_period_end:
+						deployment.commercial_display?.compute_subscription?.current_period_end ??
+						ago(-20 * DAY),
 					cancel_at_period_end:
 						deployment.commercial_display?.compute_subscription?.cancel_at_period_end ?? false,
 					deployment_id: deployment.resource.id,
@@ -2541,6 +2627,7 @@ const computeGetRoutes = {
 		};
 	},
 	"/v2/operations/{operation_id}": ({ params }) =>
+		readPlanChangeOperation(`operations/${params.operation_id}`) ??
 		deploymentOperations.find((item) => item.name === `operations/${params.operation_id}`) ??
 		notFound("Operation not found"),
 	"/v2/subscriptions": ({ url }) => ({
@@ -2706,6 +2793,7 @@ on("POST", "/v2/subscription/checkout", async ({ request }) => {
 		return replay.body === JSON.stringify(body)
 			? new Reply(202, replay.response)
 			: new Reply(409, { detail: { code: "idempotency_key_reused" } });
+	if (typeof body.upgrade_deployment_id === "string") return upgradeCheckout(body, key);
 	const config = body.deploy_config;
 	const selection = body.subscription_selection;
 	const quote = body.quote;
@@ -2824,6 +2912,390 @@ on("POST", "/v2/subscription/checkout", async ({ request }) => {
 	walletCheckouts.set(key, { body: JSON.stringify(body), response });
 	return new Reply(202, response);
 });
+
+/** Applies an active subscription to a deployment and its Compute row. */
+function applySubscription(
+	deployment: DeploySchemas["V2HostedDeploymentReadResponse"],
+	subscription: {
+		planSlug: "compute_basic" | "compute_performance";
+		billingTermMonths: 1 | 12;
+		fundingSource: "stripe" | "wallet";
+		priceCents: number;
+	},
+) {
+	const periodEnd = new Date(Date.now() + subscription.billingTermMonths * 30 * DAY).toISOString();
+	deployment.current_plan_slug = subscription.planSlug;
+	deployment.start_action = "start";
+	deployment.commercial_display = {
+		compute_subscription: {
+			status: "active",
+			funding_source: subscription.fundingSource,
+			payment_state: "ok",
+			billing_term_months: subscription.billingTermMonths,
+			price_cents: subscription.priceCents,
+			currency: "usd",
+			cancel_at_period_end: false,
+			current_period_end: periodEnd,
+			recovery_action: null,
+		},
+	};
+	const row = computeSubscriptions.items.find(
+		(item) => item.deployment_id === deployment.resource.id,
+	);
+	if (row)
+		Object.assign(row, {
+			plan_slug: subscription.planSlug,
+			billing_term_months: subscription.billingTermMonths,
+			funding_source: subscription.fundingSource,
+			price_cents: subscription.priceCents,
+			status: "active",
+			current_period_end: periodEnd,
+			cancel_at_period_end: false,
+			recovery_action: null,
+			pending_plan_slug: null,
+		});
+}
+
+/**
+ * Hosted's "Choose a paid subscription" for an existing Agent (`upgrade_deployment_id`):
+ * assign a reusable card/Wallet row, or debit a new Wallet subscription once per
+ * Idempotency-Key (clawdi-hosted #2518): the same key and body replay the activation, the
+ * same key with another body is an untyped conflict, and only a key without a dispatch
+ * gets the typed `wallet_quote_expired` (409) or `upgrade_target_unavailable` (400).
+ * `--checkout-response lost-first` commits the first Wallet debit and then answers 503,
+ * as if the response were lost; the Agent is projected only when Check status replays
+ * the original activation, so its entry stays reachable after a relaunch.
+ */
+const upgradeCheckouts = new Map<
+	string,
+	{
+		body: string;
+		response: DeploySchemas["V2SubscriptionActivationResponse"];
+		project: (() => void) | null;
+	}
+>();
+let lostCheckoutResponses = readFlag("checkout-response", "normal") === "lost-first" ? 1 : 0;
+function checkoutRefusal(status: 400 | 409, code: string, detail: string) {
+	return new Reply(status, {
+		type: `https://api.clawdi.ai/problems/deployments/${code}`,
+		title: "Wallet subscription request was not accepted",
+		status,
+		detail,
+		code,
+		phase: "admission",
+		retryable: false,
+	});
+}
+function upgradeCheckout(body: Record<string, unknown>, key: string) {
+	const deployment = deployments.find((item) => item.resource.id === body.upgrade_deployment_id);
+	if (!deployment) return notFound("Deployment not found");
+	const selection = body.subscription_selection;
+	const mode = typeof selection === "object" && selection ? Reflect.get(selection, "mode") : null;
+	const activation = (subscriptionId: string, debited: string | null) =>
+		({
+			flow_type: "subscription_activation",
+			funding_source: body.funding_source === "stripe" ? "stripe" : "wallet",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			subscription_id: subscriptionId,
+			invoice_id: null,
+			deployment_id: deployment.resource.id,
+			agent_id: deployment.agent_id,
+			deployment_name: deployment.resource.name,
+			metadata_generation: 1,
+			deploy_request_id: null,
+			debited_usd: debited,
+			balance_after_usd: wallet.balance_usd,
+			current_period_start: new Date().toISOString(),
+			current_period_end: new Date(Date.now() + 30 * DAY).toISOString(),
+			entitled_until: new Date(Date.now() + 30 * DAY).toISOString(),
+		}) satisfies DeploySchemas["V2SubscriptionActivationResponse"];
+	if (mode === "existing") {
+		const id =
+			typeof selection === "object" && selection ? Reflect.get(selection, "subscription_id") : null;
+		const index = reusableSubscriptions.items.findIndex((item) => item.subscription_id === id);
+		const row = reusableSubscriptions.items[index];
+		if (!row || (row.funding_source !== "stripe" && row.funding_source !== "wallet") || body.quote)
+			return new Reply(409, {
+				detail: { code: "reusable_subscription_unavailable", message: "Subscription unavailable" },
+			});
+		reusableSubscriptions.items.splice(index, 1);
+		applySubscription(deployment, {
+			planSlug: row.plan_slug,
+			billingTermMonths: row.billing_term_months,
+			fundingSource: row.funding_source,
+			priceCents: row.price_cents ?? 0,
+		});
+		return new Reply(202, activation(row.subscription_id, null));
+	}
+	const quote = body.quote;
+	if (body.funding_source !== "wallet" || mode !== "new" || typeof quote !== "object" || !quote)
+		return new Reply(400, { detail: "Only Wallet subscriptions are simulated" });
+	const replay = upgradeCheckouts.get(key);
+	if (replay) {
+		if (replay.body !== JSON.stringify(body))
+			return new Reply(409, {
+				detail: "Wallet subscription replay changed quote, plan, or target",
+			});
+		replay.project?.();
+		replay.project = null;
+		return new Reply(202, replay.response);
+	}
+	if (deployment.start_action !== "subscribe")
+		return checkoutRefusal(
+			400,
+			"upgrade_target_unavailable",
+			"This agent can't use a new subscription.",
+		);
+	const expiresAt = Reflect.get(quote, "expires_at");
+	if (typeof expiresAt !== "string" || Date.parse(expiresAt) <= Date.now())
+		return checkoutRefusal(
+			409,
+			"wallet_quote_expired",
+			"The wallet quote expired; request a fresh quote",
+		);
+	const planSlug =
+		body.plan_slug === "compute_performance" ? "compute_performance" : "compute_basic";
+	const term = body.billing_term_months === 12 ? 12 : 1;
+	const offer = computePlans
+		.find((plan) => plan.slug === planSlug)
+		?.offers.find((item) => item.billing_term_months === term);
+	if (!offer) return new Reply(400, { detail: "Plan offer unavailable" });
+	const debit = offer.price_cents / 100;
+	const balance = Number(wallet.balance_usd);
+	if (Number(Reflect.get(quote, "debit_amount_usd")) !== debit)
+		return new Reply(409, { detail: "The wallet quote changed; review a fresh quote" });
+	if (balance < debit)
+		return new Reply(402, {
+			detail: {
+				code: "insufficient_wallet_balance",
+				required_usd: debit.toFixed(2),
+				available_usd: wallet.balance_usd,
+				shortfall_usd: (debit - balance).toFixed(2),
+			},
+		});
+	wallet.balance_usd = (balance - debit).toFixed(2);
+	const project = () =>
+		applySubscription(deployment, {
+			planSlug,
+			billingTermMonths: term,
+			fundingSource: "wallet",
+			priceCents: offer.price_cents,
+		});
+	const response = activation(`csub_ParityResub${upgradeCheckouts.size + 1}`, debit.toFixed(2));
+	if (lostCheckoutResponses > 0) {
+		lostCheckoutResponses -= 1;
+		upgradeCheckouts.set(key, { body: JSON.stringify(body), response, project });
+		return new Reply(503, { detail: "Fixture lost the checkout response" });
+	}
+	project();
+	upgradeCheckouts.set(key, { body: JSON.stringify(body), response, project: null });
+	return new Reply(202, response);
+}
+
+/**
+ * Plan changes like hosted: a quote names its `operation_id`; acceptance with that
+ * Idempotency-Key creates (or replays) the operation; a worker applies the change. An
+ * upgrade debits the Wallet and completes after a few seconds, a downgrade is scheduled,
+ * and a payment-source switch completes. A Wallet → card switch needs a card the fixture
+ * never has (`payment_method_required`). `--plan-change pending` never finishes.
+ */
+type PlanQuote = DeploySchemas["V2ComputePlanChangeQuoteResponse"] & { deployment_id: string };
+const planQuotes = new Map<string, PlanQuote>();
+const planChangeOperations = new Map<
+	string,
+	{ operation: DeploySchemas["LongRunningOperation"]; settleAt: number; quote: PlanQuote }
+>();
+function offerPrice(planSlug: string, term: number) {
+	return (
+		computePlans
+			.find((plan) => plan.slug === planSlug)
+			?.offers.find((item) => item.billing_term_months === term)?.price_cents ?? null
+	);
+}
+on("POST", "/v2/subscription/plan/quote", async ({ request }) => {
+	const body = await bodyObject(request);
+	const deployment = deployments.find((item) => item.resource.id === body.deployment_id);
+	const subscription = deployment?.commercial_display?.compute_subscription;
+	if (!deployment || !subscription) return notFound("Deployment not found");
+	const currentPlan = deployment.current_plan_slug ?? "compute_basic";
+	const currentTerm = subscription.billing_term_months === 12 ? 12 : 1;
+	const currentFunding = subscription.funding_source === "wallet" ? "wallet" : "stripe";
+	const targetPlan =
+		body.target_plan_slug === "compute_performance" ? "compute_performance" : "compute_basic";
+	const targetTerm = body.target_billing_term_months === 12 ? 12 : 1;
+	const funding = body.funding_source === "stripe" ? "stripe" : "wallet";
+	const targetPrice = offerPrice(targetPlan, targetTerm);
+	if (targetPrice === null) return new Reply(400, { detail: "Plan offer unavailable" });
+	const included = subscription.funding_source == null;
+	const switching = !included && funding !== currentFunding;
+	if (switching && funding === "stripe")
+		return new Reply(409, {
+			detail: { code: "payment_method_required", message: "A card is required." },
+		});
+	const currentPrice = included ? 0 : (offerPrice(currentPlan, currentTerm) ?? 0);
+	const kind = switching
+		? "funding_source_switch"
+		: targetPrice / targetTerm > currentPrice / currentTerm || targetTerm > currentTerm
+			? "immediate_upgrade"
+			: "scheduled_downgrade";
+	const amountCents = kind === "immediate_upgrade" ? Math.max(targetPrice - currentPrice, 0) : 0;
+	const operationId = `plan-${planQuotes.size + 1}`;
+	const quote: PlanQuote = {
+		deployment_id: deployment.resource.id,
+		operation_id: operationId,
+		subscription_id: 7,
+		funding_source: switching ? funding : included ? funding : currentFunding,
+		current_plan_slug: currentPlan,
+		target_plan_slug: switching ? currentPlan : targetPlan,
+		current_billing_term_months: currentTerm,
+		target_billing_term_months: switching ? currentTerm : targetTerm,
+		change_kind: kind,
+		billing_effect:
+			kind === "funding_source_switch"
+				? "future_renewals"
+				: kind === "immediate_upgrade"
+					? "immediate_proration"
+					: "period_end",
+		status: "quoted",
+		effective_at:
+			kind === "scheduled_downgrade"
+				? (subscription.current_period_end ?? new Date(Date.now() + 20 * DAY).toISOString())
+				: new Date().toISOString(),
+		proration_date: new Date().toISOString(),
+		expires_at: new Date(Date.now() + 15 * MINUTE).toISOString(),
+		amount_cents: amountCents,
+		amount_usd:
+			kind === "immediate_upgrade" && (switching ? funding : currentFunding) === "wallet"
+				? (amountCents / 100).toFixed(2)
+				: kind === "immediate_upgrade" && included && funding === "wallet"
+					? (amountCents / 100).toFixed(2)
+					: null,
+		currency: "usd",
+	};
+	planQuotes.set(operationId, quote);
+	const { deployment_id: _deploymentId, ...response } = quote;
+	return response satisfies DeploySchemas["V2ComputePlanChangeQuoteResponse"];
+});
+function readPlanChangeOperation(name: string) {
+	const entry = planChangeOperations.get(name);
+	if (!entry) return null;
+	const { operation, quote } = entry;
+	const progress = operation.metadata.planChange;
+	if (!operation.done && progress && Date.now() >= entry.settleAt) {
+		const deployment = deployments.find((item) => item.resource.id === quote.deployment_id);
+		if (!deployment) throw new Error("Missing plan-change deployment");
+		const subscription = deployment.commercial_display?.compute_subscription;
+		const targetTerm = quote.target_billing_term_months;
+		if (quote.change_kind === "scheduled_downgrade") {
+			if (subscription) subscription.pending_plan_slug = quote.target_plan_slug;
+			const row = computeSubscriptions.items.find(
+				(item) => item.deployment_id === deployment.resource.id,
+			);
+			if (row) row.pending_plan_slug = quote.target_plan_slug;
+			progress.state = "scheduled";
+		} else {
+			if (quote.amount_usd)
+				wallet.balance_usd = (Number(wallet.balance_usd) - Number(quote.amount_usd)).toFixed(2);
+			applySubscription(deployment, {
+				planSlug:
+					quote.target_plan_slug === "compute_performance"
+						? "compute_performance"
+						: "compute_basic",
+				billingTermMonths: targetTerm,
+				fundingSource: quote.funding_source === "stripe" ? "stripe" : "wallet",
+				priceCents: offerPrice(quote.target_plan_slug, targetTerm) ?? 0,
+			});
+			progress.state = "complete";
+		}
+		Object.assign(operation, {
+			done: true,
+			response: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+				deployment: deployment.resource,
+			},
+		});
+		deployment.accepted_operation = undefined;
+	}
+	return operation;
+}
+on("POST", "/v2/subscription/plan/change", async ({ request }) => {
+	const body = await bodyObject(request);
+	const operationId = typeof body.operation_id === "string" ? body.operation_id : "";
+	if (request.headers.get("idempotency-key") !== operationId)
+		return new Reply(400, { detail: "Idempotency-Key must equal operation_id" });
+	const name = `operations/${operationId}`;
+	const existing = readPlanChangeOperation(name);
+	if (existing) return new Reply(202, existing);
+	const quote = planQuotes.get(operationId);
+	if (!quote) return notFound("Quote not found");
+	if (Date.parse(quote.expires_at) <= Date.now())
+		return new Reply(409, { detail: "The plan-change quote expired; request a fresh quote" });
+	const deployment = deployments.find((item) => item.resource.id === quote.deployment_id);
+	if (!deployment) return notFound("Deployment not found");
+	if (quote.amount_usd && Number(wallet.balance_usd) < Number(quote.amount_usd))
+		return new Reply(402, { detail: { code: "insufficient_wallet_balance" } });
+	const operation = {
+		name,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: deployment.resource.id,
+			verb: "plan_change",
+			targetGeneration: 2,
+			manifestETag: deployment.resource.metadata.manifestETag,
+			createTime: new Date().toISOString(),
+			updateTime: new Date().toISOString(),
+			planChange: {
+				"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+				operationId,
+				subscriptionId: quote.subscription_id,
+				fundingSource: quote.funding_source === "stripe" ? "stripe" : "wallet",
+				changeKind: quote.change_kind,
+				billingEffect: quote.billing_effect,
+				sourcePlanSlug: quote.current_plan_slug,
+				targetPlanSlug: quote.target_plan_slug,
+				targetBillingTermMonths: quote.target_billing_term_months,
+				state: quote.change_kind === "immediate_upgrade" ? "wallet_debit_pending" : "quoted",
+				effectiveAt: quote.effective_at,
+			},
+		},
+		done: false,
+	} satisfies DeploySchemas["LongRunningOperation"];
+	planChangeOperations.set(name, {
+		operation,
+		quote,
+		settleAt:
+			readFlag("plan-change", "complete") === "pending"
+				? Number.POSITIVE_INFINITY
+				: Date.now() + (quote.change_kind === "immediate_upgrade" ? 3_000 : 0),
+	});
+	deployment.accepted_operation = operation;
+	return new Reply(202, readPlanChangeOperation(name));
+});
+on("POST", "/v2/subscription/plan/cancel-scheduled-change", async ({ request }) => {
+	const body = await bodyObject(request);
+	const deployment = deployments.find((item) => item.resource.id === body.deployment_id);
+	const subscription = deployment?.commercial_display?.compute_subscription;
+	if (!deployment || !subscription) return notFound("Deployment not found");
+	subscription.pending_plan_slug = null;
+	const row = computeSubscriptions.items.find(
+		(item) => item.deployment_id === deployment.resource.id,
+	);
+	if (row) row.pending_plan_slug = null;
+	return {
+		status: subscription.status,
+		funding_source: subscription.funding_source,
+		billing_term_months: subscription.billing_term_months,
+		cancel_at_period_end: subscription.cancel_at_period_end,
+		current_period_end: subscription.current_period_end,
+		action_state: "removed",
+	} satisfies DeploySchemas["V2ComputeSubscriptionActionResponse"];
+});
+on("POST", "/v2/subscription/portal", () => ({
+	url: "https://billing.stripe.com/p/session/fixture",
+	portal_url: "https://billing.stripe.com/p/session/fixture",
+}));
 
 // ---------------------------------------------------------------------------
 // Routes: identity + settings

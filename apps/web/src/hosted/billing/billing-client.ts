@@ -8,21 +8,22 @@ import {
 	HOSTED_CHECKOUT_MAX_ATTEMPTS,
 	hostedCheckoutRetryDelayMs,
 	hostedCheckoutSends,
+	type ParsedPlanChangeOperation,
+	planChangeOperationOutcome,
 	projectHostedDeployRequest,
+	readPlanChangeOperation,
 	recordHostedCheckoutSends,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
-import { z } from "zod";
 import { isDeployApiConfigured } from "@/hosted/access/api";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
 	ComputeCancelScheduledPlanChangeRequest,
 	ComputeFixPaymentRequest,
-	ComputePlanChangeProgress,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
 	ComputePlanChangeResult,
@@ -288,43 +289,6 @@ function isTransientDeployRequestRead(error: unknown): boolean {
 	);
 }
 
-type ParsedPlanChangeProgress = Pick<
-	ComputePlanChangeProgress,
-	| "@type"
-	| "billingEffect"
-	| "changeKind"
-	| "effectiveAt"
-	| "fundingSource"
-	| "operationId"
-	| "sourcePlanSlug"
-	| "state"
-	| "subscriptionId"
-	| "targetBillingTermMonths"
-	| "targetPlanSlug"
->;
-
-type DeploymentOperationSuccessResponse = Extract<
-	NonNullable<DeploymentOperation["response"]>,
-	{ "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse" }
->;
-
-type ParsedPlanChangeResponse = Pick<DeploymentOperationSuccessResponse, "@type"> & {
-	deployment: Pick<DeploymentOperationSuccessResponse["deployment"], "id">;
-};
-
-type ParsedPlanChangeOperation = {
-	deploymentId: string;
-	done: boolean;
-	error: unknown;
-	name: string;
-	progress: ParsedPlanChangeProgress;
-	response: ParsedPlanChangeResponse | null | undefined;
-};
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
-}
-
 function invalidPlanChangeResponse(): BillingApiError {
 	return new BillingApiError(
 		502,
@@ -332,178 +296,44 @@ function invalidPlanChangeResponse(): BillingApiError {
 	);
 }
 
-const planChangeProgressSchema: z.ZodType<ParsedPlanChangeProgress> = z.object({
-	"@type": z.literal("type.googleapis.com/clawdi.v2.ComputePlanChangeProgress"),
-	operationId: z.string().min(1),
-	subscriptionId: z.number().int().positive(),
-	fundingSource: z.enum(["stripe", "wallet"]),
-	changeKind: z.enum(["immediate_upgrade", "scheduled_downgrade", "funding_source_switch"]),
-	billingEffect: z.enum(["immediate_proration", "period_end", "future_renewals"]),
-	sourcePlanSlug: z.string().trim().min(1),
-	targetPlanSlug: z.string().trim().min(1),
-	targetBillingTermMonths: z.union([z.literal(1), z.literal(12)]),
-	state: z.enum([
-		"quoted",
-		"wallet_debit_pending",
-		"wallet_debit_applied",
-		"stripe_update_pending",
-		"invoice_pending",
-		"settlement_pending",
-		"awaiting_payment",
-		"awaiting_projection",
-		"compensation_pending",
-		"reversal_pending",
-		"reconciliation_required",
-		"scheduled",
-		"complete",
-		"compensated",
-		"failed",
-		"terminated_paid_unapplied",
-	]),
-	effectiveAt: z.string().trim().min(1),
-});
-
-const planChangeOperationSchema = z.object({
-	name: z.string().min(1),
-	metadata: z.object({
-		deploymentId: z.string().min(1),
-		verb: z.literal("plan_change"),
-		planChange: planChangeProgressSchema,
-	}),
-	done: z.boolean(),
-	error: z.unknown().nullable().optional(),
-	response: z
-		.object({
-			"@type": z.literal("type.googleapis.com/clawdi.v2.DeploymentOperationResponse"),
-			deployment: z.object({ id: z.string().min(1) }),
-		})
-		.nullable()
-		.optional(),
-});
-
 function parsePlanChangeOperation(value: unknown): ParsedPlanChangeOperation {
-	const parsed = planChangeOperationSchema.safeParse(value);
-	if (!parsed.success) {
+	const operation = readPlanChangeOperation(value);
+	if (!operation) {
 		throw invalidPlanChangeResponse();
 	}
-	const operationId = operationIdFromName(parsed.data.name);
-	const progress = parsed.data.metadata.planChange;
-	if (progress.operationId !== operationId) throw invalidPlanChangeResponse();
-	return {
-		deploymentId: parsed.data.metadata.deploymentId,
-		name: parsed.data.name,
-		done: parsed.data.done,
-		progress,
-		error: parsed.data.error,
-		response: parsed.data.response,
-	};
-}
-
-function hasValidPlanChangeSemantics(progress: ParsedPlanChangeProgress): boolean {
-	if (
-		!progress.effectiveAt?.trim() ||
-		(progress.fundingSource !== "stripe" && progress.fundingSource !== "wallet")
-	) {
-		return false;
-	}
-	switch (progress.changeKind) {
-		case "immediate_upgrade":
-			return progress.billingEffect === "immediate_proration";
-		case "scheduled_downgrade":
-			return progress.billingEffect === "period_end";
-		case "funding_source_switch":
-			return (
-				progress.billingEffect === "future_renewals" &&
-				progress.sourcePlanSlug === progress.targetPlanSlug
-			);
-		default:
-			return false;
-	}
-}
-
-function planChangeTerminalError(
-	error: unknown,
-	operation: ParsedPlanChangeOperation,
-): BillingApiError {
-	if (isRecord(error) && Array.isArray(error.details)) {
-		const detail = error.details.find(
-			(item) =>
-				isRecord(item) && typeof item.status === "number" && typeof item.detail === "string",
-		);
-		if (
-			isRecord(detail) &&
-			typeof detail.status === "number" &&
-			typeof detail.detail === "string"
-		) {
-			return new PlanChangeTerminalError(
-				detail.status,
-				detail.detail,
-				{ detail },
-				operation.progress.changeKind,
-				operation.progress.fundingSource,
-				operation.name,
-			);
-		}
-	}
-	return new PlanChangeTerminalError(
-		409,
-		"The subscription change couldn't be completed. Review the details and try again.",
-		undefined,
-		operation.progress.changeKind,
-		operation.progress.fundingSource,
-		operation.name,
-	);
+	const operationId = operationIdFromName(operation.name);
+	if (operation.progress.operationId !== operationId) throw invalidPlanChangeResponse();
+	return operation;
 }
 
 function completedPlanChange(operation: ParsedPlanChangeOperation): ComputePlanChangeResult | null {
-	if (!hasValidPlanChangeSemantics(operation.progress)) {
-		throw invalidPlanChangeResponse();
-	}
-	if (!operation.done) {
-		if (
-			(operation.error !== undefined && operation.error !== null) ||
-			(operation.response !== undefined && operation.response !== null)
-		) {
+	const outcome = planChangeOperationOutcome(operation);
+	switch (outcome.kind) {
+		case "pending":
+			return null;
+		case "settled":
+			return outcome.result;
+		case "failed":
+			throw outcome.problem
+				? new PlanChangeTerminalError(
+						outcome.problem.status,
+						outcome.problem.detail,
+						{ detail: outcome.problem },
+						outcome.changeKind,
+						outcome.fundingSource,
+						outcome.operationName,
+					)
+				: new PlanChangeTerminalError(
+						409,
+						"The subscription change couldn't be completed. Review the details and try again.",
+						undefined,
+						outcome.changeKind,
+						outcome.fundingSource,
+						outcome.operationName,
+					);
+		default:
 			throw invalidPlanChangeResponse();
-		}
-		return null;
 	}
-	const hasError = operation.error !== undefined && operation.error !== null;
-	const hasResponse = operation.response !== undefined && operation.response !== null;
-	if (hasError === hasResponse) throw invalidPlanChangeResponse();
-	if (hasError) {
-		throw planChangeTerminalError(operation.error, operation);
-	}
-	if (operation.response?.deployment.id !== operation.deploymentId) {
-		throw invalidPlanChangeResponse();
-	}
-	if (
-		operation.progress.changeKind === "scheduled_downgrade" &&
-		operation.progress.state === "scheduled"
-	) {
-		return {
-			kind: "scheduled",
-			operationName: operation.name,
-			effectiveAt: operation.progress.effectiveAt,
-			changeKind: operation.progress.changeKind,
-			billingEffect: operation.progress.billingEffect,
-			fundingSource: operation.progress.fundingSource,
-		};
-	}
-	if (
-		operation.progress.changeKind !== "scheduled_downgrade" &&
-		operation.progress.state === "complete"
-	) {
-		return {
-			kind: "complete",
-			operationName: operation.name,
-			effectiveAt: operation.progress.effectiveAt,
-			changeKind: operation.progress.changeKind,
-			billingEffect: operation.progress.billingEffect,
-			fundingSource: operation.progress.fundingSource,
-		};
-	}
-	throw invalidPlanChangeResponse();
 }
 
 /**

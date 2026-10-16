@@ -409,6 +409,14 @@ export const en = {
 	connectors: connectorsEn,
 	billing: billingEn,
 	creation: creationEn,
+	/** Choose a paid subscription for an existing Agent: its saved Wallet request. */
+	subscriptionSheet: {
+		saved:
+			"This subscription request is saved on this device. Review the new quote and confirm again, or discard it.",
+		unconfirmed:
+			"We couldn't confirm this payment — check status before trying again. Checking won't charge you twice.",
+		discard: "Discard request",
+	},
 	store: storeEn,
 	storeCompute: storeComputeEn,
 	deployments: deploymentsEn,

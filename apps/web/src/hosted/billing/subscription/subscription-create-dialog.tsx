@@ -1,5 +1,6 @@
 "use client";
 
+import { subscriptionCreateCopy as copy } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { CreditCard, TriangleAlert, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -188,14 +189,14 @@ export function SubscriptionCreateDialog({
 	const walletInsufficient = walletShortfallUsd !== null;
 	const isPending = createSubscription.isPending;
 	const submitLabel = !hostedAccess.canCreateCloudAgents
-		? "Temporarily unavailable"
+		? copy.temporarilyUnavailable
 		: source?.mode === "existing"
-			? "Use subscription"
+			? copy.useSubscription
 			: fundingSource === "wallet" && walletDebit
-				? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from wallet`
+				? copy.payFromWallet(formatUsdExact(walletDebit.debitAmountUsd))
 				: fundingSource === "wallet"
-					? "Review wallet quote"
-					: "Continue to card checkout";
+					? copy.reviewWalletQuote
+					: copy.continueToCardCheckout;
 
 	useEffect(() => {
 		if (!open) return;
@@ -297,17 +298,18 @@ export function SubscriptionCreateDialog({
 			if (outcome.flowType === "subscription_activation") {
 				forgetIdempotencyAttempt("subscription-terminal-fallback", fingerprint);
 				createAttemptRef.current = null;
-				toast.success(
-					source.mode === "existing" ? "Subscription assigned" : "Subscription started",
-					{
-						description:
-							source.mode === "existing"
-								? "The agent's plan updates after the existing subscription is assigned."
-								: fundingSource === "wallet"
-									? `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(selectedOffer?.price_cents ?? 0)} was paid from your wallet. The agent's plan updates after payment is projected.`
-									: "Card payment was confirmed. The agent's plan updates after payment is projected.",
-					},
-				);
+				toast.success(source.mode === "existing" ? copy.assignedTitle : copy.startedTitle, {
+					description:
+						source.mode === "existing"
+							? copy.assignedDescription
+							: fundingSource === "wallet"
+								? copy.walletPaidDescription(
+										walletDebit
+											? formatUsdExact(walletDebit.debitAmountUsd)
+											: formatCents(selectedOffer?.price_cents ?? 0),
+									)
+								: copy.cardPaidDescription,
+				});
 				onOpenChange(false);
 				return;
 			}
@@ -320,8 +322,8 @@ export function SubscriptionCreateDialog({
 				window.location.href = checkoutUrl;
 				return;
 			}
-			toast.error("Couldn’t start checkout", {
-				description: "No checkout URL was returned. Try again.",
+			toast.error(copy.checkoutFailedTitle, {
+				description: copy.checkoutUrlMissing,
 			});
 		} catch (error) {
 			if (isReusableSubscriptionUnavailableError(error)) {
@@ -338,8 +340,8 @@ export function SubscriptionCreateDialog({
 					refetchType: "none",
 				});
 				await reusableSubscriptions.refetch();
-				toast.error("Subscription no longer available", {
-					description: "Choose a current reusable subscription or start a new one.",
+				toast.error(copy.unavailableTitle, {
+					description: copy.unavailableDescription,
 				});
 				return;
 			}
@@ -358,7 +360,7 @@ export function SubscriptionCreateDialog({
 				);
 				createAttemptRef.current = null;
 			}
-			toast.error("Couldn’t start subscription", {
+			toast.error(copy.failedTitle, {
 				description: normalizeBillingError(error),
 			});
 		}
@@ -392,10 +394,8 @@ export function SubscriptionCreateDialog({
 					showCloseButton={!isPending}
 				>
 					<DialogHeader>
-						<DialogTitle>Choose a paid subscription</DialogTitle>
-						<DialogDescription>
-							Assign an available subscription or start a new one for this agent.
-						</DialogDescription>
+						<DialogTitle>{copy.title}</DialogTitle>
+						<DialogDescription>{copy.description}</DialogDescription>
 					</DialogHeader>
 
 					<div className="flex min-w-0 flex-col gap-5">
@@ -413,7 +413,7 @@ export function SubscriptionCreateDialog({
 							<>
 								<div className="grid gap-4 sm:grid-cols-2">
 									<div className="flex flex-col gap-1.5">
-										<Label htmlFor="subscription-create-plan">Compute plan</Label>
+										<Label htmlFor="subscription-create-plan">{copy.computePlan}</Label>
 										<Select items={PLAN_ITEMS} value={planSlug} onValueChange={updatePlan}>
 											<SelectTrigger id="subscription-create-plan" className="w-full">
 												<SelectValue />
@@ -434,7 +434,7 @@ export function SubscriptionCreateDialog({
 										</Select>
 									</div>
 									<div className="flex flex-col gap-1.5">
-										<Label>Billing term</Label>
+										<Label>{copy.billingTerm}</Label>
 										<div>
 											<TermSwitcher
 												offers={offers}
@@ -446,7 +446,7 @@ export function SubscriptionCreateDialog({
 								</div>
 
 								<div className="flex flex-col gap-1.5">
-									<Label id="subscription-create-funding-label">Funding source</Label>
+									<Label id="subscription-create-funding-label">{copy.fundingSource}</Label>
 									<ToggleGroup
 										value={[fundingSource]}
 										onValueChange={(value) => {
@@ -458,10 +458,10 @@ export function SubscriptionCreateDialog({
 										aria-labelledby="subscription-create-funding-label"
 									>
 										<ToggleGroupItem value="stripe">
-											<CreditCard data-icon="inline-start" /> Card
+											<CreditCard data-icon="inline-start" /> {copy.card}
 										</ToggleGroupItem>
 										<ToggleGroupItem value="wallet">
-											<WalletCards data-icon="inline-start" /> Wallet
+											<WalletCards data-icon="inline-start" /> {copy.wallet}
 										</ToggleGroupItem>
 									</ToggleGroup>
 								</div>
@@ -484,24 +484,22 @@ export function SubscriptionCreateDialog({
 								) : (
 									<Alert variant="destructive">
 										<TriangleAlert aria-hidden />
-										<AlertTitle>Plan price unavailable</AlertTitle>
-										<AlertDescription>
-											Refresh the page before starting a paid subscription.
-										</AlertDescription>
+										<AlertTitle>{copy.priceUnavailableTitle}</AlertTitle>
+										<AlertDescription>{copy.priceUnavailableDescription}</AlertDescription>
 									</Alert>
 								)}
 
 								{fundingSource === "wallet" ? (
 									createQuote.isFetching && !createQuote.data ? (
 										<p className="text-sm text-muted-foreground" role="status">
-											Getting the exact wallet debit…
+											{copy.gettingQuote}
 										</p>
 									) : blockingCreateQuoteError ? (
 										<ApiErrorPanel
 											normalizer={billingErrorNormalizer}
 											error={blockingCreateQuoteError}
 											onRetry={() => void createQuote.refetch()}
-											title="Couldn’t get subscription quote"
+											title={copy.quoteFailed}
 										/>
 									) : walletDebit ? (
 										<div className="flex flex-col gap-3">
@@ -513,9 +511,9 @@ export function SubscriptionCreateDialog({
 											{walletInsufficient ? (
 												<Alert variant="destructive">
 													<TriangleAlert aria-hidden />
-													<AlertTitle>Not enough wallet balance</AlertTitle>
+													<AlertTitle>{copy.insufficientBalanceTitle}</AlertTitle>
 													<AlertDescription className="flex flex-col items-start gap-3">
-														<span>Top up the shortfall, then review a fresh wallet quote.</span>
+														<span>{copy.insufficientBalanceDescription}</span>
 														<Button
 															type="button"
 															size="sm"
@@ -523,7 +521,7 @@ export function SubscriptionCreateDialog({
 															disabled={!wallet.data}
 															onClick={() => walletTopUp.show(walletShortfallUsd)}
 														>
-															<WalletCards data-icon="inline-start" /> Top up wallet
+															<WalletCards data-icon="inline-start" /> {copy.topUp}
 														</Button>
 													</AlertDescription>
 												</Alert>
@@ -541,7 +539,7 @@ export function SubscriptionCreateDialog({
 								disabled={isPending}
 								onClick={() => onOpenChange(false)}
 							>
-								Cancel
+								{copy.cancel}
 							</Button>
 							<Button
 								type="button"

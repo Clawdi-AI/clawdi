@@ -24,6 +24,8 @@ export {
 	type ComputeWalletTransactionsQuery,
 	createHostedComputeClient,
 	type HostedComputeClient,
+	type PlanChangeOutcome,
+	type PlanChangePollOptions,
 } from "./compute-client";
 export * from "./compute-recovery";
 export {
@@ -60,6 +62,7 @@ export * from "./deploy-wizard";
 export * from "./deployment-mutation-client";
 export { extractApiDetail } from "./error-detail";
 export * from "./hosted-ai-binding";
+export * from "./plan-change";
 export * from "./project-scope";
 export { createProjectSharingClient, type ProjectSharingClient } from "./project-sharing-client";
 export * from "./project-sharing-state";

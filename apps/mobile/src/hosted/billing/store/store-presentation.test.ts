@@ -6,6 +6,7 @@ import {
 	purchaseErrorNotice,
 	purchaseOutcomeNotice,
 	restorePurchasesNotices,
+	storeComputeEntry,
 } from "./store-presentation";
 
 describe("purchase notices", () => {
@@ -169,5 +170,16 @@ describe("restore purchases", () => {
 				(notice) => notice.key,
 			),
 		).toEqual(["storeCompute.restorePending"]);
+	});
+});
+
+describe("store purchase entry for an existing Agent", () => {
+	test("an Agent that needs a subscription to start subscribes; Included Basic upgrades", () => {
+		const startNew = { kind: "start_new" } as const;
+		expect(storeComputeEntry("subscription", startNew)).toBe("subscribe");
+		expect(storeComputeEntry(null, startNew)).toBe("subscribe");
+		expect(storeComputeEntry("included_basic", null)).toBe("upgrade");
+		expect(storeComputeEntry("subscription", null)).toBeNull();
+		expect(storeComputeEntry("subscription", { kind: "top_up" })).toBeNull();
 	});
 });

@@ -83,6 +83,9 @@ Additional CLI flags:
 | `--subscription-actions` | `false` | `true` adds hosted's per-row `actions` (cancel or resume) to paid subscriptions and answers `POST /v2/subscription/{cancel,resume}`. |
 | `--wallet-balance` | `default` | `low` starts the Wallet at $1.50, below the low-balance threshold, for the low-balance banner and warning. |
 | `--subscription-history` | `false` | `true` adds an ended Wallet subscription of a deleted Agent (`csub_ParityEnded`), so Compute shows Show history (1). |
+| `--existing-agent-subscription` | `false` | `true` adds Ended Hermes (`hdep_ParityEnded`, agent `4e2e5000-0009-4c00-8000-000000000009`): stopped, its Wallet subscription ended, `start_action: subscribe`. Stopped Hermes becomes card-funded. Exercises "Choose a paid subscription" and store-build card rows. |
+| `--checkout-response` | `normal` | `lost-first` commits the first existing-Agent Wallet checkout, then answers 503 as if the response were lost; Check status replays the original activation. |
+| `--plan-change` | `complete` | `pending` keeps accepted plan changes running, for the "Check status" state. |
 
 Settings PATCH persists the provider and configured/unconfigured toggle.
 Submitted Mem0 values are discarded; GET returns only a fixed synthetic marker
@@ -105,6 +108,8 @@ in `mem0_api_key` (plus `mem0_api_key_configured`) for the existing clients.
 | Connected Agent disconnect | Additional agent `c1a0de00-0005-4c00-8000-000000000005`, Disconnect Demo, has `explicit_identity=false` and no hosted ownership. This enables the existing mobile disconnect gate; Web's platform capability remains unchanged. |
 | Session shares | Default session has snapshot `5a4e0000-0001-4000-8000-000000000001` and live permission `9ea10000-0001-4000-8000-000000000001`. Share dialog/inventory can render existing links and revoke/replace them. Public detail/message endpoints serve both share kinds. |
 | New Wallet subscription | `POST /v2/subscription/quote` quotes the Wallet debit from the 42.50 fixture balance. `POST /v2/subscription/checkout` with `subscription_selection.mode = "new"` and that quote debits once per `Idempotency-Key`/`deploy_request_id`, creates `hdep_ParityWallet<N>` (starting, ready after about 15 s) and returns its activation; the same key and body replay it. A changed or expired quote answers 409, a shortfall 402 `insufficient_wallet_balance`. Deploy wizard → New paid subscription → Wallet balance. |
+| Existing-Agent subscription | `POST /v2/subscription/checkout` with `upgrade_deployment_id` assigns a reusable card/Wallet row (`mode = "existing"`) or debits a new Wallet subscription once per `Idempotency-Key`, like hosted #2518: the same key and body replay the activation, the same key with another body is an untyped 409. A key without a dispatch gets the typed `application/problem+json` refusals `wallet_quote_expired` (409) or `upgrade_target_unavailable` (400). Agent → Subscribe to start. |
+| Plan change | `POST /v2/subscription/plan/quote` returns an upgrade (Wallet proration), a scheduled downgrade or a payment-source switch; a Wallet → card switch answers 409 `payment_method_required`. `POST /v2/subscription/plan/change` with `Idempotency-Key = operation_id` creates or replays `operations/<operation_id>`; upgrades complete after about 3 s. `cancel-scheduled-change` clears the pending plan; `portal` returns a fixed Stripe-style URL. Agent → Settings → Compute plan → Manage/Upgrade. |
 | GitHub Workspace Skill | `POST /v2/deployments/{id}/workspace-skills` checks `If-Match` and `Idempotency-Key`, then answers a `requested` install without persisting it. Agent → Skills → Install skill → GitHub. |
 
 Fixed WhatsApp session IDs are

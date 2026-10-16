@@ -733,3 +733,295 @@ describe("Hosted compute client", () => {
 		release(Response.json(operation, { status: 202 }));
 	});
 });
+
+describe("existing-Agent subscriptions and plan changes", () => {
+	const activation = {
+		flow_type: "subscription_activation",
+		funding_source: "wallet",
+		action_url: null,
+		checkout_url: "",
+		client_secret: null,
+		subscription_id: "csub_w",
+		invoice_id: null,
+		deployment_id: "hdep_stopped",
+		deploy_request_id: null,
+	};
+	const walletQuote = {
+		plan_slug: "compute_basic",
+		billing_term_months: 1,
+		funding_source: "wallet",
+		currency: "usd",
+		term_price_cents: 1000,
+		preview_invoice_id: null,
+		expires_at: "2026-10-16T00:15:00Z",
+		debit_amount_usd: "10.00",
+		balance_before_usd: "30.00",
+		balance_after_usd: "20.00",
+	} as const;
+	const wallet = {
+		planSlug: "compute_basic",
+		billingTermMonths: 1,
+		fundingSource: "wallet",
+	} as const;
+
+	test("activates an existing Agent with upgrade_deployment_id, the quote only for a new Wallet subscription", async () => {
+		const sent: { url: string; key: string | null; body: unknown }[] = [];
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				sent.push({
+					url: request.url,
+					key: request.headers.get("Idempotency-Key"),
+					body: await request.json(),
+				});
+				return Response.json(activation);
+			},
+		});
+		await client.activateDeploymentSubscription({
+			deploymentId: "hdep_stopped",
+			subscriptionSelection: { mode: "new" },
+			selection: wallet,
+			idempotencyKey: "key-new",
+			quote: walletQuote,
+		});
+		await client.activateDeploymentSubscription({
+			deploymentId: "hdep_stopped",
+			subscriptionSelection: { mode: "existing", subscription_id: "csub_card" },
+			selection: {
+				planSlug: "compute_performance",
+				billingTermMonths: 12,
+				fundingSource: "stripe",
+			},
+			idempotencyKey: "key-existing",
+			quote: null,
+		});
+		expect(sent).toEqual([
+			{
+				url: "https://compute.example.test/v2/subscription/checkout",
+				key: "key-new",
+				body: {
+					plan_slug: "compute_basic",
+					billing_term_months: 1,
+					funding_source: "wallet",
+					ui_mode: "custom",
+					subscription_selection: { mode: "new" },
+					upgrade_deployment_id: "hdep_stopped",
+					quote: walletQuote,
+				},
+			},
+			{
+				url: "https://compute.example.test/v2/subscription/checkout",
+				key: "key-existing",
+				body: {
+					plan_slug: "compute_performance",
+					billing_term_months: 12,
+					funding_source: "stripe",
+					ui_mode: "custom",
+					subscription_selection: { mode: "existing", subscription_id: "csub_card" },
+					upgrade_deployment_id: "hdep_stopped",
+				},
+			},
+		]);
+		// A new subscription is Wallet-funded with its matching quote; assignment never carries one.
+		for (const request of [
+			{ subscriptionSelection: { mode: "new" }, selection: wallet, quote: null },
+			{
+				subscriptionSelection: { mode: "new" },
+				selection: { ...wallet, fundingSource: "stripe" },
+				quote: walletQuote,
+			},
+			{
+				subscriptionSelection: { mode: "new" },
+				selection: { ...wallet, billingTermMonths: 12 },
+				quote: walletQuote,
+			},
+			{
+				subscriptionSelection: { mode: "existing", subscription_id: "csub_card" },
+				selection: wallet,
+				quote: walletQuote,
+			},
+		] as const)
+			await expect(
+				client.activateDeploymentSubscription({
+					deploymentId: "hdep_stopped",
+					idempotencyKey: "key-invalid",
+					...request,
+				}),
+			).rejects.toBeInstanceOf(ApiClientError);
+		expect(sent).toHaveLength(2);
+	});
+
+	test("repeats the same key and body across the three-send retry", async () => {
+		const sent: string[] = [];
+		const replies = [
+			() => {
+				throw new TypeError("Network request failed");
+			},
+			() => Response.json({ detail: "busy" }, { status: 409, headers: { "Retry-After": "0" } }),
+			() => Response.json(activation),
+		];
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				sent.push(`${request.headers.get("Idempotency-Key")} ${await request.text()}`);
+				const reply = replies[sent.length - 1];
+				if (!reply) throw new Error("Unexpected send");
+				return reply();
+			},
+		});
+		await expect(
+			client.activateDeploymentSubscription({
+				deploymentId: "hdep_stopped",
+				subscriptionSelection: { mode: "new" },
+				selection: wallet,
+				idempotencyKey: "key-retry",
+				quote: walletQuote,
+			}),
+		).resolves.toMatchObject({ deployment_id: "hdep_stopped" });
+		expect(sent).toHaveLength(3);
+		expect(new Set(sent).size).toBe(1);
+	});
+
+	test("reads hosted's typed checkout refusals (LifecycleProblemDetails) without retrying", async () => {
+		let sends = 0;
+		const problem = (status: number, code: string) =>
+			Response.json(
+				{
+					type: `https://api.clawdi.ai/problems/deployments/${code}`,
+					title: "Wallet subscription request was not accepted",
+					status,
+					detail: "The wallet quote expired; request a fresh quote",
+					code,
+					phase: "admission",
+					retryable: false,
+				},
+				{
+					status,
+					headers: {
+						"Content-Type": "application/problem+json",
+						Date: "Fri, 16 Oct 2026 00:30:00 GMT",
+					},
+				},
+			);
+		for (const [status, code] of [
+			[409, "wallet_quote_expired"],
+			[400, "upgrade_target_unavailable"],
+		] as const) {
+			const client = createHostedComputeClient({
+				...options,
+				fetch: async () => {
+					sends++;
+					return problem(status, code);
+				},
+			});
+			const error = await client
+				.activateDeploymentSubscription({
+					deploymentId: "hdep_stopped",
+					subscriptionSelection: { mode: "new" },
+					selection: wallet,
+					idempotencyKey: "key-refused",
+					quote: walletQuote,
+				})
+				.catch((caught: unknown) => caught);
+			expect(error).toMatchObject({
+				status,
+				code,
+				serverDateMs: Date.parse("2026-10-16T00:30:00Z"),
+			});
+			expect(hostedCheckoutSends(error)).toBe(1);
+		}
+		expect(sends).toBe(2);
+	});
+
+	const planOperation = (state: string, done: boolean) => ({
+		name: "operations/op-1",
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_stopped",
+			verb: "plan_change",
+			planChange: {
+				"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+				operationId: "op-1",
+				subscriptionId: 7,
+				fundingSource: "wallet",
+				changeKind: "immediate_upgrade",
+				billingEffect: "immediate_proration",
+				sourcePlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				targetBillingTermMonths: 1,
+				state,
+				effectiveAt: "2026-10-16T00:00:00Z",
+			},
+		},
+		done,
+		response: done
+			? {
+					"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+					deployment: { id: "hdep_stopped" },
+				}
+			: null,
+	});
+
+	test("accepts a plan change keyed by the quote's operation_id, then polls it to a result", async () => {
+		const sent: { method: string; url: string; key: string | null }[] = [];
+		const replies = [
+			planOperation("wallet_debit_pending", false),
+			planOperation("awaiting_projection", false),
+			planOperation("complete", true),
+		];
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				sent.push({
+					method: request.method,
+					url: request.url,
+					key: request.headers.get("Idempotency-Key"),
+				});
+				return Response.json(replies.shift(), { status: request.method === "POST" ? 202 : 200 });
+			},
+		});
+		const accepted: string[] = [];
+		const outcome = await client.changePlan(
+			{ operation_id: "op-1" },
+			{ onAccepted: (name) => accepted.push(name), sleep: async () => undefined },
+		);
+		expect(outcome).toMatchObject({ kind: "settled", result: { kind: "complete" } });
+		expect(accepted).toEqual(["operations/op-1"]);
+		expect(sent).toEqual([
+			{
+				method: "POST",
+				url: "https://compute.example.test/v2/subscription/plan/change",
+				key: "op-1",
+			},
+			{ method: "GET", url: "https://compute.example.test/v2/operations/op-1", key: null },
+			{ method: "GET", url: "https://compute.example.test/v2/operations/op-1", key: null },
+		]);
+	});
+
+	test("reports a still-running change at the poll limit and re-reads it only on Check status", async () => {
+		let reads = 0;
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async (request) => {
+				if (request.method === "GET") reads++;
+				return Response.json(planOperation("awaiting_payment", false));
+			},
+		});
+		await expect(
+			client.changePlan({ operation_id: "op-1" }, { pollLimit: 2, sleep: async () => undefined }),
+		).resolves.toEqual({ kind: "pending", operationName: "operations/op-1" });
+		expect(reads).toBe(2);
+		await expect(client.checkPlanChange("operations/op-1")).resolves.toEqual({
+			kind: "pending",
+			operationName: "operations/op-1",
+		});
+		expect(reads).toBe(3);
+		// Another operation's reading, or one for another quote, is never accepted.
+		await expect(client.checkPlanChange("operations/op-2")).rejects.toBeInstanceOf(
+			ApiClientResponseError,
+		);
+		await expect(client.changePlan({ operation_id: "op-2" })).rejects.toBeInstanceOf(
+			ApiClientResponseError,
+		);
+	});
+});
