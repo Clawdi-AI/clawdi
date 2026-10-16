@@ -68,10 +68,10 @@ validated env module. If you bypass that Bun config, seed
 ## Route admission
 
 Protected routes use Clerk request middleware and a Start server function calling
-`auth()` for both SSR and SPA admission, with `cache-control: no-store`. This adds
-a server round trip to protected navigation. Clerk's default SPA navigation is
-unchanged: its session cookie is updated before navigation, while its client
-session resource is published after navigation completes.
+`auth()` for both SSR and SPA admission, with `cache-control: private, no-store`.
+This adds a server round trip to protected navigation. Clerk's default SPA
+navigation is unchanged: its session cookie is updated before navigation, while
+its client session resource is published after navigation completes.
 
 In hosted browser builds, signed-out visits to the bare `/` entry redirect to
 the root of `VITE_CLAWDI_MARKETING_URL` (`https://clawdi.ai/` by default). The
