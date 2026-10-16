@@ -7,6 +7,7 @@ import {
 	agentSectionHref,
 	appComputeActions,
 	billingErrorCopy,
+	computeFundingSource,
 	computeSubscriptionAssignment,
 	computeSubscriptionCancellationCopy,
 	computeSubscriptionCancellationSuccessCopy,
@@ -379,7 +380,8 @@ export function SubscriptionRow({
 	});
 	const appActions = appComputeActions(
 		!surfaces.cardBilling,
-		{ fundingSource: item.funding_source },
+		// The normalized source: legacy null funding with a price is a card row.
+		{ fundingSource: computeFundingSource(item.plan_slug, item) },
 		actions,
 	);
 	// Web's start-new link exists only for a bound row with a known Agent.

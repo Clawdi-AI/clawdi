@@ -62,14 +62,18 @@ import {
 import { useReusableSubscriptions } from "@/hosted/billing/hooks";
 import { StoreUpgradeAction } from "@/hosted/billing/store/compute-store";
 import {
-	isDefinitiveRefusal,
-	releaseSubscriptionAttempt,
 	type SubscriptionAttempt,
 	subscriptionAttemptControls,
 	subscriptionAttemptErrorCopy,
 	subscriptionAttemptNeedsQuote,
 	subscriptionAttemptStorageKey,
 } from "@/hosted/billing/subscription/subscription-attempt";
+import {
+	confirmSubscriptionAttempt,
+	replaySubscriptionAttempt,
+	type SubscriptionAttemptDeps,
+	type SubscriptionAttemptStep,
+} from "@/hosted/billing/subscription/subscription-attempt-controller";
 import {
 	type ComputePlanSlug,
 	FundingField,
@@ -302,85 +306,51 @@ function SubscriptionCreateSheet({
 		}
 		setMessage(subscriptionAttemptErrorCopy(saved, error));
 	};
-	/** The journaled request, replayed byte for byte on every send. */
-	const activate = (saved: SubscriptionAttempt, owns: () => boolean) =>
-		read((s) => {
-			if (!compute || !current(owns)) throw new Error("Subscription action expired");
-			return compute.activateDeploymentSubscription(
-				{
-					deploymentId: saved.deploymentId,
-					subscriptionSelection: { mode: "new" },
-					selection: saved.selection,
-					idempotencyKey: saved.idempotencyKey,
-					quote: saved.walletQuote,
-				},
-				s,
-			);
-		});
-	const settle = async (sent: SubscriptionAttempt, owns: () => boolean) => {
-		if (storageKey) {
-			try {
-				await subscriptionAttempts.clearAttempt(storageKey, sent, () => current(owns));
-			} catch {
-				// Hosted holds the activation; reopening the sheet replays and clears it.
-			}
+	/** The money ordering lives in the controller; the sheet sends and shows. */
+	const attemptDeps = (key: string, owns: () => boolean): SubscriptionAttemptDeps => ({
+		journal: subscriptionAttempts,
+		storageKey: key,
+		isCurrent: () => current(owns),
+		onRecord: setAttempt,
+		// The journaled request, sent byte for byte on every send and replay.
+		activate: (saved) =>
+			read((s) => {
+				if (!compute || !current(owns)) throw new Error("Subscription action expired");
+				return compute.activateDeploymentSubscription(
+					{
+						deploymentId: saved.deploymentId,
+						subscriptionSelection: { mode: "new" },
+						selection: saved.selection,
+						idempotencyKey: saved.idempotencyKey,
+						quote: saved.walletQuote,
+					},
+					s,
+				);
+			}),
+	});
+	const showStep = async (step: SubscriptionAttemptStep) => {
+		if (step.kind === "stale") return;
+		if (step.kind === "failed") {
+			setAttempt(step.attempt);
+			showSendError(step.attempt, step.error);
+			return;
 		}
-		if (!current(owns)) return;
+		if (step.kind === "released") {
+			setAttempt(step.attempt);
+			setMessage({ title: t("creation.walletNotFound") });
+			return;
+		}
 		setAttempt(null);
 		setWalletFundingRefused(false);
-		const debit = hostedSubscriptionQuoteWalletDebit(sent.walletQuote);
+		const debit = hostedSubscriptionQuoteWalletDebit(step.attempt.walletQuote);
 		await finish({
 			title: copy.startedTitle,
 			description: copy.walletPaidDescription(
 				debit
 					? formatUsdExact(debit.debitAmountUsd)
-					: formatCents(sent.walletQuote.term_price_cents),
+					: formatCents(step.attempt.walletQuote.term_price_cents),
 			),
 		});
-	};
-	/** Persist uncertainty before the POST, then send. */
-	const send = async (saved: SubscriptionAttempt, owns: () => boolean) => {
-		if (!storageKey) return;
-		const uncertain: SubscriptionAttempt = { ...saved, submission: "uncertain" };
-		await subscriptionAttempts.replaceAttempt(storageKey, saved, uncertain, () => current(owns));
-		if (!current(owns)) return;
-		setAttempt(uncertain);
-		try {
-			await activate(uncertain, owns);
-		} catch (error) {
-			if (!current(owns)) return;
-			// A refused first send of this quote charged nothing; the request returns to it.
-			if (isDefinitiveRefusal(saved, error)) {
-				await subscriptionAttempts.replaceAttempt(storageKey, uncertain, saved, () =>
-					current(owns),
-				);
-				if (!current(owns)) return;
-				setAttempt(saved);
-			}
-			showSendError(saved, error);
-			return;
-		}
-		await settle(uncertain, owns);
-	};
-	/** Check status replays the identical request; hosted returns the original activation. */
-	const replay = async (saved: SubscriptionAttempt, owns: () => boolean) => {
-		if (!storageKey) return;
-		try {
-			await activate(saved, owns);
-		} catch (error) {
-			if (!current(owns)) return;
-			const released = releaseSubscriptionAttempt(saved, error);
-			if (released) {
-				await subscriptionAttempts.replaceAttempt(storageKey, saved, released, () => current(owns));
-				if (!current(owns)) return;
-				setAttempt(released);
-				setMessage({ title: t("creation.walletNotFound") });
-				return;
-			}
-			showSendError(saved, error);
-			return;
-		}
-		await settle(saved, owns);
 	};
 	const assign = async (row: ReusableSubscription, owns: () => boolean) => {
 		const selection = existingSubscriptionCreateSelection(row);
@@ -424,7 +394,8 @@ function SubscriptionCreateSheet({
 			if (!compute || !source || !current(owns)) return;
 			setMessage(null);
 			if (attempt?.submission === "uncertain") {
-				await replay(attempt, owns);
+				if (storageKey)
+					await showStep(await replaySubscriptionAttempt(attempt, attemptDeps(storageKey, owns)));
 				return;
 			}
 			// Refresh access at the explicit mutation boundary, like Web's recheck.
@@ -460,26 +431,21 @@ function SubscriptionCreateSheet({
 				return;
 			}
 			setWalletFundingRefused(false);
-			let saved: SubscriptionAttempt;
-			if (attempt) {
-				// The same key keeps hosted's single dispatch for this request.
-				saved = { ...attempt, walletQuote: fresh };
-				await subscriptionAttempts.replaceAttempt(storageKey, attempt, saved, () => current(owns));
-			} else {
-				saved = {
-					version: 1,
-					submission: "prepared",
-					deploymentId,
-					idempotencyKey: Crypto.randomUUID(),
-					selection: walletSelection,
-					uiMode: "custom",
-					walletQuote: fresh,
-				};
-				await subscriptionAttempts.saveAttempt(storageKey, saved, () => current(owns));
-			}
-			if (!current(owns)) return;
-			setAttempt(saved);
-			await send(saved, owns);
+			// A saved request keeps its key, hosted's replay identity, under the fresh quote.
+			const next: SubscriptionAttempt = attempt
+				? { ...attempt, walletQuote: fresh }
+				: {
+						version: 1,
+						submission: "prepared",
+						deploymentId,
+						idempotencyKey: Crypto.randomUUID(),
+						selection: walletSelection,
+						uiMode: "custom",
+						walletQuote: fresh,
+					};
+			await showStep(
+				await confirmSubscriptionAttempt(attempt, next, attemptDeps(storageKey, owns)),
+			);
 		});
 	const discard = () =>
 		action.run(async (owns) => {

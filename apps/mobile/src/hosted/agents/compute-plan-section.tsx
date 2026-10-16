@@ -89,7 +89,8 @@ export function ComputePlanSection({ deployment }: { deployment: DeploymentRead 
 		: null;
 	const actions = appComputeActions(
 		!surfaces.cardBilling,
-		{ fundingSource: subscription?.funding_source },
+		// The normalized source: legacy null funding with a price is a card row.
+		{ fundingSource },
 		model.actions,
 	);
 	const managementReason = model.management.unavailableReason;

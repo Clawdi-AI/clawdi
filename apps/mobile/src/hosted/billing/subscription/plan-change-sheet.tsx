@@ -8,6 +8,7 @@ import {
 } from "@clawdi/shared/api";
 import {
 	agentSectionHref,
+	appComputeActions,
 	billingErrorCopy,
 	billingTermLabel,
 	computeTierLabel,
@@ -34,6 +35,7 @@ import {
 	planChangeTargetFingerprint,
 	selectPlanChangeFundingSource,
 	selectPlanChangeOffer,
+	shouldResetUnacceptedPlanChangeQuote,
 	subscriptionCreateCopy,
 	visiblePlanChangeOperationName,
 	walletBalanceAfterDebit,
@@ -46,7 +48,7 @@ import CreditCard from "lucide-react-native/icons/credit-card";
 import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import WalletCards from "lucide-react-native/icons/wallet-cards";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert as NativeAlert } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert } from "@/components/ui/alert";
@@ -113,7 +115,18 @@ export default function PlanChangeRoute() {
 	const agentId = routeParam(useLocalSearchParams<{ id?: string | string[] }>().id);
 	const agent = useAgentDeployment(agentId);
 	const model = useComputePlanModel(agent.deployment);
-	const target = model.management.target;
+	const surfaces = useStoreSurfaces();
+	// The same policy that shows Upgrade/Manage/Check status: a store build never opens
+	// this sheet for a card row, even by route.
+	const offered = appComputeActions(
+		!surfaces.cardBilling,
+		{ fundingSource: model.fundingSource },
+		model.actions,
+	).some(
+		(action) =>
+			action.kind === "manage" || action.kind === "upgrade" || action.kind === "check_change",
+	);
+	const target = offered ? model.management.target : null;
 	if (!agentId || !agent.deployment)
 		return (
 			<SheetPage
@@ -195,16 +208,30 @@ function PlanChangeSheet({
 	});
 	// Without card funding, the only payment-source change left would be to the current one.
 	const hasModePicker = modes.hasModePicker && cardAllowed;
-	const initialSelection = defaultPlanChangeSelection(
-		target.currentPlanSlug,
-		target.currentBillingTermMonths,
-		cardAllowed ? target.currentFundingSource : "wallet",
-		target.initialPlanSlug,
+	const initialSelection = useMemo(
+		() =>
+			defaultPlanChangeSelection(
+				target.currentPlanSlug,
+				target.currentBillingTermMonths,
+				cardAllowed ? target.currentFundingSource : "wallet",
+				target.initialPlanSlug,
+			),
+		[
+			cardAllowed,
+			target.currentBillingTermMonths,
+			target.currentFundingSource,
+			target.currentPlanSlug,
+			target.initialPlanSlug,
+		],
 	);
 	const [selection, setSelection] = useState<PlanChangeSelection>(initialSelection);
-	const [managementMode, setManagementMode] = useState<PlanChangeManagementMode>(
-		hasModePicker || !cardAllowed ? modes.initialMode : "plan-billing",
-	);
+	const [managementMode, setManagementMode] = useState<PlanChangeManagementMode>(modes.initialMode);
+	// Like Web's dialog, re-sync once the plan catalog arrives: a cold open starts without
+	// plans, which alone would leave only the payment-source mode.
+	useEffect(() => {
+		setSelection(initialSelection);
+		setManagementMode(modes.initialMode);
+	}, [initialSelection, modes.initialMode]);
 	const paymentSourceMode = target.paymentSourceOnly || managementMode === "payment-source";
 	const step = planChangeDialogStep({
 		hasAcceptedChange: pendingOperationName !== null,
@@ -333,6 +360,20 @@ function PlanChangeSheet({
 		});
 	};
 	const handleError = (error: unknown) => {
+		// Like Web: hosted refused a not-yet-accepted change because its quote expired.
+		if (
+			error instanceof ApiClientError &&
+			shouldResetUnacceptedPlanChangeQuote({
+				status: error.status,
+				detail: error.detail,
+				terminal: false,
+			})
+		) {
+			setQuote(null);
+			setPaymentMethodRequired(false);
+			setMessage({ title: copy.quoteStaleTitle, description: copy.quoteStaleDescription });
+			return;
+		}
 		if (fundingRefusal(error instanceof ApiClientError ? error.code : null)) return;
 		setMessage({ title: copy.updateFailed, description: billingErrorCopy(requestFailure(error)) });
 	};

@@ -43,9 +43,10 @@ export function visiblePlanChangeOperationName(
 
 /**
  * Hosted refused an unaccepted change because its quote expired (an untyped 409 whose
- * detail names the expiry). Accepted changes that failed later are never this case.
+ * detail names the expiry): drop the quote and request a fresh one. Accepted changes that
+ * failed later are never this case.
  */
-export function isExpiredPlanChangeQuoteFailure({
+export function shouldResetUnacceptedPlanChangeQuote({
 	status,
 	detail,
 	terminal,

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { shouldResetUnacceptedPlanChangeQuote } from "../view/plan-change";
 import { createHostedComputeClient } from "./compute-client";
 import type { components } from "./deploy.generated";
 import type { HostedDeployRequest, HostedDeploySubscriptionQuoteRequest } from "./deploy-wizard";
@@ -996,6 +997,27 @@ describe("existing-Agent subscriptions and plan changes", () => {
 			{ method: "GET", url: "https://compute.example.test/v2/operations/op-1", key: null },
 			{ method: "GET", url: "https://compute.example.test/v2/operations/op-1", key: null },
 		]);
+	});
+
+	test("keeps hosted's untyped expired-quote detail so the quote is reset like Web", async () => {
+		const client = createHostedComputeClient({
+			...options,
+			fetch: async () =>
+				Response.json({ detail: "Plan change quote has expired" }, { status: 409 }),
+		});
+		const error = await client
+			.changePlan({ operation_id: "op-1" })
+			.catch((caught: unknown) => caught);
+		expect(error).toBeInstanceOf(ApiClientError);
+		if (!(error instanceof ApiClientError)) return;
+		expect(error.detail).toBe("Plan change quote has expired");
+		expect(
+			shouldResetUnacceptedPlanChangeQuote({
+				status: error.status,
+				detail: error.detail,
+				terminal: false,
+			}),
+		).toBe(true);
 	});
 
 	test("reports a still-running change at the poll limit and re-reads it only on Check status", async () => {

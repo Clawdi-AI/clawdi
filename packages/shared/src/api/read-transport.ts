@@ -15,6 +15,11 @@ export class ApiClientError extends Error {
 		public readonly retryAfterMs: number | null = null,
 		/** The server's clock from the response `Date` header (RFC 9110 §6.6.1), when sent. */
 		public readonly serverDateMs: number | null = null,
+		/**
+		 * The server's `detail` text, kept only to classify untyped refusals (such as an
+		 * expired plan-change quote). User-facing copy never shows it.
+		 */
+		public readonly detail: string | null = null,
 	) {
 		super(`API request failed (${status})`);
 		this.name = "ApiClientError";
@@ -72,6 +77,15 @@ function serverDateMs(response: Response): number | null {
 	if (!header || !HTTP_DATE_PATTERN.test(header)) return null;
 	const date = Date.parse(header);
 	return Number.isFinite(date) ? date : null;
+}
+
+function errorDetail(value: unknown): string | null {
+	return typeof value === "object" &&
+		value !== null &&
+		"detail" in value &&
+		typeof value.detail === "string"
+		? value.detail
+		: null;
 }
 
 function errorCode(value: unknown): string | null {
@@ -189,6 +203,7 @@ export function createReadTransport(options: ApiClientOptions) {
 					errorCode(result.error),
 					retryAfterMs(result.response),
 					serverDateMs(result.response),
+					errorDetail(result.error),
 				);
 			}
 			if (result.data === undefined) throw new ApiClientResponseError();

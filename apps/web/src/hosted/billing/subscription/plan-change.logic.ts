@@ -1,7 +1,7 @@
 import {
-	isExpiredPlanChangeQuoteFailure,
 	isWalletToCardSwitchSelection,
 	type PlanChangeSelection,
+	shouldResetUnacceptedPlanChangeQuote as shouldResetQuoteFailure,
 } from "@clawdi/shared/view";
 import type { ComputePlanSlug } from "@/hosted/billing/contracts";
 import {
@@ -34,7 +34,7 @@ export {
 export function shouldResetUnacceptedPlanChangeQuote(error: unknown): boolean {
 	return (
 		error instanceof BillingApiError &&
-		isExpiredPlanChangeQuoteFailure({
+		shouldResetQuoteFailure({
 			status: error.status,
 			detail: error.detail,
 			terminal: error instanceof PlanChangeTerminalError,
