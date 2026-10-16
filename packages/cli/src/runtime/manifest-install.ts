@@ -178,6 +178,10 @@ function runtimeInstallerEnv(runtime: string, install: RuntimeInstall): NodeJS.P
 	env.REQUESTS_CA_BUNDLE = SYSTEM_CA_BUNDLE;
 	env.CURL_CA_BUNDLE = SYSTEM_CA_BUNDLE;
 	env.GIT_SSL_CAINFO = SYSTEM_CA_BUNDLE;
+	// Upstream installers lack Git stall detection; abort GitHub transfers below 100 KiB/s
+	// for 60 seconds so the installer's own retry opens a fresh connection.
+	env.GIT_HTTP_LOW_SPEED_LIMIT ??= "102400";
+	env.GIT_HTTP_LOW_SPEED_TIME ??= "60";
 	env.NPM_CONFIG_CAFILE = SYSTEM_CA_BUNDLE;
 	env.npm_config_cafile = SYSTEM_CA_BUNDLE;
 	return env;

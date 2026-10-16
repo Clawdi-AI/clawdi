@@ -23,6 +23,12 @@ database migration, CI, and implementation details.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi
   name while keeping Cloud and Connected Agent distinctions intact.
 
+### CLI
+
+- **Runtime installation:** Git transfers below 100 KiB/s for 60 seconds now
+  abort so upstream installers can retry on a fresh connection. Existing
+  `GIT_HTTP_LOW_SPEED_LIMIT` and `GIT_HTTP_LOW_SPEED_TIME` overrides are preserved.
+
 ### Analytics
 
 The unmerged product-metrics change now extends the existing PostHog and
