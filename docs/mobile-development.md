@@ -722,8 +722,10 @@ range. Native scroll-to-match recovery is bounded and cancelled on retirement;
 real-device variable-height scroll behavior remains an acceptance gate. Tool output
 is expandable plain text, never executable, and long payloads reveal incrementally.
 
-Native deployment detail now supports confirmed start/stop/restart, dashboard-access
-reset, language/timezone updates and AI provider/model binding. Web/native share
+Native deployment detail supports start/stop/restart (Restart and Stop confirm,
+as on Web), language/timezone updates and AI provider/model binding. There is no
+dashboard-access reset entry (Web has none); a journaled reset from an older build
+still replays and settles. Web/native share
 lifecycle availability and strong ETag validation; binding construction reuses the
 existing Shared provider rules. Mutations pin the displayed version, original body
 and idempotency key, never automatically refresh/retry writes, and reject unrelated
@@ -739,7 +741,7 @@ can be discarded. Corrupt/unreadable storage disables new runtime changes; an ex
 reload recovers concurrent-screen conflicts. No real lifecycle or provider mutation
 was used for validation; device persistence/kill-and-relaunch acceptance remains open.
 
-An accepted operation also exposes an explicit cancellation request. Shared Web/native
+A stuck operation offers Web's "Cancel this change", without a confirmation. Shared Web/native
 eligibility excludes completed operations and image/runtime-context migrations; unknown
 verbs fail closed. The native key is deterministic for the account and immutable operation
 name, so explicit retries after a restart target the same cancellation. A successful empty
@@ -860,9 +862,9 @@ capabilities and WebSocket targets outside the configured compute origin/path.
 Alternative public terminal origins require an explicit allowlist contract rather
 than silently trusting an arbitrary response URL. Native callers must pass their
 account-generation read signal and never persist/log/cache credential URLs.
-The mobile route issues credentials only after explicit Connect, offers native
-disconnect/reconnect and Esc/Tab/Ctrl+C controls, and destroys the DOM view on
-blur/background/account change. DOM callbacks recheck foreground/account leases;
+The mobile route connects on open like Web, offers Web's Retry/Reconnect and
+Esc/Tab/Ctrl+C controls, and destroys the DOM view on blur/background/account
+change, connecting again on return. DOM callbacks recheck foreground/account leases;
 short-lived URLs never enter persistent/query storage. Native-module bridging is
 disabled; external links and OSC hyperlinks are disabled in the native terminal.
 Each connection attempt has a 20-second deadline covering credential acquisition
@@ -877,13 +879,13 @@ real xterm input, resize, two handshakes with fresh credentials after 1013, and
 socket cleanup. This is not an iOS/Android WebView, keyboard, real server or native
 compile acceptance test; those gates remain open. DOM view background teardown
 does not stop compute or guarantee remote command termination.
-Deployment detail now offers an explicitly confirmed system-browser dashboard
-entry. It refreshes the deployment and refuses a changed published endpoint.
+Deployment detail opens the dashboard in the system browser on the first tap, like
+Web. It refreshes the deployment and refuses a changed published endpoint.
 OpenClaw credential issuance uses generated POST, `If-Match`, and the same exact
 endpoint/resource-version validator as Web. The capability remains local to the
 action, never Router parameters, query cache or persistent app storage. Issuance
-is not automatically retried; browser storage/access may survive app sign-out.
-Use runtime access reset to revoke access when needed.
+is not automatically retried; browser storage/access may survive app sign-out,
+the same exposure Web's new-window open has.
 
 Hermes opens its own OIDC login route so the browser creates PKCE/state cookies;
 the existing server redirects a missing browser grant through Web's protected

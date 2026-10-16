@@ -20,6 +20,7 @@ export * from "./channel-linking";
 export {
 	type ComputeReusableSubscriptionsQuery,
 	type ComputeSubscriptionsQuery,
+	type ComputeSubscriptionTarget,
 	type ComputeWalletTransactionsQuery,
 	createHostedComputeClient,
 	type HostedComputeClient,

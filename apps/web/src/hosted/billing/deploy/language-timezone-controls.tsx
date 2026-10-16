@@ -8,6 +8,7 @@ import {
 	resolvedTimezone,
 	supportedTimezones,
 	timezoneLabel,
+	timezonePickerCopy,
 } from "@clawdi/shared/view";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { useState } from "react";
@@ -89,15 +90,15 @@ export function TimezoneCombobox({
 					}
 				>
 					<span className={cn("truncate", !value && "text-muted-foreground")}>
-						{value ? timezoneLabel(value) : "Select a timezone"}
+						{value ? timezoneLabel(value) : timezonePickerCopy.placeholder}
 					</span>
 					<ChevronsUpDown className="opacity-50" />
 				</PopoverTrigger>
 				<PopoverContent align="start" className="w-(--anchor-width) p-0">
-					<Command label="Timezone options">
-						<CommandInput placeholder="Search timezones…" />
+					<Command label={timezonePickerCopy.options}>
+						<CommandInput placeholder={timezonePickerCopy.search} />
 						<CommandList className="max-h-72">
-							<CommandEmpty>No timezone found.</CommandEmpty>
+							<CommandEmpty>{timezonePickerCopy.empty}</CommandEmpty>
 							<CommandGroup>
 								{options.map((timezone) => {
 									const selected = value === timezone;

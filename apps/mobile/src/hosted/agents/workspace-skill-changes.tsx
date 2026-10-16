@@ -27,7 +27,7 @@ import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 /**
  * Journaled hosted workspace Skill changes for one deployment: the install sheet and the Agent
- * Skills list share the saved attempt, its Retry/Discard recovery and the confirmation.
+ * Skills list share the saved attempt, its Retry/Discard recovery and the uninstall confirmation.
  */
 export function useWorkspaceSkillChanges(
 	id: string,
@@ -171,16 +171,10 @@ export function useWorkspaceSkillChanges(
 			mutation,
 			randomUUID(),
 		);
-		// Failures close the confirmation: the journaled attempt's Retry/Discard controls drive
-		// recovery, since repeating a fresh save over that journal can only fail.
-		if (mutation.action === "install")
-			confirm(
-				t("workspaceSkills.confirm"),
-				t("workspaceSkills.warning"),
-				agentSurfaceCopy.installSkill,
-				() => submit(attempt, true),
-				false,
-			);
+		// Like Web, only uninstall confirms. Failures close the confirmation: the journaled
+		// attempt's Retry/Discard controls drive recovery, since repeating a fresh save over that
+		// journal can only fail.
+		if (mutation.action === "install") void submit(attempt, true);
 		else
 			confirm(
 				t("agentExtensions.uninstallTitle", { name: name ?? mutation.skillKey }),

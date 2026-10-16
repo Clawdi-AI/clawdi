@@ -1,5 +1,6 @@
 import {
 	AGENT_AVATAR_MIME_TYPES,
+	MAX_AGENT_AVATAR_BYTES,
 	normalizeAgentDisplayName,
 	syncAgentNameDraft,
 } from "@clawdi/shared/api";
@@ -11,17 +12,21 @@ import {
 	agentSectionCopy,
 	agentSurfaceCopy,
 	agentTypeLabel,
+	agentProfileSettingsCopy as copy,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
 import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
+import CircleAlert from "lucide-react-native/icons/circle-alert";
 import RotateCcw from "lucide-react-native/icons/rotate-ccw";
 import Save from "lucide-react-native/icons/save";
 import SettingsIcon from "lucide-react-native/icons/settings";
 import Trash2 from "lucide-react-native/icons/trash";
 import Upload from "lucide-react-native/icons/upload";
 import { useEffect, useRef, useState } from "react";
+import { RefreshControl } from "react-native";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { AgentSourceBadge } from "@/components/dashboard/agent-section-source-badge";
 import { useAgentConfirmation } from "@/components/dashboard/confirmation";
@@ -30,9 +35,10 @@ import { AgentSectionNavigation } from "@/components/dashboard/navigation";
 import { PageHeader } from "@/components/page-header";
 import { ResourceError } from "@/components/resource-error";
 import { SettingsSection } from "@/components/settings-section";
+import { Alert } from "@/components/ui/alert";
 import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
-import { Text as AppText } from "@/components/ui/text";
+import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
@@ -70,6 +76,12 @@ function Settings({ id }: { id: string | undefined }) {
 	const agent = useCloudAgent(id);
 	const [draft, setDraft] = useState("");
 	const [disconnected, setDisconnected] = useState(false);
+	const [refreshing, setRefreshing] = useState(false);
+	// Web's per-action failure titles; avatar file checks fail before any request.
+	const [failedTitle, setFailedTitle] = useState<string>(copy.updateFailed);
+	const [avatarIssue, setAvatarIssue] = useState<{ title: string; description: string } | null>(
+		null,
+	);
 	const previous = useRef<string | undefined>(undefined);
 	const confirmation = useRef(0);
 	const serverName = agent.data?.display_name ?? "";
@@ -144,6 +156,7 @@ function Settings({ id }: { id: string | undefined }) {
 					scope.signal.aborted
 				)
 					return;
+				setFailedTitle(copy.disconnectFailed);
 				return action.runOrThrow(async (current) => {
 					const latest = await ownership.refetch();
 					if (latest.isError || !latest.data || !current() || !visible())
@@ -175,9 +188,26 @@ function Settings({ id }: { id: string | undefined }) {
 			},
 		});
 	};
+	const run = (title: string, task: (current: () => boolean) => Promise<void>) => {
+		setFailedTitle(title);
+		setAvatarIssue(null);
+		void action.run(task);
+	};
+	// Web's settings poll; here pull-to-refresh rereads the agent and its deployment.
+	const refresh = async () => {
+		setRefreshing(true);
+		try {
+			await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+		} finally {
+			setRefreshing(false);
+		}
+	};
 	return (
 		<SafeAreaScreen>
-			<AppScrollView contentContainerClassName={`${webView(agentsIndexClasses.page)} pt-5 pb-6`}>
+			<AppScrollView
+				contentContainerClassName={`${webView(agentsIndexClasses.page)} pt-5 pb-6`}
+				refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
+			>
 				{id ? <AgentSectionNavigation agentId={id} section="settings" /> : null}
 				<PageHeader
 					icon={<Icon as={SettingsIcon} />}
@@ -209,23 +239,24 @@ function Settings({ id }: { id: string | undefined }) {
 						>
 							<WebView recipe={styles.nameForm}>
 								<Input
-									accessibilityLabel={t("agentSettings.name")}
-									placeholder={t("agentSettings.name")}
+									accessibilityLabel={copy.nameLabel}
+									placeholder={agentDisplayName({ ...agent.data, display_name: null })}
 									value={draft}
 									onChangeText={setDraft}
-									maxLength={240}
+									maxLength={120}
+									autoComplete="off"
 									editable={!unavailable}
 								/>
 
 								<ActionButton
-									label={t("composite.save")}
+									label={copy.save}
 									variant={normalized !== (agent.data.display_name ?? null) ? "default" : "outline"}
 									icon={<Icon as={Save} />}
 									disabled={
 										unavailable || !validName || normalized === (agent.data.display_name ?? null)
 									}
 									onPress={() =>
-										void action.run(async (current) => {
+										run(copy.updateFailed, async (current) => {
 											if (!id) return;
 											const result = await read((signal) =>
 												agentSettings.setName(id, draft, signal),
@@ -237,17 +268,16 @@ function Settings({ id }: { id: string | undefined }) {
 									}
 								/>
 								<WebText recipe={styles.avatarHint}>
-									{t("agentSettings.defaultName")}{" "}
-									{agentDisplayName({ ...agent.data, display_name: null })}
+									{copy.defaultName(agentDisplayName({ ...agent.data, display_name: null }))}
 								</WebText>
 								<ActionButton
-									label={t("agentSettings.useDefaultName")}
+									label={copy.useDefaultName}
 									className={webView(styles.resetName)}
 									icon={<Icon as={RotateCcw} />}
 									variant="ghost"
 									disabled={unavailable || !agent.data.display_name}
 									onPress={() =>
-										void action.run(async (current) => {
+										run(copy.updateFailed, async (current) => {
 											if (!id) return;
 											const result = await read((signal) => agentSettings.setName(id, "", signal));
 											if (!current()) return;
@@ -273,18 +303,18 @@ function Settings({ id }: { id: string | undefined }) {
 										<WebText recipe={styles.avatarLabel}>
 											{agent.data.avatar_url
 												? agentSurfaceCopy.customUpload
-												: t("labels.defaultAgent", { type: agentTypeLabel(agent.data.agent_type) })}
+												: copy.defaultAvatar(agentTypeLabel(agent.data.agent_type))}
 										</WebText>
 										<WebText recipe={styles.avatarHint}>{agentSurfaceCopy.imageUpTo2Mb}</WebText>
 									</WebView>
 								</WebView>
 								<WebView recipe={styles.avatarActions} className="flex-row">
 									<ActionButton
-										label={t("agentSettings.uploadImage")}
+										label={copy.uploadImage}
 										icon={<Icon as={Upload} />}
 										disabled={unavailable}
 										onPress={() =>
-											void action.run(async (current) => {
+											run(copy.uploadFailed, async (current) => {
 												if (!id) return;
 												const picked = await File.pickFileAsync({
 													mimeTypes: [...AGENT_AVATAR_MIME_TYPES],
@@ -293,6 +323,14 @@ function Settings({ id }: { id: string | undefined }) {
 												// after it returns, but retain the original account/action lease.
 												const visible = capture();
 												if (picked.canceled || !current() || !visible()) return;
+												if (!AGENT_AVATAR_MIME_TYPES.some((type) => type === picked.result.type)) {
+													setAvatarIssue(copy.unsupportedAvatar);
+													return;
+												}
+												if (picked.result.size > MAX_AGENT_AVATAR_BYTES) {
+													setAvatarIssue(copy.avatarTooLarge);
+													return;
+												}
 												const result = await read((signal) =>
 													agentSettings.uploadAvatar(id, picked.result, signal),
 												);
@@ -301,12 +339,12 @@ function Settings({ id }: { id: string | undefined }) {
 										}
 									/>
 									<ActionButton
-										label={t("composite.remove")}
+										label={copy.remove}
 										icon={<Icon as={Trash2} />}
 										variant="ghost"
 										disabled={unavailable || !agent.data.avatar_url}
 										onPress={() =>
-											void action.run(async (current) => {
+											run(copy.removeFailed, async (current) => {
 												if (!id) return;
 												const result = await read((signal) =>
 													agentSettings.clearAvatar(id, signal),
@@ -342,8 +380,12 @@ function Settings({ id }: { id: string | undefined }) {
 						) : null}
 					</WebView>
 				) : null}
-				{action.error ? (
-					<AppText accessibilityRole="alert">{t("agentSettings.failed")}</AppText>
+				{avatarIssue ? (
+					<Alert variant="destructive" icon={CircleAlert} title={avatarIssue.title}>
+						<Text>{avatarIssue.description}</Text>
+					</Alert>
+				) : action.error ? (
+					<ApiErrorPanel error={action.failure} title={failedTitle} />
 				) : null}
 			</AppScrollView>
 			{confirmationDialog.dialog}

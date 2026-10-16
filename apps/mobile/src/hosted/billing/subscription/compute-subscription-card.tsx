@@ -71,6 +71,7 @@ export function ComputeSubscriptionCard({
 	view,
 	identity,
 	onOpenAgent,
+	badges,
 	notice,
 	actions,
 }: {
@@ -78,6 +79,7 @@ export function ComputeSubscriptionCard({
 	identity?: ComputeSubscriptionIdentity;
 	/** Web links the agent to its settings. */
 	onOpenAgent?: () => void;
+	badges?: ReactNode;
 	notice?: ReactNode;
 	actions?: ReactNode;
 }) {
@@ -85,9 +87,12 @@ export function ComputeSubscriptionCard({
 		<EntityCardChassis variant="compact" className={webView(styles.notices)}>
 			<WebView recipe={styles.heading} className="flex-row">
 				<WebText recipe={styles.planName}>{view.plan}</WebText>
-				<StatusBadge status={view.status.tone} withDot>
-					<Text>{view.status.label}</Text>
-				</StatusBadge>
+				<WebView recipe={styles.badges} className="flex-row">
+					<StatusBadge status={view.status.tone} withDot>
+						<Text>{view.status.label}</Text>
+					</StatusBadge>
+					{badges}
+				</WebView>
 			</WebView>
 			<WebView recipe={styles.meta} className="flex-row">
 				{view.commercialFacts.map((fact) => (

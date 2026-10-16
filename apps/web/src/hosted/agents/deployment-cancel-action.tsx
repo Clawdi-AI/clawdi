@@ -1,5 +1,6 @@
 "use client";
 
+import { computeStatusDetailsCopy } from "@clawdi/shared/view";
 import { CircleStop } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -28,7 +29,7 @@ export function DeploymentCancelAction({ deployment }: { deployment: HostedDeplo
 			onClick={() => cancel.mutate({ operationName: operation.name })}
 		>
 			{cancel.isPending ? <Spinner className="size-3.5" /> : <CircleStop className="size-3.5" />}
-			Cancel this change
+			{computeStatusDetailsCopy.cancel}
 		</Button>
 	);
 }

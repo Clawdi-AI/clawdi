@@ -8,37 +8,48 @@ import {
 	HOSTED_DEPLOY_LANGUAGE_OPTIONS,
 	type HostedDeployOperation,
 	hostedAiProviderAvailabilityIssue,
-	isValidHostedDeployTimezone,
 	normalizeHostedDeployLanguage,
 } from "@clawdi/shared/api";
+import { hostedAgentSettingsClasses as styles } from "@clawdi/shared/ui";
 import {
+	agentSettingsCopy,
 	agentSurfaceCopy,
 	aiBindingCopy,
 	computeFundingMode,
 	deploymentDeleteCopy,
 	deploymentDeleteSubscriptionPolicy,
 	deploymentLifecycleConfirmCopy,
+	deploymentPrimaryLifecycleAction,
+	deploymentStatusFromResource,
 	firstModelForProvider,
 	formatShortDate,
 	initialDeploymentCopy,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
+	mergeTimezoneOptions,
 	primaryModelValue,
+	supportedTimezones,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CryptoDigestAlgorithm, digestStringAsync, randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
+import Info from "lucide-react-native/icons/info";
+import RefreshCw from "lucide-react-native/icons/refresh-cw";
+import Trash2 from "lucide-react-native/icons/trash";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EntityAddCard } from "@/components/entity-card";
 import { SettingsSection } from "@/components/settings-section";
 import { RichConfirmAction } from "@/components/ui/confirm-action";
-import { Input as AppTextInput } from "@/components/ui/input";
+import { Icon } from "@/components/ui/icon";
+import { Input as AppTextInput, Label } from "@/components/ui/input";
 import { Text as AppText } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
+import { WebIcon, WebText, WebView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { hostedAgentTitle } from "@/hosted/agent-title";
+import { TimezoneCombobox } from "@/hosted/billing/deploy/language-timezone-controls";
 import { ProviderCreate } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { AiBindingChoices } from "@/hosted/v2/ai-providers/ai-binding-choices";
 import { useMobileApi } from "@/lib/api-provider";
@@ -66,6 +77,8 @@ export function DeploymentControls({
 	onBusyChange,
 	startLabel,
 	statusDetails,
+	computePlan,
+	startFallback,
 }: {
 	deployment: DeploymentRead | undefined;
 	deploymentId: string;
@@ -73,12 +86,16 @@ export function DeploymentControls({
 	transitioning: boolean;
 	onAccepted: (operation: HostedDeployOperation) => Promise<void>;
 	onAbsent: () => Promise<void>;
-	/** `settings` groups Web's Settings tab: language, agent controls, then danger zone. */
+	/** `settings` is Web's Settings tab: language, compute plan, agent controls, danger zone. */
 	section?: "settings" | "ai" | "startup";
 	onBusyChange?: (busy: boolean) => void;
 	startLabel?: string;
 	/** Status shown at the top of Agent controls, like Web's ComputeStatusDetails. */
 	statusDetails?: ReactNode;
+	/** Web's Compute plan section, between language and agent controls. */
+	computePlan?: ReactNode;
+	/** Settings' Start slot when starting needs a subscription or funds first. */
+	startFallback?: ReactNode;
 }) {
 	const t = useI18n();
 	const scope = useAccountScope();
@@ -126,7 +143,7 @@ export function DeploymentControls({
 	}, [scope, deploymentId, restoreEpoch]);
 	const confirmation = useRef(0);
 	const nativeConfirmation = useConfirmation();
-	const state = deployment?.resource.status?.summary_state;
+	const status = deploymentStatusFromResource(deployment?.resource.status ?? null);
 	const writeBlocked =
 		action.busy ||
 		blocked ||
@@ -238,7 +255,7 @@ export function DeploymentControls({
 		isTrial: subscription?.status === "trialing",
 		periodEndLabel: periodEnd === "—" ? null : periodEnd,
 	});
-	const confirm = (mutation: DeploymentMutation) => {
+	const request = (mutation: DeploymentMutation) => {
 		if ((mutation.action === "delete" ? writeBlocked : busy) || !deploymentMutations || !deployment)
 			return;
 		const visible = capture();
@@ -281,30 +298,28 @@ export function DeploymentControls({
 			);
 			return;
 		}
-		// Restart and stop use Web's per-action confirmations.
-		const lifecycle =
-			mutation.action === "restart" || mutation.action === "stop"
-				? deploymentLifecycleConfirmCopy[mutation.action]
-				: null;
-		nativeConfirmation.show(
-			lifecycle?.title ?? t("runtime.confirm"),
-			lifecycle?.description ?? t("runtime.warning"),
-			[
-				{ text: t("account.cancel"), style: "cancel" },
-				{
-					text: lifecycle?.confirmLabel ?? t("runtime.apply"),
-					style: "default",
-					onPress: () => run(mutation),
-				},
-			],
-		);
+		// Like Web, only Restart and Stop confirm; Start and settings changes apply directly.
+		if (mutation.action !== "restart" && mutation.action !== "stop") {
+			void run(mutation);
+			return;
+		}
+		const lifecycle = deploymentLifecycleConfirmCopy[mutation.action];
+		nativeConfirmation.show(lifecycle.title, lifecycle.description, [
+			{ text: t("account.cancel"), style: "cancel" },
+			{ text: lifecycle.confirmLabel, style: "default", onPress: () => run(mutation) },
+		]);
 	};
-	const stable = state === "running" || state === "stopped" || state === "failed";
-	const controls = (
+	const canStart = deploymentLifecycleAvailable("start", status.kind);
+	const startButton = (label: string) => (
+		<ActionButton
+			label={label}
+			icon={section === "settings" ? <Icon as={RefreshCw} /> : undefined}
+			disabled={busy || !canStart}
+			onPress={() => request({ action: "start" })}
+		/>
+	);
+	const journal = (
 		<>
-			{section === "settings" ? (
-				<AppText className="text-sm text-muted-foreground">{t("runtime.warning")}</AppText>
-			) : null}
 			{storageError ? (
 				<AppText accessibilityRole="alert">{t("runtime.storageError")}</AppText>
 			) : null}
@@ -320,71 +335,35 @@ export function DeploymentControls({
 				</AppText>
 			) : null}
 			{action.error ? <AppText accessibilityRole="alert">{t("runtime.failed")}</AppText> : null}
-			{section === "settings" && state === "stopped" && deployment?.start_action !== "start" ? (
-				<AppText className="text-sm text-muted-foreground">{t("runtime.paymentRequired")}</AppText>
-			) : null}
-			{/* Settings lays its actions out like Web's Agent controls: a wrapping row of small buttons. */}
-			<AppView className={section === "settings" ? "flex-row flex-wrap gap-2.5" : "gap-3"}>
-				{section === "settings" || attempt || storageError ? (
+			{/* Recovery controls exist only while a saved change or its storage error does. */}
+			{attempt || storageError ? (
+				<AppView className="flex-row flex-wrap gap-2.5">
 					<ActionButton
 						label={t("runtime.reloadAttempt")}
 						disabled={action.busy}
 						onPress={() => setRestoreEpoch((value) => value + 1)}
 					/>
-				) : null}
-				{attempt ? (
-					<>
+					{attempt ? (
 						<ActionButton
 							label={t("runtime.retry")}
 							disabled={action.busy || rejected || !storageKey || storageError}
 							onPress={() => void submit(attempt)}
 						/>
-						{/* An uncertain delete may carry a subscription cancel; it settles only by replay. */}
-						{attempt.status !== "uncertain" || attempt.mutation.action !== "delete" ? (
-							<ActionButton
-								label={t("runtime.review")}
-								disabled={action.busy || !storageKey || storageError}
-								onPress={() => confirmDiscard(attempt)}
-							/>
-						) : null}
-					</>
-				) : null}
-				{section !== "ai" &&
-				deploymentLifecycleAvailable("start", state) &&
-				deployment?.start_action === "start" ? (
-					<ActionButton
-						label={
-							startLabel ??
-							(section === "startup" ? initialDeploymentCopy.retry : t("runtime.start"))
-						}
-						disabled={busy}
-						onPress={() => confirm({ action: "start" })}
-					/>
-				) : null}
-				{section === "settings" && deploymentLifecycleAvailable("stop", state) ? (
-					<ActionButton
-						label={t("runtime.stop")}
-						disabled={busy}
-						onPress={() => confirm({ action: "stop" })}
-					/>
-				) : null}
-				{section === "settings" && deploymentLifecycleAvailable("restart", state) ? (
-					<ActionButton
-						label={t("runtime.restart")}
-						disabled={busy}
-						onPress={() => confirm({ action: "restart" })}
-					/>
-				) : null}
-				{section === "settings" && stable ? (
-					<ActionButton
-						label={t("runtime.resetAccess")}
-						disabled={busy}
-						onPress={() => confirm({ action: "reset_runtime_ui_access" })}
-					/>
-				) : null}
-			</AppView>
+					) : null}
+					{/* An uncertain delete may carry a subscription cancel; it settles only by replay. */}
+					{attempt && (attempt.status !== "uncertain" || attempt.mutation.action !== "delete") ? (
+						<ActionButton
+							label={t("runtime.review")}
+							disabled={action.busy || !storageKey || storageError}
+							onPress={() => confirmDiscard(attempt)}
+						/>
+					) : null}
+				</AppView>
+			) : null}
 		</>
 	);
+	const primary = deploymentPrimaryLifecycleAction(status);
+	const stable = status.kind === "running" || status.kind === "stopped" || status.kind === "failed";
 	return (
 		<AppView className="gap-3">
 			{nativeConfirmation.dialog}
@@ -429,51 +408,87 @@ export function DeploymentControls({
 				/>
 			) : null}
 			{section === "settings" && deployment ? (
-				<SettingsSection title={t("runtime.locale")} description={t("runtime.localeDescription")}>
+				<SettingsSection
+					title={agentSettingsCopy.languageTimezone.title}
+					description={agentSettingsCopy.languageTimezone.description}
+				>
 					<LocaleSettings
 						key={JSON.stringify([
 							deployment.resource.spec.runtime_configuration.language,
 							deployment.resource.spec.runtime_configuration.timezone,
 						])}
 						deployment={deployment}
-						disabled={busy || !stable}
-						apply={(body) => confirm({ action: "update", body })}
+						disabled={busy || status.kind === "updating"}
+						apply={(body) => request({ action: "update", body })}
 					/>
 				</SettingsSection>
 			) : null}
+			{section === "settings" ? computePlan : null}
 			{section === "settings" ? (
 				<SettingsSection
-					title={t("runtime.controlsTitle")}
-					description={t("runtime.controlsDescription")}
+					title={agentSettingsCopy.controls.title}
+					description={agentSettingsCopy.controls.description}
 				>
 					<AppView className="gap-3">
 						{statusDetails}
-						{controls}
+						{journal}
+						<WebView recipe={styles.controls} className="flex-row">
+							<ActionButton
+								label={agentSettingsCopy.controls.restart}
+								icon={<Icon as={RefreshCw} />}
+								disabled={busy || !deploymentLifecycleAvailable("restart", status.kind)}
+								onPress={() => request({ action: "restart" })}
+							/>
+							{primary === "stop" ? (
+								<ActionButton
+									label={agentSettingsCopy.controls.stop}
+									disabled={busy || !deploymentLifecycleAvailable("stop", status.kind)}
+									onPress={() => request({ action: "stop" })}
+								/>
+							) : deployment?.start_action === "start" ? (
+								startButton(agentSettingsCopy.controls.start)
+							) : (
+								startFallback
+							)}
+						</WebView>
 					</AppView>
 				</SettingsSection>
 			) : (
-				controls
+				<>
+					{journal}
+					{section === "startup" && canStart && deployment?.start_action === "start"
+						? startButton(startLabel ?? initialDeploymentCopy.retry)
+						: null}
+				</>
 			)}
-			{section === "settings" &&
-			(deploymentLifecycleAvailable("delete", state) || attempt?.mutation.action === "delete") ? (
+			{section === "settings" ? (
 				<SettingsSection
-					title={t("runtime.dangerTitle")}
-					description={t("runtime.dangerDescription")}
+					title={agentSettingsCopy.dangerZone.title}
+					description={agentSettingsCopy.dangerZone.description}
 					destructive
 				>
-					{deploymentLifecycleAvailable("delete", state) ? (
+					<WebView recipe={styles.deleteRow}>
+						<AppView>
+							<WebText recipe={styles.deleteTitle}>
+								{agentSettingsCopy.dangerZone.deleteTitle}
+							</WebText>
+							<WebText recipe={styles.deleteDescription}>
+								{agentSettingsCopy.dangerZone.deleteDescription}
+							</WebText>
+						</AppView>
 						<ActionButton
-							label={t("runtime.deleteAgent")}
-							variant="destructive"
-							disabled={writeBlocked}
+							label={agentSettingsCopy.dangerZone.delete}
+							icon={<Icon as={Trash2} />}
+							className="text-destructive"
+							disabled={writeBlocked || !deploymentLifecycleAvailable("delete", status.kind)}
 							onPress={() =>
-								confirm({
+								request({
 									action: "delete",
 									body: { subscription_choice: defaultChoice },
 								})
 							}
 						/>
-					) : null}
+					</WebView>
 					{attempt?.mutation.action === "delete" ? (
 						<AppText accessibilityRole="alert">
 							{attempt.mutation.body.subscription_choice === "cancel_subscription" &&
@@ -492,7 +507,7 @@ export function DeploymentControls({
 					])}
 					deployment={deployment}
 					disabled={busy || !stable}
-					apply={(body) => confirm({ action: "update", body })}
+					apply={(body) => request({ action: "update", body })}
 				/>
 			) : null}
 		</AppView>
@@ -508,45 +523,58 @@ function LocaleSettings({
 	disabled: boolean;
 	apply: (body: DeploymentUpdate) => void;
 }) {
-	const t = useI18n();
+	const copy = agentSettingsCopy.languageTimezone;
 	const config = deployment.resource.spec.runtime_configuration;
-	const [language, setLanguage] = useState(config.language ?? "");
-	const [timezone, setTimezone] = useState(config.timezone ?? "");
-	const valid =
-		(!language || normalizeHostedDeployLanguage(language) !== null) &&
-		(!timezone.trim() || isValidHostedDeployTimezone(timezone.trim()));
+	const configLanguage = config.language ?? "";
+	const configTimezone = config.timezone ?? "";
+	const [language, setLanguage] = useState(configLanguage);
+	const [timezone, setTimezone] = useState(configTimezone);
+	const [runtimeTimezones] = useState(() =>
+		supportedTimezones(configTimezone ? [configTimezone] : []),
+	);
+	const timezoneOptions = mergeTimezoneOptions(
+		runtimeTimezones,
+		[configTimezone, timezone].filter(Boolean),
+	);
+	const dirty = language !== configLanguage || timezone !== configTimezone;
 	return (
-		<AppView className="gap-3">
-			<NativePicker
-				value={language}
-				options={[
-					{ value: "", label: t("runtime.default") },
-					...HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((item) => ({
-						value: item.code,
-						label: item.label,
-					})),
-				]}
-				disabled={disabled}
-				onValueChange={setLanguage}
-			/>
-			<AppTextInput
-				accessibilityLabel={t("runtime.timezone")}
-				placeholder={t("runtime.timezone")}
-				value={timezone}
-				onChangeText={setTimezone}
-				autoCapitalize="none"
-				autoCorrect={false}
-				maxLength={100}
-				editable={!disabled}
-			/>
-			{!valid ? <AppText>{t("runtime.invalidLocale")}</AppText> : null}
+		<WebView recipe={styles.locale}>
+			<WebView recipe={styles.liveNote} className="flex-row">
+				<WebIcon as={Info} recipe={styles.liveNoteIcon} />
+				<AppText>{copy.note}</AppText>
+			</WebView>
+			<WebView recipe={styles.localeFields}>
+				<WebView recipe={styles.field}>
+					<Label>{copy.language}</Label>
+					<NativePicker
+						className="w-full"
+						value={language}
+						options={[
+							{ value: "", label: agentSurfaceCopy.default },
+							...HOSTED_DEPLOY_LANGUAGE_OPTIONS.map((item) => ({
+								value: item.code,
+								label: item.label,
+							})),
+						]}
+						disabled={disabled}
+						onValueChange={setLanguage}
+					/>
+				</WebView>
+				<WebView recipe={styles.field}>
+					<Label>{copy.timezone}</Label>
+					<TimezoneCombobox
+						value={timezone}
+						options={timezoneOptions}
+						disabled={disabled}
+						onValueChange={setTimezone}
+					/>
+				</WebView>
+			</WebView>
 			<ActionButton
-				label={t("runtime.saveLocale")}
-				disabled={
-					disabled ||
-					!valid ||
-					(language === (config.language ?? "") && timezone === (config.timezone ?? ""))
-				}
+				label={copy.save}
+				variant="default"
+				className="self-start"
+				disabled={disabled || !dirty}
 				onPress={() =>
 					apply({
 						language: normalizeHostedDeployLanguage(language),
@@ -554,7 +582,7 @@ function LocaleSettings({
 					})
 				}
 			/>
-		</AppView>
+		</WebView>
 	);
 }
 

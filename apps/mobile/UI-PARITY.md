@@ -44,20 +44,30 @@ The Agent overview is the section hub: its Web overview cards plus Tools
 and Settings rows reach every Web sidebar section, so the Agent header carries
 only section actions, never navigation. `/agents/:id/files` renders Web
 `FilesTab`'s stopped/starting/not-running states; while running it offers
-Open Files and Terminal. Open Files follows the Console handoff: after a native
-confirmation it re-reads the deployment, requires the reviewed Files endpoint,
-mints hosted's one-time Files handoff URL (same Files origin, current resource
-version) and opens it with `expo-web-browser`, where Files ForwardAuth
-exchanges it for the browser's Files grant. Web's embedded Files frame and
-grant bootstrap need the dashboard origin, so mobile never embeds Files.
-Chat on the web keeps the reviewed dashboard URL in its native confirmation and
-re-reads the deployment before opening. Hermes mints a 60 s one-time handoff
-after confirmation, pinned to the configured Hosted API origin and current
-resource version. `openBrowserAsync` opens the redeem URL; Hosted sets the OIDC
+Open Files and Terminal. Like Web, Open Files and Chat on the web open on the
+first tap, with no confirmation. Open Files re-reads the deployment, requires the
+Files endpoint it showed, mints hosted's one-time Files handoff URL (same Files
+origin, current resource version) and opens it with `expo-web-browser`, where
+Files ForwardAuth exchanges it for the browser's Files grant. Web's embedded
+Files frame and grant bootstrap need the dashboard origin, so mobile never
+embeds Files. Chat on the web re-reads the deployment and refuses a changed
+dashboard endpoint. Hermes mints a 60 s one-time handoff pinned to the
+configured Hosted API origin and current resource version. `openBrowserAsync` opens the redeem URL; Hosted sets the OIDC
 grant cookie and redirects through Hermes login into the signed-in dashboard.
 The handoff URL stays local to the action. OpenClaw keeps its existing
 runtime-credentials browser handoff. Real signed-in dashboard acceptance still
 requires an authorized device check after the Hosted handoff endpoint is deployed.
+Terminal is Web's TerminalTab: it connects on open with Web's status and
+Retry/Reconnect, shows Web's stopped/starting/not-running states, and keeps the
+Esc/Tab/Ctrl+C row. It disconnects when the screen loses focus or the app goes to
+the background and connects again on return.
+Agent Settings follow Web's order: profile, Language & timezone (the deploy wizard's
+timezone menu), Compute plan (Web's card with inline actions; store builds keep
+their store actions; plan changes and new card/Wallet subscriptions stay on Web),
+Agent controls (Restart, then Stop or Start) and Danger zone. Only Restart, Stop and
+Delete confirm, as on Web. The durable change journal stays: its Reload, Retry and
+Discard controls appear only while a saved change or its storage error exists.
+Contact support opens live chat with Web's context, or email without live chat.
 The Settings tab (Web's "Settings" control) root `/settings` is a native grouped
 settings menu: General, API Keys, then Wallet, Compute and AI Usage when a compute
 API is configured. Each row pushes a natively headed

@@ -35,11 +35,14 @@ export function ChoiceSelect<Value extends string | number>({
 	options,
 	onValueChange,
 	disabled,
+	className,
 }: {
 	value: Value;
 	options: readonly { value: Value; label: string }[];
 	onValueChange: (value: Value) => void;
 	disabled?: boolean;
+	/** Trigger classes, e.g. Web's full-width `w-full`. */
+	className?: string;
 }) {
 	return (
 		<Select
@@ -50,7 +53,7 @@ export function ChoiceSelect<Value extends string | number>({
 				if (option) onValueChange(option.value);
 			}}
 		>
-			<SelectTrigger>
+			<SelectTrigger className={className}>
 				<SelectValue />
 			</SelectTrigger>
 			<SelectContent>

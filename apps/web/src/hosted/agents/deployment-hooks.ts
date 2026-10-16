@@ -1,5 +1,6 @@
 "use client";
 
+import { computeStatusDetailsCopy } from "@clawdi/shared/view";
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
@@ -314,13 +315,13 @@ export function useCancelDeploymentOperation() {
 				client.cancelDeploymentOperation(vars.operationName, idempotencyKey),
 			),
 		onSuccess: () => {
-			toast.message("Cancellation requested", {
-				description: "The change will be stopped. This page updates automatically.",
+			toast.message(computeStatusDetailsCopy.cancelRequested, {
+				description: computeStatusDetailsCopy.cancelRequestedDescription,
 			});
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
-			toast.error("Couldn't cancel this change", {
+			toast.error(computeStatusDetailsCopy.cancelFailed, {
 				description: operationCancelErrorMessage(error),
 			});
 		},

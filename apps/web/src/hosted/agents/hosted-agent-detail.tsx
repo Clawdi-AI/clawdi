@@ -5,6 +5,7 @@ import {
 	agentChannelSectionClasses,
 	computeStatusDetailsClasses,
 	hostedAgentOverviewClasses,
+	hostedAgentSettingsClasses as settingsClasses,
 } from "@clawdi/shared/ui";
 import {
 	AGENT_PROFILES_COPY,
@@ -16,13 +17,18 @@ import {
 	agentOverviewCopy,
 	agentOverviewSummary,
 	agentSectionAvailableDuringSetup,
+	agentSettingsCopy,
 	agentSurfaceCopy,
+	agentTerminalPresentation,
 	aiBindingCopy,
+	browserHandoffFailureMessage,
 	canRetryInitialDeployment,
 	computeStatusDetailsCopy,
+	computeSubscriptionCancelTitle,
 	type DeploymentStatus,
 	deploymentAwaitingRuntimeUi,
 	deploymentLifecycleConfirmCopy,
+	deploymentPrimaryLifecycleAction,
 	deploymentProvisioningPath,
 	formatShortDate,
 	hostedDeploymentSetupInProgress,
@@ -35,11 +41,13 @@ import {
 	initialDeploymentStartedAtMs,
 	initialDeploymentSupportContext,
 	RUNTIME_UI_WITHDRAWN_DESCRIPTION,
+	runtimeConsoleCopy,
 	SUPPORT_MAILTO,
 	shouldShowInitialDeploymentProgress,
 	startComputeActionPresentation,
 	stoppedAgentDescription,
 	storeSubscriptionCardView,
+	terminalCopy,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
@@ -251,7 +259,6 @@ import {
 	deploymentRuntimeUiWithdrawn,
 	deploymentStatusFromResource,
 	deploymentStatusLabel,
-	deploymentTerminalIsAvailable,
 	isRunningStatus,
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
@@ -406,8 +413,8 @@ export function shouldShowHostedProjectionNotice(section: AgentSectionId): boole
 
 function LiveNote({ children }: { children: React.ReactNode }) {
 	return (
-		<p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-			<Info className="size-3.5 shrink-0" />
+		<p className={settingsClasses.liveNote}>
+			<Info className={settingsClasses.liveNoteIcon} />
 			{children}
 		</p>
 	);
@@ -431,7 +438,7 @@ function DeleteComputeAction({
 	onDeleteAccepted,
 	variant = "destructive",
 	className,
-	label = "Delete",
+	label = agentSettingsCopy.dangerZone.delete,
 }: {
 	deployment: HostedDeployment;
 	onDeleteAccepted: (deploymentId: string) => Promise<void> | void;
@@ -1072,7 +1079,7 @@ export function ComputeStatusDetails({
 				</div>
 			) : status.kind === "restarting" ? (
 				<p className="inline-flex items-center gap-2 text-muted-foreground" role="status">
-					<Spinner className="size-3.5" /> Restarting
+					<Spinner className="size-3.5" /> {computeStatusDetailsCopy.restarting}
 				</p>
 			) : deploymentTransitionTimedOut ? (
 				<p className={computeStatusDetailsClasses.warning} role="status">
@@ -1092,8 +1099,7 @@ export function ComputeStatusDetails({
 				</p>
 			) : status.kind === "stopped" ? (
 				<p className={computeStatusDetailsClasses.neutral} role="status">
-					Agent is stopped. Channels and {runtimeBrowserUiLabel(deployment.resource.spec.runtime)}{" "}
-					are unavailable.
+					{computeStatusDetailsCopy.stopped(deployment.resource.spec.runtime)}
 				</p>
 			) : status.kind === "deleting" ? (
 				<p className={computeStatusDetailsClasses.neutral} role="status">
@@ -1799,8 +1805,8 @@ export function ConsoleTab({
 				credentialError !== null ? (
 					<EmptyState
 						icon={AlertCircle}
-						title={`${browserUiLabel} couldn't be opened`}
-						description="Clawdi couldn't establish this browser session."
+						title={runtimeConsoleCopy.openFailed(browserUiLabel)}
+						description={browserHandoffFailureMessage("failed", browserUiLabel)}
 						action={
 							<Button
 								type="button"
@@ -2018,13 +2024,6 @@ function LiveToolFrame({
 	);
 }
 
-const TERMINAL_STATUS_LABELS: Record<HostedTerminalStatus, string> = {
-	connecting: "Connecting",
-	connected: "Connected",
-	reconnecting: "Reconnecting",
-	disconnected: "Disconnected",
-};
-
 const TERMINAL_STATUS_TONES: Record<HostedTerminalStatus, StatusTone> = {
 	connecting: "warning",
 	connected: "success",
@@ -2038,7 +2037,7 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	return (
 		<div className="flex items-center gap-2 text-xs text-muted-foreground">
 			<StatusDot status={TERMINAL_STATUS_TONES[status]} className="size-2" />
-			<span>{TERMINAL_STATUS_LABELS[status]}</span>
+			<span>{terminalCopy.status[status]}</span>
 		</div>
 	);
 }
@@ -2055,8 +2054,7 @@ function TerminalTab({
 	standalone: boolean;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
-	const terminalAvailable = deploymentTerminalIsAvailable(deployment);
-	const isStarting = isStartingStatus(status);
+	const view = agentTerminalPresentation(deployment);
 	const label = agentName;
 	const client = useBillingClient();
 	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
@@ -2079,20 +2077,16 @@ function TerminalTab({
 		return session.websocket_url ?? "";
 	}, [createTerminalSession, deployment.resource.id]);
 
-	if (status.kind === "stopped") {
+	if (view.state === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
 	}
 
-	if (!terminalAvailable) {
+	if (view.state !== "available") {
 		return (
 			<EmptyState
 				icon={TerminalSquare}
-				title={isStarting ? startingTitle() : "Agent is not running"}
-				description={
-					isStarting
-						? "The browser terminal opens once your agent is running. This page updates automatically."
-						: `Start the agent to open a terminal. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
-				}
+				title={view.title}
+				description={view.description}
 				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
 		);
@@ -2105,7 +2099,9 @@ function TerminalTab({
 				type="button"
 				variant="outline"
 				size="sm"
-				aria-label={terminalStatus === "disconnected" ? "Retry terminal" : "Reconnect terminal"}
+				aria-label={
+					terminalStatus === "disconnected" ? terminalCopy.retryLabel : terminalCopy.reconnectLabel
+				}
 				disabled={
 					isOpeningTerminal || terminalStatus === "connecting" || terminalStatus === "reconnecting"
 				}
@@ -2113,7 +2109,7 @@ function TerminalTab({
 			>
 				{isOpeningTerminal ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
 				<span className="hidden sm:inline">
-					{terminalStatus === "disconnected" ? "Retry" : "Reconnect"}
+					{terminalStatus === "disconnected" ? terminalCopy.retry : terminalCopy.reconnect}
 				</span>
 			</Button>
 			{standalone ? null : <OpenInNewWindowButton label="Terminal" onClick={openTerminalWindow} />}
@@ -2121,7 +2117,12 @@ function TerminalTab({
 	);
 
 	return (
-		<LiveToolFrame icon={TerminalSquare} title="Terminal" detail={label} action={terminalAction}>
+		<LiveToolFrame
+			icon={TerminalSquare}
+			title={terminalCopy.title}
+			detail={label}
+			action={terminalAction}
+		>
 			<HostedTerminalPanel
 				requestWebsocketUrl={requestWebsocketUrl}
 				reconnectRequest={reconnectRequest}
@@ -3354,14 +3355,16 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 
 	return (
 		<SettingsSection
-			title="Language & timezone"
-			description={agentSurfaceCopy.languageAndTimeZoneUsedByThisAgent}
+			title={agentSettingsCopy.languageTimezone.title}
+			description={agentSettingsCopy.languageTimezone.description}
 		>
-			<div className="flex w-full flex-col gap-4">
-				<LiveNote>Changes apply to this agent.</LiveNote>
-				<div className="grid gap-4 sm:grid-cols-2">
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="hosted-agent-language">Language</Label>
+			<div className={settingsClasses.locale}>
+				<LiveNote>{agentSettingsCopy.languageTimezone.note}</LiveNote>
+				<div className={settingsClasses.localeFields}>
+					<div className={settingsClasses.field}>
+						<Label htmlFor="hosted-agent-language">
+							{agentSettingsCopy.languageTimezone.language}
+						</Label>
 						<Select
 							items={LANGUAGE_SELECT_ITEMS}
 							value={language || "default"}
@@ -3371,7 +3374,9 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="default">Agent default</SelectItem>
+								<SelectItem value="default">
+									{agentSettingsCopy.languageTimezone.agentDefault}
+								</SelectItem>
 								{LANGUAGE_OPTIONS.map((option) => (
 									<SelectItem key={option.code} value={option.code}>
 										{option.label}
@@ -3380,8 +3385,10 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 							</SelectContent>
 						</Select>
 					</div>
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="hosted-agent-timezone">Timezone</Label>
+					<div className={settingsClasses.field}>
+						<Label htmlFor="hosted-agent-timezone">
+							{agentSettingsCopy.languageTimezone.timezone}
+						</Label>
 						<TimezoneCombobox
 							id="hosted-agent-timezone"
 							value={timezone}
@@ -3404,7 +3411,7 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 						}
 					>
 						{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
-						Save changes
+						{agentSettingsCopy.languageTimezone.save}
 					</Button>
 				</div>
 			</div>
@@ -3476,13 +3483,7 @@ function ComputeSettingsSections({
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
 	const canRestart = canRestartDeployment(deploymentStatus);
-	const primaryLifecycleAction: "stop" | "start" =
-		canStop ||
-		deploymentStatus.kind === "stopping" ||
-		deploymentStatus.kind === "restarting" ||
-		deploymentStatus.kind === "updating"
-			? "stop"
-			: "start";
+	const primaryLifecycleAction = deploymentPrimaryLifecycleAction(deploymentStatus);
 	const canRunPrimaryLifecycleAction = primaryLifecycleAction === "stop" ? canStop : canStart;
 	const rawComputePlanSlug = deployment.current_plan_slug;
 	const computePlanSlug =
@@ -3700,7 +3701,10 @@ function ComputeSettingsSections({
 				/>
 			) : null}
 
-			<SettingsSection title="Compute plan" description="Compute resources for this Cloud Agent.">
+			<SettingsSection
+				title={agentSettingsCopy.computePlan.title}
+				description={agentSettingsCopy.computePlan.description}
+			>
 				<ComputeSubscriptionCard
 					headingLevel={3}
 					view={computeCardView}
@@ -3709,7 +3713,7 @@ function ComputeSettingsSections({
 					badges={
 						hasWalletFallback ? (
 							<Badge variant="outline" className="font-normal text-muted-foreground">
-								Wallet fallback
+								{agentSettingsCopy.computePlan.walletFallback}
 							</Badge>
 						) : null
 					}
@@ -3738,10 +3742,10 @@ function ComputeSettingsSections({
 							onStartNew={{
 								kind: "button",
 								onClick: () => setSubscriptionCreateOpen(true),
-								label: "Choose a subscription",
+								label: agentSettingsCopy.computePlan.chooseSubscription,
 							}}
 							cancelCopy={{
-								title: `Cancel ${tierLabel} subscription?`,
+								title: computeSubscriptionCancelTitle(tierLabel),
 								description: <p>{subscriptionCancellationCopy.description}</p>,
 								confirmLabel: subscriptionCancellationCopy.confirmLabel,
 								successDescription: (result) =>
@@ -3760,8 +3764,8 @@ function ComputeSettingsSections({
 			</SettingsSection>
 
 			<SettingsSection
-				title="Agent controls"
-				description={agentSurfaceCopy.restartStopOrStartThisAgent}
+				title={agentSettingsCopy.controls.title}
+				description={agentSettingsCopy.controls.description}
 			>
 				<ComputeStatusDetails
 					deployment={deployment}
@@ -3769,7 +3773,7 @@ function ComputeSettingsSections({
 					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 					deploymentTransitionEscalated={deploymentTransitionEscalated}
 				/>
-				<div className="flex flex-wrap gap-2.5">
+				<div className={settingsClasses.controls}>
 					<ConfirmAction
 						title={deploymentLifecycleConfirmCopy.restart.title}
 						description={<p>{deploymentLifecycleConfirmCopy.restart.description}</p>}
@@ -3782,7 +3786,7 @@ function ComputeSettingsSections({
 							) : (
 								<RefreshCw className="size-3.5" />
 							)}
-							Restart
+							{agentSettingsCopy.controls.restart}
 						</Button>
 					</ConfirmAction>
 					{primaryLifecycleAction === "stop" ? (
@@ -3800,13 +3804,13 @@ function ComputeSettingsSections({
 								{lifecycle.isPending && lifecycle.variables?.action === "stop" ? (
 									<Spinner className="size-3.5" />
 								) : null}
-								Stop
+								{agentSettingsCopy.controls.stop}
 							</Button>
 						</ConfirmAction>
 					) : (
 						<StartComputeAction
 							deployment={deployment}
-							label="Start"
+							label={agentSettingsCopy.controls.start}
 							variant="outline"
 							disabled={
 								lifecycle.isPending ||
@@ -3823,15 +3827,17 @@ function ComputeSettingsSections({
 			</SettingsSection>
 
 			<SettingsSection
-				title="Danger zone"
-				description={agentSurfaceCopy.permanentlyDeleteThisAgent}
+				title={agentSettingsCopy.dangerZone.title}
+				description={agentSettingsCopy.dangerZone.description}
 				variant="destructive"
 			>
-				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+				<div className={settingsClasses.deleteRow}>
 					<div>
-						<div className="text-sm font-medium">Delete this agent</div>
-						<p className="text-xs text-muted-foreground">
-							Deletes this agent and its saved data. This can’t be undone.
+						<div className={settingsClasses.deleteTitle}>
+							{agentSettingsCopy.dangerZone.deleteTitle}
+						</div>
+						<p className={settingsClasses.deleteDescription}>
+							{agentSettingsCopy.dangerZone.deleteDescription}
 						</p>
 					</div>
 					<DeleteComputeAction

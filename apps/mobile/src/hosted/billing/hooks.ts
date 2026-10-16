@@ -39,6 +39,23 @@ export function useSubscriptions(enabled = true) {
 	});
 }
 
+/** Web's `usePlans`: the compute plan catalog. */
+export function usePlans() {
+	const { compute } = useMobileApi();
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	return useQuery({
+		queryKey: accountQueryKey(scope, "billing-plans"),
+		queryFn: ({ signal }) =>
+			read((s) => {
+				if (!compute) throw new Error("Compute API unavailable");
+				return compute.listPlans(s);
+			}, signal),
+		enabled: scope.isReady && Boolean(compute),
+		retry: false,
+	});
+}
+
 /** One Wallet read for the Overview header, welcome card and Wallet page. */
 export function useWallet() {
 	const { compute } = useMobileApi();
