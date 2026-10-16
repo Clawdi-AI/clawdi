@@ -39,9 +39,6 @@ const billingEn = {
 } as const;
 const channelsEn = {
 	singular: "Channel",
-	pairAction: "Pair",
-	unlinkAction: "Unlink",
-	linkAction: "Link",
 	linkedAt: "Linked {time}",
 	deleteAction: "Delete channel",
 	configure: "Configure",
@@ -53,52 +50,12 @@ const channelsEn = {
 		"This bot may already have been created. Refresh and inspect inventory before submitting again. Closing this form does not undo a request already sent.",
 	reviewInventory: "Refresh inventory before another submission",
 	title: "Channels",
-	link: "Link selected Agent",
-	replace: "Replace this Agent's existing channel for this provider",
-	replaceWarning:
-		"Replacement disconnects the previous bot for this provider. Paired chats may lose access.",
-	unlink: "Unlink agent",
-	pair: "Generate chat pairing code",
-	bindings: "Paired chats",
-	noBindings: "No paired chats.",
-	unpair: "Unpair chat",
-	unpairWarning: "This chat will no longer be connected to the Agent.",
-	cleanupWarning:
-		"Chat access was revoked, but notification or provider cleanup is incomplete. Refresh to inspect the result.",
-	unpairNotConfirmed: "Unpairing was not confirmed. Refresh paired chats before trying again.",
-	done: "Action confirmed. Refresh to inspect current state.",
 	failed:
 		"The action was not confirmed. Refresh before trying again. Channel availability, capacity or runtime permissions may have changed.",
-	refresh: "Refresh channels",
 };
 const whatsappEn = {
 	repair: "Repair WhatsApp connection",
-	warning:
-		"Use a dedicated WhatsApp number you own. When linked to an Agent, replies are sent from this account. Agent linking and chat pairing remain separate steps.",
-	repairWarning:
-		"Repair replaces an invalid linked-device login. The Custom bot, Agent links, paired chats and history stay unchanged. Only repair an account you own.",
-	leaving:
-		"Switching apps hides pairing secrets and pauses checking. Return to this screen to resume. Leaving this screen does not cancel an already sent request; use Cancel connection to stop it explicitly. Unfinished sessions expire on the server.",
-	approve: "I own this WhatsApp account and approve linking this device.",
-	retryStart: "Retry last request",
-	uncertain:
-		"We couldn't confirm the last request. Retry it to continue — this won't start a second connection.",
-	unavailable:
-		"Linked-device availability or account ownership is not confirmed. Refresh to check.",
-	offline: "Offline. Checking pauses until connectivity returns.",
-	ready: "Ready to link WhatsApp",
-	expired: "Connection expired. Check status, then retry to generate a fresh code.",
-	qrLabel: whatsappOnboardingCopy.qrLabel,
-	qrWaiting: "Waiting for a current QR code. Check connection status if this persists.",
-	codeInstructions:
-		"In WhatsApp → Linked devices → Link a device, choose Link with phone number instead and enter this code. Return here to confirm completion.",
-	phone: "Country code and phone number (digits only)",
-	check: "Check connection status",
-	retry: "Retry this session",
-	cancel: "Cancel connection",
-	review: "Review custom bots",
-	failed:
-		"Connection status or the last action was not confirmed. Check status before retrying. Sensitive details are not included in this error.",
+	leaving: "Switching apps pauses checking. Return here to continue.",
 };
 const connectorsEn = {
 	availableCount: "available",
@@ -401,7 +358,6 @@ import {
 	settingsCopy,
 	usageCopy,
 	walletTopupCopy,
-	whatsappOnboardingCopy,
 } from "@clawdi/shared/view";
 export const en = {
 	labels: {

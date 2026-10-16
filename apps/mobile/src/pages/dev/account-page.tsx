@@ -117,7 +117,7 @@ function AccountStories() {
 					ready
 					busy={false}
 					requestCode={noop}
-					check={noop}
+					repairing={false}
 					review={noop}
 					retry={noop}
 					cancel={noop}

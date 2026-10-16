@@ -6,7 +6,21 @@ export const agentChannelSectionCopy = {
 	clawdiEmpty: "No Clawdi bots available",
 	customEmpty: "No custom bots yet",
 	description: "Channels linked to this agent.",
+	available: "Available",
+	pair: "Pair",
+	generating: "Generating…",
+	link: "Link",
+	linking: "Linking…",
+	unlink: "Unlink",
+	unlinking: "Unlinking…",
 } as const;
+
+export function agentChannelUnlinkCopy(botName: string, agentName: string) {
+	return {
+		title: `Unlink ${botName}?`,
+		description: `${agentName} will stop answering through this bot.`,
+	};
+}
 
 export function agentChannelLinkUnavailableReason({
 	bot,

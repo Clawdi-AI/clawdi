@@ -12,6 +12,16 @@ export const channelDetailCopy = {
 		"1. Add the bot to the server. You need Manage Server or Administrator. 2. In that server, run the pairing command and paste this into the required code option:",
 	discordDm:
 		"1. Install the app and choose Add to my apps in Discord. 2. Open the app from Discord Direct Messages. 3. Run the pairing command and paste this into the required code option:",
+	pairChat: "Pair chat",
+	loadLinkedAgentsFailed: "Couldn't load linked agents",
+	openAgentChannels: "Open agent Channels",
+	linking: "Linking…",
+	linked: "Channel linked",
+	linkFailed: "Couldn't link channel",
+	unlinked: "Channel unlinked",
+	unlinkFailed: "Couldn't unlink channel",
+	syncFailed: "Couldn't sync commands",
+	pairFailed: "Couldn't create pairing code",
 	unlinkTitle: "Unlink agent?",
 	unlinkDescription: "Its paired chats will stop using this channel.",
 	unlink: "Unlink agent",
@@ -48,4 +58,15 @@ export function pairCodeExpiryLabel(expiresAt: string, nowMs: number): string {
 	const minutes = Math.floor(remainingSeconds / 60);
 	const seconds = remainingSeconds % 60;
 	return `Expires in ${minutes > 0 ? `${minutes}m ` : ""}${seconds}s`;
+}
+
+/** The target bot name goes between `linkingBefore` and `linkingAfter`, so Web can emphasize it. */
+export function providerLinkReplacementCopy(providerLabel: string) {
+	return {
+		title: `Replace this agent's ${providerLabel} link?`,
+		limit: `This agent can link only one ${providerLabel} bot.`,
+		linkingBefore: "Linking ",
+		linkingAfter: " will replace the current bot and remove its paired chats.",
+		confirm: `Replace ${providerLabel} link`,
+	};
 }

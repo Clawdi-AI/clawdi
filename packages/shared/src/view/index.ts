@@ -69,6 +69,7 @@ export * from "./notification-center";
 export * from "./onboarding";
 export * from "./overview-compute";
 export * from "./overview-compute-presentation";
+export * from "./paired-chat";
 export * from "./payment-methods";
 export * from "./plan-comparison";
 export * from "./project-actions";

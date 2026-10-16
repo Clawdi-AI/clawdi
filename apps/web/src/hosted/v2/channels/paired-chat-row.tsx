@@ -1,6 +1,13 @@
 "use client";
 
-import { relativeTime } from "@clawdi/shared/view";
+import {
+	pairedChatKindLabel,
+	pairedChatScopeLabel,
+	pairedChatsCopy,
+	pairedChatTitle,
+	relativeTime,
+	unpairChatTitle,
+} from "@clawdi/shared/view";
 import { Link2Off, MessageCircle, MessagesSquare } from "lucide-react";
 import { EntityHeader } from "@/components/entity-card";
 import { IconChip } from "@/components/icon-chip";
@@ -14,7 +21,6 @@ import {
 	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import { useDeleteChannelBinding } from "@/hosted/v2/channels/channels-hooks";
-import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
 import { cn } from "@/lib/utils";
 
 export const PAIRED_CHAT_ROW_CLASS =
@@ -39,18 +45,9 @@ export function PairedChatRow({
 	const privateChat = chatType === "private" || scope === "direct message";
 	const chatName = pairedChatTitle(binding, provider);
 	const displayName = binding.external_chat_name?.trim() || binding.external_chat_id;
-	const scopeLabel =
-		provider === "discord"
-			? scope === "direct message"
-				? "Direct message"
-				: "Server"
-			: chatType === "private"
-				? "Private chat"
-				: chatType === "group" || chatType === "supergroup"
-					? "Group chat"
-					: "Chat";
+	const scopeLabel = pairedChatKindLabel(provider, binding);
 	const metaDetail = unpair.error ? (
-		<span className="font-medium text-destructive">Couldn&apos;t unpair · Try again</span>
+		<span className="font-medium text-destructive">{pairedChatsCopy.unpairFailedInline}</span>
 	) : !isNormalChannelStatus(binding.status) ? (
 		<ChannelStatusBadge status={binding.status} />
 	) : binding.last_message_at ? (
@@ -87,9 +84,9 @@ export function PairedChatRow({
 			/>
 			<div className="flex min-h-8 min-w-0 justify-end">
 				<ConfirmAction
-					title={`Unpair ${chatName}?`}
-					description="Only this chat will be unpaired; other chats and this channel remain active."
-					confirmLabel="Unpair chat"
+					title={unpairChatTitle(chatName)}
+					description={pairedChatsCopy.unpairDescription}
+					confirmLabel={pairedChatsCopy.unpairConfirm}
 					destructive
 					onConfirm={() =>
 						unpair.mutateAsync({
@@ -107,12 +104,12 @@ export function PairedChatRow({
 						{unpair.isPending ? (
 							<>
 								<Spinner className="size-3.5" />
-								Unpairing…
+								{pairedChatsCopy.unpairing}
 							</>
 						) : (
 							<>
 								<Link2Off className="size-3.5" />
-								<span>Unpair</span>
+								<span>{pairedChatsCopy.unpair}</span>
 							</>
 						)}
 					</Button>

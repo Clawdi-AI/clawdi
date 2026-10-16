@@ -33,6 +33,8 @@ export const channelRemovalCopy = {
 	whatsappDescription:
 		"This logs out Clawdi as a linked device and removes the custom bot. Linked agents will stop sending and receiving.",
 	remove: "Delete custom bot",
+	removed: "Custom bot deleted",
+	removeFailed: "Couldn't delete Custom bot",
 	disconnect: "Disconnect and remove",
 };
 export function channelRemovalTitle(name: string, whatsapp: boolean) {

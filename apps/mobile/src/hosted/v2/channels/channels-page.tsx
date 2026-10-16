@@ -1,3 +1,4 @@
+import { agentProviderLinkReplacementRequired } from "@clawdi/shared/api";
 import {
 	agentsIndexClasses,
 	ENTITY_GRID_CLASS,
@@ -7,20 +8,25 @@ import {
 import {
 	agentChannelLinkUnavailableReason,
 	agentChannelPairedChatsLabel,
+	agentChannelUnlinkCopy,
+	agentDisplayName,
 	agentSurfaceCopy,
 	buildAgentChannelCardGroups,
 	type ChannelProviderFilter,
 	canonicalAgentChannelLinks,
+	channelDetailCopy,
 	channelFormCopy,
 	channelHealthSummary,
 	connectBotDialogCopy,
 	orderedChannelsForFilter,
 	providerCounts,
+	providerLinkReplacementCopy,
 	providerMeta,
 	providersWithBots,
 	agentChannelSectionCopy as scopedCopy,
 	sharedBotsFromPool,
 } from "@clawdi/shared/view";
+import { useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import Link2 from "lucide-react-native/icons/link-2";
 import Link2Off from "lucide-react-native/icons/link-2-off";
@@ -39,15 +45,18 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { ChannelCard, DiscordConnectionIssueAlert } from "@/hosted/v2/channels/channel-card";
 import { useChannelQuery } from "@/hosted/v2/channels/channels-hooks";
 import { ChannelCreate } from "@/hosted/v2/channels/connect-bot-dialog";
+import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
 import { routeParam } from "@/lib/route-params";
-import { useAccountScope } from "@/platform/account-lifecycle";
+import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export function ChannelsScreen() {
@@ -79,6 +88,32 @@ function ChannelsView() {
 			})
 		: null;
 	const total = (owned.data?.length ?? 0) + shared.length;
+	// Web's agent Channels: link and unlink in place; pairing and paired chats open their sheets.
+	const scope = useAccountScope(),
+		read = useAccountRead(),
+		cache = useQueryClient(),
+		{ channels } = useMobileApi(),
+		action = useAuthAction(scope.identity),
+		confirmationDialog = useConfirmation();
+	const [failureTitle, setFailureTitle] = useState<string>();
+	const agentName = agent.data ? agentDisplayName(agent.data) : "";
+	const linkedProviders = linked.data
+		? new Set(
+				linked.data.filter((item) => item.status === "active").map((item) => item.account.provider),
+			)
+		: undefined;
+	const change = (title: string, operation: (signal: AbortSignal) => Promise<unknown>) =>
+		action.run(async (current) => {
+			setFailureTitle(title);
+			await read(operation);
+			if (current())
+				await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "channels") });
+		});
+	const confirm = (title: string, message: string, label: string, run: () => unknown) =>
+		confirmationDialog.show(title, message, [
+			{ text: t("account.cancel"), style: "cancel" },
+			{ text: label, style: "destructive", onPress: () => void run() },
+		]);
 	const custom = orderedChannelsForFilter(owned.data ?? [], filter),
 		bots = orderedChannelsForFilter(shared, filter);
 
@@ -116,11 +151,10 @@ function ChannelsView() {
 								) : items.length ? (
 									<WebView recipe={ENTITY_GRID_CLASS}>
 										{items.map((bot) => {
-											const open = () =>
-												router.push({
-													pathname: "/channels/[id]",
-													params: { id: bot.id, agentId },
-												});
+											const sheet = (pathname: "/channels/[id]/pair" | "/channels/[id]/chats") =>
+												bot.link
+													? router.push({ pathname, params: { id: bot.id, linkId: bot.link.id } })
+													: undefined;
 											const runtime = agent.data?.agent_type;
 											const issue =
 												runtime === "hermes" || runtime === "openclaw"
@@ -148,43 +182,103 @@ function ChannelsView() {
 																	variant="link"
 																	size="xs"
 																	className={webView(scopedStyles.pairedChatsTrigger)}
-																	onPress={open}
+																	onPress={() => sheet("/channels/[id]/chats")}
 																>
 																	<Text>
 																		{agentChannelPairedChatsLabel(bot.link.binding_count ?? 0)}
 																	</Text>
 																</Button>
 															) : (
-																(issue ?? "Available")
+																(issue ?? scopedCopy.available)
 															),
 														]}
 														actions={
 															bot.link ? (
 																<>
-																	<Button variant="outline" size="sm" onPress={open}>
+																	<Button
+																		variant="outline"
+																		size="sm"
+																		onPress={() => sheet("/channels/[id]/pair")}
+																	>
 																		<Icon as={QrCode} />
-																		<Text>{t("channels.pairAction")}</Text>
+																		<Text>{scopedCopy.pair}</Text>
 																	</Button>
-																	<Button variant="ghost" size="sm" onPress={open}>
+																	<Button
+																		variant="ghost"
+																		size="sm"
+																		disabled={action.busy}
+																		onPress={() => {
+																			const link = bot.link;
+																			if (!link) return;
+																			const unlink = agentChannelUnlinkCopy(bot.name, agentName);
+																			confirm(
+																				unlink.title,
+																				unlink.description,
+																				scopedCopy.unlink,
+																				() =>
+																					change(channelDetailCopy.unlinkFailed, (signal) =>
+																						channels.unlink(bot.id, link.id, signal),
+																					),
+																			);
+																		}}
+																	>
 																		<Icon as={Link2Off} />
-																		<Text>{t("channels.unlinkAction")}</Text>
+																		<Text>
+																			{action.busy ? scopedCopy.unlinking : scopedCopy.unlink}
+																		</Text>
 																	</Button>
 																</>
 															) : (
 																<>
 																	{bot.visibility === "private" ? (
-																		<Button variant="ghost" size="sm" onPress={open}>
+																		<Button
+																			variant="ghost"
+																			size="sm"
+																			onPress={() =>
+																				router.push({
+																					pathname: "/channels/[id]",
+																					params: { id: bot.id, action: "delete" },
+																				})
+																			}
+																		>
 																			<Icon as={Trash2} />
 																			<Text>{t("sessionDetail.delete")}</Text>
 																		</Button>
 																	) : null}
 																	<Button
 																		size="sm"
-																		disabled={Boolean(issue) || linked.isError || linked.isPending}
-																		onPress={open}
+																		disabled={
+																			Boolean(issue) ||
+																			linked.isError ||
+																			linked.isPending ||
+																			action.busy
+																		}
+																		onPress={() => {
+																			const replace = agentProviderLinkReplacementRequired(
+																				runtime,
+																				bot.provider,
+																				linkedProviders,
+																			);
+																			const link = () =>
+																				change(channelDetailCopy.linkFailed, (signal) =>
+																					channels.link(bot.id, agentId, replace, signal),
+																				);
+																			if (!replace) return void link();
+																			const copy = providerLinkReplacementCopy(
+																				providerMeta(bot.provider).label,
+																			);
+																			confirm(
+																				copy.title,
+																				`${copy.limit} ${copy.linkingBefore}${bot.name}${copy.linkingAfter}`,
+																				copy.confirm,
+																				link,
+																			);
+																		}}
 																	>
 																		<Icon as={Link2} />
-																		<Text>{t("channels.linkAction")}</Text>
+																		<Text>
+																			{action.busy ? scopedCopy.linking : scopedCopy.link}
+																		</Text>
 																	</Button>
 																</>
 															)
@@ -207,7 +301,9 @@ function ChannelsView() {
 					{linked.isError ? (
 						<ApiErrorPanel error={linked.error} onRetry={() => void linked.refetch()} />
 					) : null}
+					{action.error ? <ApiErrorPanel error={action.failure} title={failureTitle} /> : null}
 				</AppScrollView>
+				{confirmationDialog.dialog}
 			</SafeAreaScreen>
 		);
 	const rows = [

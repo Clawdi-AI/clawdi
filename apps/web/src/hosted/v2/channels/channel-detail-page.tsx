@@ -377,7 +377,7 @@ function AgentsTab({
 			<ApiErrorPanel
 				error={links.error}
 				onRetry={() => links.refetch()}
-				title="Couldn't load linked agents"
+				title={copy.loadLinkedAgentsFailed}
 			/>
 		);
 	}
@@ -444,7 +444,7 @@ function AgentsTab({
 										) : (
 											<MessageSquarePlus className={channelDetailPageClasses.agentActionIcon} />
 										)}
-										Pair chat
+										{copy.pairChat}
 									</Button>
 								) : null}
 								<Button
@@ -452,7 +452,7 @@ function AgentsTab({
 									nativeButton={false}
 									variant="ghost"
 									size="icon-sm"
-									aria-label="Open agent Channels"
+									aria-label={copy.openAgentChannels}
 								>
 									<ArrowUpRight className={channelDetailPageClasses.agentActionIcon} />
 								</Button>
@@ -470,7 +470,7 @@ function AgentsTab({
 											variant="ghost"
 											size="icon-sm"
 											className={channelDetailPageClasses.removeAction}
-											aria-label="Unlink agent"
+											aria-label={copy.unlink}
 										>
 											<Unplug className={channelDetailPageClasses.agentActionIcon} />
 										</Button>
