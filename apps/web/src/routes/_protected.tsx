@@ -10,7 +10,7 @@ import { env } from "@/lib/env";
 import { requireRouteIdentity } from "@/lib/route-auth";
 
 const getAuthState = createServerFn({ method: "GET" }).handler(async () => {
-	setResponseHeader("cache-control", "no-store");
+	setResponseHeader("cache-control", "private, no-store");
 	if (env.VITE_DEV_AUTH_BYPASS) {
 		return { userId: "dev_browser", sessionId: "dev_browser_session" };
 	}
