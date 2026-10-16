@@ -342,6 +342,12 @@ screen from deleting another screen's in-flight marker. Explicit retries retain
 the exact saved body/key and do not revalidate it against a changed model catalog.
 New drafts still validate the current catalog; the server remains authoritative.
 
+Like Web, a `/deploy` channel link (`deploy_profile` or `utm_source`, also inside a
+sign-in `redirect_url`) preinstalls the Sui plugin bundle until deselected. The bundle
+is part of the draft, so the saved request carries `plugin_bundle` and a replay keeps
+it. The app has no card checkout: a new paid subscription is Wallet-funded, and a
+Wallet shortfall turns the primary action into Web's "Top up wallet".
+
 Creation reads current product capabilities from the existing `/v1/me` profile
 route and uses only the generated capability booleans. Route versions are not
 product generations: using this shared profile projection does not migrate the

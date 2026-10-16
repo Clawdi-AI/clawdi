@@ -237,7 +237,8 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			typeof draft.agentName !== "string" ||
 			typeof draft.language !== "string" ||
 			typeof draft.timezone !== "string" ||
-			!record(draft.ai)
+			!record(draft.ai) ||
+			(draft.pluginBundle !== undefined && draft.pluginBundle !== "sui")
 		)
 			return null;
 		const ai = draft.ai;
@@ -260,6 +261,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 			language: draft.language,
 			timezone: draft.timezone,
 			ai: restoredAi,
+			...(draft.pluginBundle === "sui" ? { pluginBundle: draft.pluginBundle } : {}),
 		};
 		let built: HostedDeployRequest;
 		if (restoredAi.mode === "configured") {
@@ -275,6 +277,7 @@ export function parseCreationAttempt(raw: string): CreationAttempt | null {
 				runtime: restoredDraft.runtime,
 				persona,
 				aiFields,
+				pluginBundle: restoredDraft.pluginBundle,
 			});
 		} else {
 			const validated = validateAndBuildHostedDeployRequest(restoredDraft);

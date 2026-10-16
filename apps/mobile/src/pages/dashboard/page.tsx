@@ -25,14 +25,12 @@ import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
 import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useHeaderWalletBalance } from "@/hosted/global-wallet-balance";
 import { useMobileApi } from "@/lib/api-provider";
-import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useCurrentUser } from "@/platform/auth/auth-client";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 export default function HomeRoute() {
 	const { isLoaded, user } = useCurrentUser();
-	const t = useI18n();
 	const { agents, inventory, hasHosted, tiles, canDeploy, hostedStatus } = useDashboardAgents();
 	const sessions = useCloudSessions(undefined, true, { automated: false, page_size: 25 });
 	const { cloud } = useMobileApi(),
@@ -63,26 +61,6 @@ export default function HomeRoute() {
 			<NativeHeader
 				title={OVERVIEW_COPY.title}
 				actions={wallet ? [wallet, notifications] : [notifications]}
-				menu={{
-					label: t("sessionDetail.more"),
-					items: [
-						{
-							id: "agents",
-							label: t("navigation.deployments"),
-							onPress: () => router.push("/agents"),
-						},
-						{
-							id: "share",
-							label: t("publicSession.open"),
-							onPress: () => router.push("/open-share"),
-						},
-						{
-							id: "vault",
-							label: t("vault.supplyTitle"),
-							onPress: () => router.push("/vault-request"),
-						},
-					],
-				}}
 			/>
 			<NativeList
 				data={recent}

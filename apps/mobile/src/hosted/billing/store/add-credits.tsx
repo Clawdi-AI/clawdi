@@ -101,9 +101,11 @@ export function CheckPendingPurchasesAction() {
  * `credits` offering through the M1 purchase flow. Only hosted settlement adds credits.
  */
 export function AddCreditsAction({
+	label,
 	onFunded,
 	size,
 }: {
+	label?: string;
 	onFunded?: () => void;
 	size?: "default" | "sm";
 }) {
@@ -145,7 +147,7 @@ export function AddCreditsAction({
 		<AppView className="gap-2">
 			<Button size={size} disabled={!available || action.busy} onPress={() => void buy()}>
 				<Icon as={Coins} />
-				<Text>{t(action.busy ? "store.purchasing" : "billingParity.topUp")}</Text>
+				<Text>{action.busy ? t("store.purchasing") : (label ?? t("billingParity.topUp"))}</Text>
 			</Button>
 			{!available ? (
 				<Text className="text-muted-foreground">{t("store.unavailable")}</Text>

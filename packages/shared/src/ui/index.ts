@@ -293,6 +293,7 @@ export * from "./list-toolbar";
 export * from "./managed-model-picker";
 export * from "./markdown";
 export * from "./message-list";
+export * from "./new-agent-chooser";
 export * from "./notification-center";
 export * from "./onboarding-card";
 export * from "./overview-compute-body";

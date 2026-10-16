@@ -270,7 +270,7 @@ export function HostedAgentsByCompute({
 					<ApiErrorPanel
 						error={selfManagedError}
 						onRetry={onRetrySelfManaged}
-						title="Couldn't load Connected Agents"
+						title={hostedAgentGroupsCopy.otherError}
 					/>
 				</section>
 			) : null}

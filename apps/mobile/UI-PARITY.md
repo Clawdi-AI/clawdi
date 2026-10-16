@@ -81,6 +81,10 @@ toggles the Web panel ScrollView) with no section navigation. Pushed settings
 pages use the native screen background (`bg-background`, matching the stack
 header) instead of the Web dialog's `bg-popover` surface. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
+Web's sidebar "New agent" button is the Agents header action: it opens the
+`/agents/new` chooser sheet (Deploy a Cloud Agent → `/deploy`, Connect your own
+agent → the `/agents/connect` "Add an agent" sheet), or the connect sheet directly
+without Cloud Agent access.
 
 Web's `AccountSuspensionBoundary` maps to the root Stack: the shared API fetch
 feeds every response to a per-account-scope suspension store, and once any read

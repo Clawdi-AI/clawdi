@@ -18,6 +18,7 @@ export type HostedDeployAiFields = Pick<HostedDeployRequest, "ai_provider_auth_k
 	>;
 export type HostedDeployComputePlanSlug = HostedDeployRequest["compute_plan_slug"];
 export type HostedDeployRuntime = HostedDeployRequest["runtime"];
+export type HostedDeployPluginBundle = NonNullable<HostedDeployRequest["plugin_bundle"]>;
 export type HostedDeployLanguage = NonNullable<HostedDeployRequest["language"]>;
 export type HostedDeployPlan = Schemas["V2PlanResponse"];
 export type HostedIncludedBasicAvailability = Schemas["V2ComputeIncludedBasicAvailabilityResponse"];
@@ -128,11 +129,13 @@ export function buildHostedDeployRequest({
 	runtime,
 	persona,
 	aiFields,
+	pluginBundle,
 }: {
 	computePlanSlug: HostedDeployComputePlanSlug;
 	runtime: HostedDeployRuntime;
 	persona: HostedDeployPersona;
 	aiFields: HostedDeployAiFields;
+	pluginBundle?: HostedDeployPluginBundle | null;
 }): HostedDeployRequest {
 	const agentName = persona.agentName.trim();
 	const language = normalizeHostedDeployLanguage(persona.language);
@@ -151,6 +154,7 @@ export function buildHostedDeployRequest({
 		timezone,
 		ai_provider_auth_kind,
 		...restAiFields,
+		...(pluginBundle ? { plugin_bundle: pluginBundle } : {}),
 	};
 }
 
@@ -167,6 +171,8 @@ export type HostedDeployWizardDraft = {
 	language: string;
 	timezone: string;
 	ai: HostedDeployWizardAiSelection;
+	/** Store plugin bundle preinstalled from a deploy channel link. */
+	pluginBundle?: HostedDeployPluginBundle;
 };
 
 export type HostedDeployValidationIssue = {
@@ -266,6 +272,7 @@ export function validateAndBuildHostedDeployRequest(
 				timezone: draft.timezone,
 			},
 			aiFields,
+			pluginBundle: draft.pluginBundle,
 		}),
 	};
 }

@@ -224,6 +224,38 @@ describe("durable creation boundary", () => {
 		expect(parseCreationAttempt("{broken")).toBeNull();
 	});
 
+	test("a channel link's plugin bundle replays with its saved request", () => {
+		const draft: HostedDeployWizardDraft = {
+			runtime: "hermes",
+			computePlanSlug: "compute_basic",
+			agentName: "Sui agent",
+			language: "en",
+			timezone: "",
+			ai: { mode: "unmanaged" },
+			pluginBundle: "sui",
+		};
+		const built = validateAndBuildHostedDeployRequest(draft);
+		if (!built.ok) throw new Error("Invalid fixture");
+		expect(built.request.plugin_bundle).toBe("sui");
+		const id = "8e244ab3-2222-4222-8222-222222222222";
+		const saved: CreationAttempt = {
+			version: 1,
+			submission: "uncertain",
+			id,
+			draft,
+			request: { ...built.request, deploy_request_id: id },
+		};
+		expect(parseCreationAttempt(JSON.stringify(saved))).toEqual(saved);
+		// A bundle the draft and request disagree on is payload drift, never a silent migration.
+		const { plugin_bundle: _, ...unbundled } = saved.request;
+		expect(parseCreationAttempt(JSON.stringify({ ...saved, request: unbundled }))).toBeNull();
+		expect(
+			parseCreationAttempt(
+				JSON.stringify({ ...saved, draft: { ...draft, pluginBundle: "unknown" } }),
+			),
+		).toBeNull();
+	});
+
 	test("restores saved-provider and exact-subscription requests only as persisted", () => {
 		const provider: SavedAiProvider = {
 			id: "row-api",

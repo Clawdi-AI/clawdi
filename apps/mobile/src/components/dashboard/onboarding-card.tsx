@@ -5,6 +5,7 @@ import Rocket from "lucide-react-native/icons/rocket";
 import TerminalSquare from "lucide-react-native/icons/square-terminal";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Icon } from "@/components/ui/icon";
 import { Text } from "@/components/ui/text";
 import { WebIcon, WebText, WebView, webView } from "@/components/ui/web-layout";
 export function OnboardingCard({
@@ -32,7 +33,7 @@ export function OnboardingCard({
 							className={webView(styles.deployAction)}
 							onPress={() => router.push("/deploy")}
 						>
-							<WebIcon as={Rocket} recipe={styles.titleIcon} />
+							<Icon as={Rocket} />
 							<Text>{OVERVIEW_COPY.deploy}</Text>
 						</Button>
 					) : null}
@@ -40,9 +41,9 @@ export function OnboardingCard({
 						variant={canDeployOnClawdi ? "outline" : "default"}
 						size="lg"
 						className={webView(styles.connectAction)}
-						onPress={() => router.push("/deploy")}
+						onPress={() => router.push("/agents/connect")}
 					>
-						<WebIcon as={TerminalSquare} recipe={styles.titleIcon} />
+						<Icon as={TerminalSquare} />
 						<Text>{OVERVIEW_COPY.connect}</Text>
 					</Button>
 				</WebView>
@@ -55,7 +56,7 @@ export function ConnectAnotherCard() {
 		<Card className={webView(page.connectCard)}>
 			<CardContent className={`${webView(page.connectCardContent)} flex-col`}>
 				<WebText recipe={page.connectCardTitle}>{OVERVIEW_COPY.connectAnother}</WebText>
-				<Button size="sm" variant="outline" onPress={() => router.push("/deploy")}>
+				<Button size="sm" variant="outline" onPress={() => router.push("/agents/connect")}>
 					<Text>{OVERVIEW_COPY.addAgent}</Text>
 				</Button>
 			</CardContent>

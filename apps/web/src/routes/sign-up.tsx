@@ -1,5 +1,5 @@
+import { deployChannelAuthSearch } from "@clawdi/shared/view";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { deployChannelAuthSearch } from "@/lib/deploy-channel";
 import { routeHeadTitle } from "@/lib/document-title";
 import SignUpPage from "@/pages/auth/sign-up";
 

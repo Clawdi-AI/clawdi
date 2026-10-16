@@ -141,8 +141,6 @@ const storeEn = {
 		"Payment for this subscription needs attention. Card payments can't be updated in this app.",
 	walletDunning:
 		"Your Wallet balance is too low to renew this subscription. Top up; billing updates automatically after funding.",
-	shortfall:
-		"Add {amount} to cover this plan. The price preview refreshes after your credits arrive.",
 } as const;
 /** Compute subscriptions billed by the App Store or Google Play ({store}). */
 const storeComputeEn = {
@@ -199,15 +197,11 @@ const storeComputeEn = {
 	deletionContinue: "I've cancelled — continue",
 } as const;
 const creationEn = {
-	unavailable: "Cloud creation is not configured.",
-	language: "Language",
 	selectTimezone: "Select a timezone",
 	storeRowUnavailable:
 		"This {store} subscription isn't free for a new agent from this account right now. Check Compute for its status.",
 	subscriptionUnavailable:
 		"Subscription no longer available. Choose a current reusable subscription or start a new one.",
-	cardUnavailable:
-		"Card checkout isn't available in the app yet. Choose Wallet balance or another option above.",
 	walletQuoteChanged: "The wallet quote changed. Review the new amount, then confirm again.",
 	walletNotFound: "We couldn't find this payment — you can try again.",
 	blocked:
@@ -587,7 +581,6 @@ export const en = {
 		linkFailed: "Couldn't open this link. Try again.",
 	},
 	publicSession: {
-		open: "Open a shared Session",
 		title: "Shared Session",
 		changed: "The conversation changed while loading. Refresh to start again.",
 	},
@@ -655,7 +648,6 @@ export const en = {
 		library: "Library",
 		vaults: "Vaults",
 		back: "Back",
-		deployments: "Deployments",
 	},
 	loading: {
 		app: "Loading Clawdi",
@@ -684,15 +676,12 @@ export const en = {
 	},
 	agents: {
 		unavailable: "Agent unavailable",
-		add: "Add an agent",
 		runCommands: "Run commands",
 		desktopHint:
 			"On your computer, Clawdi Desktop finds your agents, connects them, and turns on sync.",
 		askAgent: "Ask your agent",
 		waitingForConnection: agentSurfaceCopy.waitingForYourAgentToConnect,
 		loadError: "Couldn't load Agent",
-		connect: "Connect an Agent",
-		create: "Create Agent",
 		sectionUnavailable: "Agent section unavailable",
 		title: "Cloud Agents",
 	},
@@ -785,7 +774,6 @@ export const en = {
 		viewer: "Viewer",
 		open: "Open project",
 		filter: "Project scope",
-		filterMenu: "Project filter",
 		agentsScope: "Your Agents linked to this Project. Other members' Agents are not listed.",
 		all: "All projects",
 		choose: "Choose a project",

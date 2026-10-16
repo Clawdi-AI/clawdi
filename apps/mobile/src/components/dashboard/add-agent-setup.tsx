@@ -149,9 +149,11 @@ export function AddAgentSetup() {
 								<Button
 									size="sm"
 									variant="outline"
-									onPress={() =>
-										router.push({ pathname: "/agents/[id]", params: { id: agent.id } })
-									}
+									onPress={() => {
+										// This setup is the Add an agent sheet; the Agent opens in its tab.
+										if (router.canDismiss()) router.dismiss();
+										router.push({ pathname: "/agents/[id]", params: { id: agent.id } });
+									}}
 								>
 									<Text>{agentSurfaceCopy.openAgent}</Text>
 								</Button>

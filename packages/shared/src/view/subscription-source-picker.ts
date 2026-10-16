@@ -21,9 +21,11 @@ export const subscriptionSourceCopy = {
 
 export const deployFormCopy = {
 	name: "Name in Clawdi",
+	language: "Language",
 	timezone: "Timezone",
 	deploy: "Deploy",
 	chooseSource: "Choose a subscription source.",
+	choosePlan: "Choose an available compute plan.",
 	billingTerm: "Billing term",
 	paymentMethod: "Payment method",
 	cardTitle: "Card subscription",

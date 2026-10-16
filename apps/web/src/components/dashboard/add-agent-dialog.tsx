@@ -1,5 +1,6 @@
 "use client";
 
+import { addAgentDialogCopy } from "@clawdi/shared/view";
 import { useEffect } from "react";
 import { AddAgentSetup } from "@/components/dashboard/add-agent-setup";
 import {
@@ -35,11 +36,8 @@ export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () =
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
 			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
 				<DialogHeader>
-					<DialogTitle>Add an agent</DialogTitle>
-					<DialogDescription>
-						Connect an agent you run on your machine or server — Claude Code, Codex, Hermes,
-						OpenClaw, Pi, or OpenCode.
-					</DialogDescription>
+					<DialogTitle>{addAgentDialogCopy.title}</DialogTitle>
+					<DialogDescription>{addAgentDialogCopy.description}</DialogDescription>
 				</DialogHeader>
 				<AddAgentSetup />
 			</DialogContent>

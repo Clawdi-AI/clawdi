@@ -44,6 +44,7 @@ export * from "./contribution-graph";
 export * from "./create-project-dialog";
 export * from "./daemon-status";
 export * from "./dashboard";
+export * from "./deploy-channel";
 export * from "./deploy-locale";
 export * from "./deploy-submission-error";
 export * from "./deployment-failure";
