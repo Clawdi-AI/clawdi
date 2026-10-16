@@ -26,9 +26,14 @@ const oom = gatewayOomProtectionLines("openclaw", 4 * 1024 ** 3).join("\n");
 const environment = 'CLAWDI_AI_API_KEY="clawdi-egress-placeholder"\n';
 
 function fixture(
-	options: { activeState?: "active" | "inactive" | "failed"; needDaemonReload?: "yes" | "no" } = {},
+	options: {
+		activeState?: "active" | "inactive" | "failed";
+		needDaemonReload?: "yes" | "no";
+		gatewayUnit?: "hermes-gateway.service" | "openclaw-gateway.service";
+	} = {},
 ): {
 	paths: RuntimePaths;
+	gateway: string;
 	dropIn: string;
 	env: string;
 	baseUnit: string;
@@ -45,9 +50,10 @@ function fixture(
 		systemdEnvRoot: join(root, "env"),
 		appliedState: join(root, "status", "runtime-applied.json"),
 	};
-	const dropIn = join(paths.systemdUserRoot, `${gateway}.d`, "10-clawdi-hosted.conf");
-	const env = join(paths.systemdEnvRoot, `${gateway}.env`);
-	const baseUnit = join(paths.systemdUserRoot, gateway);
+	const gatewayUnit = options.gatewayUnit ?? gateway;
+	const dropIn = join(paths.systemdUserRoot, `${gatewayUnit}.d`, "10-clawdi-hosted.conf");
+	const env = join(paths.systemdEnvRoot, `${gatewayUnit}.env`);
+	const baseUnit = join(paths.systemdUserRoot, gatewayUnit);
 	const activeState = join(root, "active-state");
 	const needDaemonReload = join(root, "need-daemon-reload");
 	for (const path of [dropIn, env, join(paths.systemdSystemRoot, daemon)])
@@ -85,7 +91,7 @@ esac
 	process.env.CLAWDI_SYSTEMD_APPLY = "1";
 	process.env.CLAWDI_SYSTEMCTL_PATH = command;
 	process.env.CLAWDI_RUNTIME_USER = "root";
-	return { paths, dropIn, env, baseUnit, log };
+	return { paths, gateway: gatewayUnit, dropIn, env, baseUnit, log };
 }
 
 function commit(paths: RuntimePaths, activated: Record<string, string>): void {
@@ -106,8 +112,8 @@ function commit(paths: RuntimePaths, activated: Record<string, string>): void {
 	);
 }
 
-function dropInContents(withOom: boolean): string {
-	return `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n${withOom ? `${oom}\n` : ""}EnvironmentFile=/run/clawdi/systemd/env/${gateway}.env\n`;
+function dropInContents(withOom: boolean, unit = gateway): string {
+	return `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n${withOom ? `${oom}\n` : ""}EnvironmentFile=/run/clawdi/systemd/env/${unit}.env\n`;
 }
 
 // Independent reproductions of the released digest formats. The old
@@ -127,9 +133,13 @@ function releasedReceipt(version: "0.14.101" | "0.14.102" | "0.14.103", dropIn: 
 	return createHash("sha256").update(`${base}\n${contents}`).update(environment).digest("hex");
 }
 
-for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
+for (const [version, label] of [
+	["0.14.101", "0.14.101"],
+	["0.14.102", "0.14.102"],
+	["0.14.103", "0.14.103 through 0.16.16"],
+] as const) {
 	for (const withOom of [false, true]) {
-		test(`${version} receipt with OOM=${withOom}: handoff and drift re-apply preserve the gateway`, () => {
+		test(`${label} receipt with OOM=${withOom}: handoff and drift re-apply preserve the gateway`, () => {
 			const f = fixture();
 			writeFileSync(f.dropIn, dropInContents(withOom));
 			const before = readSystemdUnitSnapshot(f.paths);
@@ -159,6 +169,44 @@ for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
 			expect(readRuntimeAppliedState(f.paths)?.activated[gateway]).toBe(after.user.get(gateway));
 		});
 	}
+}
+
+for (const gatewayUnit of ["hermes-gateway.service", "openclaw-gateway.service"] as const) {
+	test(`${gatewayUnit}: 0.14.103 through 0.16.16 receipt: pre-handoff base rewrite restarts once, then converges`, () => {
+		const f = fixture({ gatewayUnit });
+		writeFileSync(f.dropIn, dropInContents(true, f.gateway));
+		const committed = readSystemdUnitSnapshot(f.paths);
+		commit(f.paths, {
+			...Object.fromEntries(committed.system),
+			[f.gateway]: releasedReceipt("0.14.103", readFileSync(f.dropIn, "utf8")),
+		});
+
+		// The native installer rewrites its base unit before the new CLI takes its
+		// handoff snapshot. The old combined receipt cannot prove this is harmless.
+		writeFileSync(f.baseUnit, `${base}Environment=PRE_HANDOFF=1\n`);
+		const handoff = readSystemdUnitSnapshot(f.paths);
+		const firstApply = applySystemdRuntimeUpdate(f.paths, handoff, handoff, {});
+		expect(firstApply.applied).toBe(true);
+		let commands = readFileSync(f.log, "utf8");
+		expect(commands.match(new RegExp(`^--user restart ${f.gateway}$`, "gm"))).toHaveLength(1);
+		commit(f.paths, firstApply.activated);
+
+		writeFileSync(f.log, "");
+		const repeated = readSystemdUnitSnapshot(f.paths);
+		expect(applySystemdRuntimeUpdate(f.paths, handoff, repeated, {}).applied).toBe(true);
+		expect(readFileSync(f.log, "utf8")).not.toMatch(/daemon-reload|\b(start|restart|stop)\b/);
+
+		writeFileSync(f.log, "");
+		const beforeFurtherRewrite = readSystemdUnitSnapshot(f.paths);
+		writeFileSync(f.baseUnit, `${base}Environment=POST_HANDOFF=1\n`);
+		const afterFurtherRewrite = readSystemdUnitSnapshot(f.paths);
+		expect(
+			applySystemdRuntimeUpdate(f.paths, beforeFurtherRewrite, afterFurtherRewrite, {}).applied,
+		).toBe(true);
+		commands = readFileSync(f.log, "utf8");
+		expect(commands).toContain("--user daemon-reload");
+		expect(commands).not.toMatch(/\b(start|restart|stop)\b/);
+	});
 }
 
 test("Hosted capability withdrawal and restoration each require activation; unchanged drift does not", () => {

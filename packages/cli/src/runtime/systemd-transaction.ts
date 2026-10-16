@@ -93,7 +93,7 @@ export function readSystemdUnitSnapshot(
 				user: readManagedSystemdUnits(paths, paths.systemdUserRoot, undefined, "cli102", read),
 			},
 			{
-				// 0.14.103 through the current release included official base bytes
+				// 0.14.103 through 0.16.16 included official base bytes
 				// in the activation fingerprint, but stripped the OOM policy block.
 				system: readManagedSystemdUnits(paths, paths.systemdSystemRoot, undefined, "cli103", read),
 				user: readManagedSystemdUnits(paths, paths.systemdUserRoot, undefined, "cli103", read),
@@ -334,9 +334,9 @@ export function applySystemdRuntimeUpdate(
 		) {
 			// Exact proof of the pre-mutation revision permits a format migration.
 			// Comparing the candidate to this revision still detects real changes,
-			// including an interrupted apply or a credential/drop-in mutation.
-			// Clawdi-owned unit changes still activate; an official base-unit refresh
-			// is represented only by the full-file reload fingerprint.
+			// including an interrupted apply. Credential/drop-in changes and
+			// Clawdi-owned unit changes still activate; official base-unit refreshes
+			// are represented only by the full-file reload fingerprint.
 			return before[scope].get(unit);
 		}
 		return committed;
