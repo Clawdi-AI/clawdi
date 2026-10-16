@@ -549,7 +549,6 @@ export const en = {
 	},
 	sessionFilters: {
 		search: "Search Sessions and messages…",
-		searchInvalid: "Enter 2–500 characters, or clear the search.",
 		options: "Filters and sorting",
 		agent: "Agent type",
 		all: "All",
@@ -583,10 +582,8 @@ export const en = {
 		moreText: "Show more text",
 	},
 	sessions: {
-		clearFilter: "Show all Sessions",
 		noMessages: "No message transcript is available yet.",
 		revisionChanged: "The transcript changed. Refresh to load its current version.",
-		filterInvalid: "The Agent filter is invalid.",
 	},
 	skills: {
 		singular: "Skill",

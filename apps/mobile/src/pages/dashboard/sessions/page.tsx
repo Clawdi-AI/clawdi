@@ -14,6 +14,7 @@ import {
 	getProjectResourceDefinition,
 	groupSessionsByRecency,
 	sessionListEmptyMessage,
+	sessionSearchQueryError,
 } from "@clawdi/shared/view";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import PlusCircle from "lucide-react-native/icons/circle-plus";
@@ -27,6 +28,7 @@ import {
 import { FilterChip } from "@/components/filter-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
+import { ResourceError } from "@/components/resource-error";
 import { SectionLabel } from "@/components/section-label";
 import { SessionCard, SessionFeed } from "@/components/sessions/session-feed";
 import { sessionsHeaderMenu } from "@/components/sessions/sessions-header-menu";
@@ -93,7 +95,8 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 		requestRevision.current++;
 		setPaginationError(undefined);
 	}, [profileKey]);
-	const searchValid = !draft.q?.trim() || isSearchQueryReady(draft.q);
+	const searchQueryError = sessionSearchQueryError(draft.q ?? "");
+	const searchValid = !searchQueryError;
 	useEffect(() => {
 		if (!searchValid) return;
 		const timeout = setTimeout(() => {
@@ -205,28 +208,15 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 					<WebView recipe="gap-5 pb-3">
 						<PageHeader
 							title={copy.title}
-							description={
-								invalid
-									? t("sessions.filterInvalid")
-									: getProjectResourceDefinition("sessions").managementDescription
-							}
+							description={getProjectResourceDefinition("sessions").managementDescription}
 						/>
 						{invalid ? (
-							<Button variant="outline" onPress={() => router.replace("/sessions")}>
-								<Text>{t("sessions.clearFilter")}</Text>
-							</Button>
+							<ResourceError missing />
 						) : (
 							<WebView recipe={styles.content}>
 								<ListToolbar
 									filters={
 										<>
-											{/* The Agent scope is an applied filter, cleared like the profile chip. */}
-											{agentId ? (
-												<FilterChip active onClick={() => router.replace("/sessions")}>
-													<Text>{t("sessions.clearFilter")}</Text>
-													<Icon as={X} />
-												</FilterChip>
-											) : null}
 											{profileChipLabel ? (
 												<FilterChip active onClick={profileFilter.clear}>
 													<Text>{`${AGENT_PROFILES_COPY.filterTitle} · ${profileChipLabel}`}</Text>
@@ -281,7 +271,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 								/>
 								{!searchValid ? (
 									<WebText recipe={styles.updateStatus} accessibilityRole="alert">
-										{t("sessionFilters.searchInvalid")}
+										{searchQueryError}
 									</WebText>
 								) : null}
 								{agents.isError ? (

@@ -1,12 +1,7 @@
 "use client";
 
 import { SESSION_SORT_KEYS as SORT_KEYS } from "@clawdi/shared/api";
-import {
-	isSearchQueryReady,
-	SEARCH_QUERY_MAX_LENGTH,
-	SEARCH_QUERY_MIN_LENGTH,
-	searchQueryLength,
-} from "@clawdi/shared/consts";
+import { isSearchQueryReady, SEARCH_QUERY_MAX_LENGTH } from "@clawdi/shared/consts";
 import { sessionsPageClasses } from "@clawdi/shared/ui";
 import {
 	agentTypeLabel,
@@ -16,6 +11,7 @@ import {
 	recencyBucketFor,
 	type SessionListQuery,
 	sessionListEmptyMessage,
+	sessionSearchQueryError,
 } from "@clawdi/shared/view";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "@tanstack/react-router";
@@ -118,13 +114,7 @@ function SessionsListInner() {
 	const draftSearchQuery = params.q.trim();
 	const debouncedSearchQuery = requestSearchState.query.trim();
 	const searchQuery = isSearchQueryReady(debouncedSearchQuery) ? debouncedSearchQuery : "";
-	const draftSearchLength = searchQueryLength(draftSearchQuery);
-	const searchQueryError =
-		draftSearchLength > 0 && draftSearchLength < SEARCH_QUERY_MIN_LENGTH
-			? `Type at least ${SEARCH_QUERY_MIN_LENGTH} characters`
-			: draftSearchLength > SEARCH_QUERY_MAX_LENGTH
-				? `Type at most ${SEARCH_QUERY_MAX_LENGTH} characters`
-				: null;
+	const searchQueryError = sessionSearchQueryError(draftSearchQuery);
 	const getSessionLink = useCallback(
 		(session: SessionListItem) => sessionDetailLink(session, { returnTo, searchQuery }),
 		[returnTo, searchQuery],
