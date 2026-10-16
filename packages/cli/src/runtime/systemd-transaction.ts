@@ -92,6 +92,12 @@ export function readSystemdUnitSnapshot(
 				system: readManagedSystemdUnits(paths, paths.systemdSystemRoot, undefined, "cli102", read),
 				user: readManagedSystemdUnits(paths, paths.systemdUserRoot, undefined, "cli102", read),
 			},
+			{
+				// 0.14.103 through the current release included official base bytes
+				// in the activation fingerprint, but stripped the OOM policy block.
+				system: readManagedSystemdUnits(paths, paths.systemdSystemRoot, undefined, "cli103", read),
+				user: readManagedSystemdUnits(paths, paths.systemdUserRoot, undefined, "cli103", read),
+			},
 		],
 	};
 }
@@ -135,7 +141,7 @@ function readManagedSystemdUnits(
 	paths: ReturnType<typeof getRuntimePaths>,
 	root: string,
 	selectedUnits?: ReadonlySet<string>,
-	format: "activation" | "files" | "cli102" = "activation",
+	format: "activation" | "files" | "cli102" | "cli103" = "activation",
 	read: (path: string) => string | null = readFileIfExists,
 ): Map<string, string> {
 	const units = new Map<string, string>();
@@ -152,14 +158,19 @@ function readManagedSystemdUnits(
 			continue;
 		}
 		const base = read(join(root, entry.unitName)) ?? "";
-		const dropIn =
-			format === "cli102"
-				? cli102DropInReceiptContents(withoutOomProtection(entry.generatedContents))
-				: entry.generatedContents;
-		units.set(
-			entry.unitName,
-			systemdUnitFingerprint(`${base}\n${dropIn}`, environment, format === "files"),
-		);
+		let contents: string;
+		if (format === "activation") {
+			contents = withoutOomProtection(entry.generatedContents);
+		} else if (format === "cli102") {
+			contents = `${base}\n${cli102DropInReceiptContents(
+				withoutOomProtection(entry.generatedContents),
+			)}`;
+		} else if (format === "cli103") {
+			contents = `${base}\n${withoutOomProtection(entry.generatedContents)}`;
+		} else {
+			contents = `${base}\n${entry.generatedContents}`;
+		}
+		units.set(entry.unitName, systemdUnitFingerprint(contents, environment, format === "files"));
 	}
 	return units;
 }
@@ -323,7 +334,9 @@ export function applySystemdRuntimeUpdate(
 		) {
 			// Exact proof of the pre-mutation revision permits a format migration.
 			// Comparing the candidate to this revision still detects real changes,
-			// including an interrupted apply or a credential/base-unit mutation.
+			// including an interrupted apply or a credential/drop-in mutation.
+			// Clawdi-owned unit changes still activate; an official base-unit refresh
+			// is represented only by the full-file reload fingerprint.
 			return before[scope].get(unit);
 		}
 		return committed;

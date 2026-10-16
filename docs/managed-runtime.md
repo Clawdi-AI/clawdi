@@ -309,6 +309,11 @@ systemd activation and runtime readiness still determine whether the adopted
 service works. Service file fingerprints are bookkeeping, not proof of the
 running source version or dependency capabilities.
 
+For an adopted official unit, Clawdi activation fingerprints cover only the
+Clawdi-owned drop-in and environment file. A native refresh of the official
+base unit can require `daemon-reload`, but it does not by itself restart the
+active gateway.
+
 OpenClaw also adopts existing regular native units without forcing installation
 on fingerprint drift. Its pinned
 [`2026.8.1` source](https://github.com/openclaw/openclaw/blob/ea806575e6450e4d1efdfc72c19f04be982a1b9b/src/entry.version-fast-path.ts)
@@ -458,6 +463,11 @@ restarting active services; command, secret, and other environment changes retai
 normal activation rules. `OOMPolicy` changes on reload. Environment variables
 apply on the next natural service start. An inactive or failed service can still
 receive the usual recovery start.
+
+Official base-unit refreshes follow the same ownership boundary: the native
+installer owns those bytes, so a refresh gets at most `daemon-reload`. Changes
+to a Clawdi drop-in or environment file still activate the official service;
+changes to a `clawdi-*` base unit retain normal activation rules.
 
 Hermes gets `TERMINAL_LOCAL_MEMORY_MAX_MB` at half the tightest visible cgroup-v2
 `memory.max` or physical RAM, in whole MiB (2,048 MiB on a 4 GiB instance;
