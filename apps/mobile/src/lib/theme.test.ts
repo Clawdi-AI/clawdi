@@ -33,7 +33,7 @@ test("Clerk native theme is generated from the current shared Web tokens", () =>
 test("Clerk native theme passes the config plugin's prebuild validation for every color key", () => {
 	const plugin: {
 		_testing: { validateThemeJson: (theme: unknown) => void; VALID_COLOR_KEYS: string[] };
-	} = createRequire(import.meta.url)("@clerk/expo/app.plugin.js");
+	} = createRequire(import.meta.url)("@clerk/expo-native-components/app.plugin.js");
 	const theme = JSON.parse(readFileSync(clerkThemeOutputPath, "utf8"));
 	expect(() => plugin._testing.validateThemeJson(theme)).not.toThrow();
 	const keys = [...plugin._testing.VALID_COLOR_KEYS].sort();

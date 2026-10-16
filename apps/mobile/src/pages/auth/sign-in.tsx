@@ -1,4 +1,4 @@
-import { AuthView } from "@clerk/expo/native";
+import { AuthView } from "@clerk/expo/native-components";
 
 /**
  * Serves /sign-in and /sign-up with Clerk's default `signInOrUp` mode: the native

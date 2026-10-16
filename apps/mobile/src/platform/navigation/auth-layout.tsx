@@ -1,5 +1,5 @@
 import { publicSessionId } from "@clawdi/shared/api";
-import { useAuthViewState } from "@clerk/expo/native";
+import { useAuthViewState } from "@clerk/expo/native-components";
 import { Redirect, Stack, useGlobalSearchParams } from "expo-router";
 import { useAppAuth } from "@/platform/auth/auth-client";
 import { ClerkOnly } from "@/platform/auth/clerk-only";
