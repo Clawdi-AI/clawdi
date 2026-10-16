@@ -358,8 +358,13 @@ export function HeroCard({
 					</AppView>
 				) : null}
 				<AppView pointerEvents="none" className={webView(entityCardClasses.heroBody)}>
-					<AppView className={webView(entityCardClasses.titleRow)}>
-						<AppView className={webView(entityCardClasses.body)}>
+					{/* As in the compact card: at large text sizes badges wrap below the title instead
+					of truncating it; a title too long for the whole row still truncates. */}
+					<AppView className={cn(webView(entityCardClasses.titleRow), "flex-wrap")}>
+						<AppView
+							className="min-w-0"
+							style={{ flexGrow: 1, flexShrink: 0, flexBasis: "auto", maxWidth: "100%" }}
+						>
 							<Content className={cn(webText(entityCardClasses.title), titleClassName)}>
 								{typeof title === "string" || typeof title === "number" ? (
 									<TruncatedText title={titleAttribute}>{title}</TruncatedText>

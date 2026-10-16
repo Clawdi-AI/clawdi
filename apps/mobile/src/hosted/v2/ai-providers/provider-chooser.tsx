@@ -5,9 +5,9 @@ import {
 	type ProviderChoice,
 	type ProviderGroup,
 } from "@clawdi/shared/view";
-import { Stack, useNavigation } from "expo-router";
+import { Stack } from "expo-router";
 import ChevronRight from "lucide-react-native/icons/chevron-right";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -26,8 +26,6 @@ export function ProviderChooser({
 	selected: ProviderGroup | null;
 	onGroupChange: (group: ProviderGroup | null) => void;
 }) {
-	const navigation = useNavigation();
-	useEffect(() => () => navigation.setOptions({ headerSearchBarOptions: undefined }), [navigation]);
 	const [query, setQuery] = useState("");
 	const groups = filterProviderGroups(query);
 	const search = useHeaderSearch({
@@ -39,7 +37,7 @@ export function ProviderChooser({
 	const entries = selected?.entries ?? [];
 	return (
 		<>
-			<Stack.Screen options={{ headerSearchBarOptions: selected ? undefined : search }} />
+			{selected ? null : <Stack.SearchBar {...search} />}
 			{selected ? (
 				<NativeList
 					data={entries}

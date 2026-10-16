@@ -77,9 +77,8 @@ function ProjectsView() {
 	});
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen
-				options={{ headerSearchBarOptions: searchOptions, headerLargeTitleEnabled: true }}
-			/>
+			<Stack.Screen options={{ headerLargeTitleEnabled: true }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={rows}
 				keyExtractor={(project) => project.id}

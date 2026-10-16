@@ -216,12 +216,16 @@ return <><NativeHeader title={copy.title} actions={actions}
 **Search** — `useHeaderSearch` in `native-header.tsx`; pilot:
 `src/pages/dashboard/sessions/page.tsx`. Keep the existing validation,
 debounce, filters and account-scoped query. The hook syncs native text edits
-and programmatic resets; there is no in-content search field.
+and programmatic resets; there is no in-content search field. Render it with
+Expo Router's `Stack.SearchBar`, never `Stack.Screen` `headerSearchBarOptions`:
+the composition option leaves with its component, so a reused route screen
+(for example a deep link from one agent section to another) keeps no stray
+search icon.
 
 ```tsx
 const search = useHeaderSearch({ value: query, onChange: setQuery,
   placeholder: copy.searchPlaceholder, maxLength: SEARCH_QUERY_MAX_LENGTH });
-return <><Stack.Screen options={{ headerSearchBarOptions: search }} />
+return <><Stack.SearchBar {...search} />
   <NativeHeader title={copy.title} />
   <NativeList data={rows} renderItem={renderRow} /></>;
 ```

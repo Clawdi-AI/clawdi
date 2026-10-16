@@ -231,7 +231,7 @@ function BindingsView({ agentId }: { agentId?: string }) {
 			title={t("projects.title")}
 			description={t("projects.agentProjectsDescription")}
 		>
-			<Stack.Screen options={{ headerSearchBarOptions: headerSearch }} />
+			<Stack.SearchBar {...headerSearch} />
 			{failed ? (
 				<ApiErrorPanel
 					error={bindings.error ?? agent.error ?? projects.error}

@@ -52,8 +52,6 @@ const whatsappEn = {
 	leaving: "Switching apps pauses checking. Return here to continue.",
 };
 const connectorsEn = {
-	availableCount: "available",
-	activeCount: "active",
 	title: "Connectors",
 	oauth: "Authorize in the browser, then return here.",
 } as const;

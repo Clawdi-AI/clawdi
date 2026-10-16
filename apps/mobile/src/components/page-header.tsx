@@ -2,13 +2,18 @@ import { pageHeaderClasses as styles } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import type { ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { WebContent, WebView, webText, webView } from "@/components/ui/web-layout";
+import { WebContent, WebText, WebView, webText, webView } from "@/components/ui/web-layout";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import type { HeaderAction, HeaderMenu } from "@/platform/navigation/native-header-types";
 
 interface PageHeaderProps {
 	testID?: string;
 	title: ReactNode;
+	/**
+	 * Also show Web's wrapping `<h1>` in the content. Web does this below its truncated top-bar
+	 * breadcrumb; the native header plays the breadcrumb's part. For long user-provided titles.
+	 */
+	contentTitle?: boolean;
 	titleAdornment?: ReactNode;
 	description?: ReactNode;
 	headerActions?: HeaderAction[];
@@ -22,6 +27,7 @@ interface PageHeaderProps {
 export function PageHeader({
 	testID,
 	title,
+	contentTitle = false,
 	titleAdornment,
 	description,
 	headerActions,
@@ -42,7 +48,16 @@ export function PageHeader({
 			<WebView recipe={styles.lockup} className="w-full">
 				{icon ? <WebView recipe={styles.icon}>{icon}</WebView> : null}
 				<WebView recipe={styles.body} style={{ flex: 1, minWidth: 0 }}>
-					{titleAdornment}
+					{contentTitle ? (
+						<WebView recipe={styles.titleRow}>
+							<WebText recipe={styles.title} accessibilityRole="header">
+								{title}
+							</WebText>
+							{titleAdornment}
+						</WebView>
+					) : (
+						titleAdornment
+					)}
 					{description ? (
 						<WebView recipe={styles.description}>
 							<WebContent recipe={webText(styles.description)}>{description}</WebContent>

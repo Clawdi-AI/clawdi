@@ -1,8 +1,10 @@
 import { resolveAgentProjectScope, resolveAgentWorkspaceProjectId } from "@clawdi/shared/api";
+import { isCustomProject } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { LibraryPage } from "@/components/detail/layout";
+import { useCloudProjects } from "@/components/projects/projects-surface";
 import { RouteLoadingSkeleton } from "@/components/route-loading-skeleton";
 import { useCloudAgent } from "@/hooks/cloud-inventory";
 import { useMobileApi } from "@/lib/api-provider";
@@ -32,7 +34,10 @@ export function AgentResourceRouteGate({
 		queryFn: ({ signal }) =>
 			read((lease) => agentProjects.listBindings(agentId ?? "", lease), signal),
 	});
-	let allowed = false;
+	// Like Web's useAgentProjectBrowseAccess: browsing the user's own Project is allowed even
+	// when the Agent isn't linked to it; that grants the Agent runtime no access.
+	const projects = useCloudProjects();
+	let bound = false;
 	let resolvedProject = projectId;
 	if (agent.data && bindings.data && !agent.isError && !bindings.isError) {
 		try {
@@ -42,7 +47,7 @@ export function AgentResourceRouteGate({
 					? (resolveAgentWorkspaceProjectId(bindings.data, agent.data.default_project_id) ??
 						undefined)
 					: undefined);
-			allowed = Boolean(
+			bound = Boolean(
 				resolvedProject &&
 					resolveAgentProjectScope(
 						bindings.data,
@@ -50,10 +55,21 @@ export function AgentResourceRouteGate({
 					).projectIds.includes(resolvedProject),
 			);
 		} catch {
-			allowed = false;
+			bound = false;
 		}
 	}
-	if (agentId && (projectId || workspaceFallback) && (agent.isPending || bindings.isPending))
+	const owned = Boolean(
+		agent.data &&
+			resolvedProject &&
+			!projects.isError &&
+			projects.data?.some((project) => project.id === resolvedProject && isCustomProject(project)),
+	);
+	const allowed = bound || owned;
+	if (
+		agentId &&
+		(projectId || workspaceFallback) &&
+		(agent.isPending || bindings.isPending || (!bound && projects.isPending))
+	)
 		return (
 			<LibraryPage>
 				<RouteLoadingSkeleton />
@@ -63,11 +79,12 @@ export function AgentResourceRouteGate({
 		return (
 			<LibraryPage>
 				<ApiErrorPanel
-					error={agent.error ?? bindings.error}
+					error={agent.error ?? bindings.error ?? projects.error}
 					title={t("projects.unavailable")}
 					onRetry={() => {
 						void agent.refetch();
 						void bindings.refetch();
+						void projects.refetch();
 					}}
 				/>
 			</LibraryPage>

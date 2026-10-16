@@ -136,9 +136,8 @@ function MemoriesView() {
 	});
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen
-				options={{ headerSearchBarOptions: searchOptions, headerLargeTitleEnabled: true }}
-			/>
+			<Stack.Screen options={{ headerLargeTitleEnabled: true }} />
+			<Stack.SearchBar {...searchOptions} />
 			<NativeList
 				data={items}
 				keyExtractor={(memory) => memory.id}

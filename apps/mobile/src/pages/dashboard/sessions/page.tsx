@@ -168,7 +168,7 @@ function SessionsView({ agentId, invalid }: { agentId?: string; invalid: boolean
 	const tri = (value: string) => (value === "all" ? undefined : value === "true");
 	return (
 		<SafeAreaScreen>
-			<Stack.Screen options={{ headerSearchBarOptions: invalid ? undefined : search }} />
+			{invalid ? null : <Stack.SearchBar {...search} />}
 			<NativeHeader
 				title={copy.title}
 				actions={[

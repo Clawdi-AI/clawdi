@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	chatwootColorSchemeScript,
 	chatwootWidgetScript,
 	isChatwootCloseMessage,
 	isChatwootWidgetUrl,
@@ -62,6 +63,12 @@ describe("Chatwoot widget script", () => {
 				customAttributes: { setup_deployment_id: "hdep_1", setup_elapsed_seconds: 42 },
 			},
 			{ event: "set-label", label: "agent-setup" },
+		]);
+	});
+
+	test("a later theme change sends only the widget's color scheme", () => {
+		expect(widgetMessages(chatwootColorSchemeScript("dark"))).toEqual([
+			{ event: "set-color-scheme", darkMode: "dark" },
 		]);
 	});
 

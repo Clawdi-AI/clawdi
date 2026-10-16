@@ -1,7 +1,7 @@
 import { CLAWDI_HELP_COPY, resolveChatwootIdentity, settingsCopy } from "@clawdi/shared/view";
 import { useQuery } from "@tanstack/react-query";
 import { useLocalSearchParams } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WebView } from "react-native-webview";
 import { useUniwind } from "uniwind";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -10,6 +10,7 @@ import { SheetPage } from "@/components/ui/sheet-page";
 import { AppView } from "@/components/ui/view";
 import { useMobileApi } from "@/lib/api-provider";
 import {
+	chatwootColorSchemeScript,
 	chatwootWidgetScript,
 	chatwootWidgetUrl,
 	isChatwootCloseMessage,
@@ -39,6 +40,11 @@ export default function SupportPage() {
 	const read = useAccountRead();
 	const { user } = useCurrentUser();
 	const { theme } = useUniwind();
+	const colorScheme = theme === "dark" ? "dark" : "light";
+	const widget = useRef<WebView>(null);
+	useEffect(() => {
+		widget.current?.injectJavaScript(chatwootColorSchemeScript(colorScheme));
+	}, [colorScheme]);
 	const sheet = useSheet({ fallback: "/settings" });
 	const [widgetFailed, setWidgetFailed] = useState(false);
 	const [attempt, setAttempt] = useState(0);
@@ -84,13 +90,14 @@ export default function SupportPage() {
 			) : (
 				<WebView
 					key={attempt}
+					ref={widget}
 					testID="support-chat-widget"
 					source={{ uri: chatwootWidgetUrl(chatwoot) }}
 					incognito
 					injectedJavaScript={chatwootWidgetScript({
 						identity,
 						identifierHash: identifierHash.data,
-						colorScheme: theme === "dark" ? "dark" : "light",
+						colorScheme,
 						context: supportChatContext(params),
 					})}
 					onShouldStartLoadWithRequest={(request) => {

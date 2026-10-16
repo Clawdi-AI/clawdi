@@ -233,7 +233,7 @@ function Plugins({ id, pluginName }: { id: string; pluginName?: string }) {
 			}
 			description={agentSectionCopy.plugins.description}
 		>
-			<Stack.Screen options={{ headerSearchBarOptions: pluginName ? undefined : headerSearch }} />
+			{pluginName ? null : <Stack.SearchBar {...headerSearch} />}
 			<ListToolbar
 				filters={
 					<ChoiceSelect

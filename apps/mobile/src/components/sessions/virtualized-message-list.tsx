@@ -193,12 +193,9 @@ function TranscriptView({
 	});
 	return (
 		<SafeAreaScreen testID={`session-transcript-${sessionId}`}>
-			<Stack.Screen
-				options={{
-					headerSearchBarOptions:
-						hasContent && sessionTimelineIncludesMessages(view) ? searchOptions : undefined,
-				}}
-			/>
+			{hasContent && sessionTimelineIncludesMessages(view) ? (
+				<Stack.SearchBar {...searchOptions} />
+			) : null}
 			<NativeList
 				key={windowKey}
 				ref={list}
