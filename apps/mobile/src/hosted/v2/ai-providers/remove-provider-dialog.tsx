@@ -6,10 +6,11 @@ import {
 	providerRemovalTitle,
 	settingsCopy,
 } from "@clawdi/shared/view";
+import { useQuery } from "@tanstack/react-query";
 import { randomUUID } from "expo-crypto";
 import { router, useLocalSearchParams } from "expo-router";
 import Trash2 from "lucide-react-native/icons/trash";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { ActionButton } from "@/components/dashboard/controls";
 import { ResourceError } from "@/components/resource-error";
@@ -27,7 +28,7 @@ import {
 } from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
-import { useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -99,23 +100,24 @@ function ProviderRemoveForm({
 	const read = useAccountRead();
 	const capture = useForegroundLease();
 	const { providerRemoval } = useMobileApi();
-	const check = useAuthAction(scope.identity);
 	const action = useAuthAction(scope.identity);
 	const sheet = useSheet<boolean>({ fallback: "/ai-providers", busy: action.busy });
-	const [impact, setImpact] = useState<AiProviderRemovalImpact | null>(null);
+	// Web's useProviderRemovalImpact: load the impact while the sheet is open.
+	const check = useQuery({
+		queryKey: accountQueryKey(scope, "provider-removal-impact", providerId),
+		queryFn: ({ signal }) =>
+			read((lease) => {
+				if (!providerRemoval) throw new Error("Provider removal unavailable");
+				return providerRemoval.impact(providerId, lease);
+			}, signal),
+		enabled: scope.isReady && Boolean(providerRemoval),
+		retry: false,
+		gcTime: 0,
+	});
+	const impact = check.data ?? null;
 	const [acknowledged, setAcknowledged] = useState(false);
 	const [result, setResult] = useState<AiProviderRemovalResult | null>(null);
 	const attempt = useRef<{ impact: AiProviderRemovalImpact; key: string } | null>(null);
-	const review = () =>
-		check.run(async (current) => {
-			if (!providerRemoval) return;
-			const visible = capture();
-			if (!visible()) return;
-			setImpact(null);
-			setAcknowledged(false);
-			const loaded = await read((signal) => providerRemoval.impact(providerId, signal));
-			if (current() && visible()) setImpact(loaded);
-		});
 	const acknowledgementRequired = Boolean(impact?.agents.length);
 	const remove = () =>
 		action.run(async (current) => {
@@ -137,12 +139,6 @@ function ProviderRemoveForm({
 			setResult(removed);
 			await onRemoved(removed);
 		});
-
-	const reviewRef = useRef(review);
-	reviewRef.current = review;
-	useEffect(() => {
-		void reviewRef.current();
-	}, []);
 	if (result)
 		return (
 			<SheetPage title={copy.removed} fallback="/ai-providers" busy={action.busy} sheet={sheet}>
@@ -166,15 +162,15 @@ function ProviderRemoveForm({
 			<WebView recipe={aiProvidersPageClasses.removalDescription}>
 				<AppText>{copy.description}</AppText>
 				{revokesChatGpt ? <AppText>{copy.revocation}</AppText> : null}
-				{check.busy ? (
+				{check.isFetching ? (
 					<AppText className={webView(aiProvidersPageClasses.impactLoading)}>
 						{copy.checking}
 					</AppText>
-				) : check.error ? (
+				) : check.isError ? (
 					<ApiErrorPanel
-						error={check.failure}
+						error={check.error}
 						title={copy.impactError}
-						onRetry={() => void review()}
+						onRetry={() => void check.refetch()}
 					/>
 				) : impact?.agents.length ? (
 					<>
@@ -212,8 +208,8 @@ function ProviderRemoveForm({
 				variant="destructive"
 				disabled={
 					action.busy ||
-					check.busy ||
-					check.error ||
+					check.isFetching ||
+					check.isError ||
 					!impact ||
 					(acknowledgementRequired && !acknowledged)
 				}
