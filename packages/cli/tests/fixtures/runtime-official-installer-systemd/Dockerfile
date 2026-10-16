@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.16
+
 ARG BUN_VERSION=1.4.0
 ARG NODE_VERSION=24.19.0
 ARG UV_VERSION=0.12.5
@@ -78,13 +80,10 @@ RUN mkdir -p /opt/stock/base-home /opt/stock/openclaw-home \
 
 ARG HERMES_COMMIT=cc4cab2f592e60a197e796506de9168f74baf3ea
 ARG HERMES_VERSION=0.19.1
-ADD --checksum=sha256:e75ad450f3e0932737bbfff3a0a997d4ed532dd8b5ece024072274791a648679 \
-	https://github.com/NousResearch/hermes-agent/archive/cc4cab2f592e60a197e796506de9168f74baf3ea.tar.gz \
-	/tmp/hermes-agent.tar.gz
-RUN mkdir -p /home/clawdi/.hermes/hermes-agent \
-	&& tar --extract --gzip --file /tmp/hermes-agent.tar.gz \
-		--directory /home/clawdi/.hermes/hermes-agent --strip-components=1 \
-	&& chown -R clawdi:clawdi /home/clawdi/.hermes \
+ADD --checksum=${HERMES_COMMIT} \
+	https://github.com/NousResearch/hermes-agent.git#${HERMES_COMMIT} \
+	/home/clawdi/.hermes/hermes-agent
+RUN chown -R clawdi:clawdi /home/clawdi/.hermes \
 	&& runuser -u clawdi -- env \
 		HOME=/home/clawdi \
 		UV_PROJECT_ENVIRONMENT=/home/clawdi/.hermes/hermes-agent/venv \
@@ -111,8 +110,7 @@ RUN mkdir -p /home/clawdi/.hermes/hermes-agent \
 	&& cp -a /home/clawdi/.hermes /opt/stock/hermes-home/.hermes \
 	&& cp -a /home/clawdi/.local/bin/hermes /opt/stock/hermes-home/.local/bin/hermes \
 	&& chown -R clawdi:clawdi /opt/stock/hermes-home \
-	&& rm -rf /home/clawdi/.hermes /home/clawdi/.local/bin/hermes \
-		/tmp/hermes-agent.tar.gz
+	&& rm -rf /home/clawdi/.hermes /home/clawdi/.local/bin/hermes
 
 COPY install-stock-runtime.sh /opt/fixture/install-stock-runtime.sh
 RUN chmod 0755 /opt/fixture/install-stock-runtime.sh
