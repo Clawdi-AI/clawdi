@@ -52,7 +52,9 @@ export function usePlans() {
 				return compute.listPlans(s);
 			}, signal),
 		enabled: scope.isReady && Boolean(compute),
-		retry: false,
+		// The plan sheets and "Choose a subscription" depend on the catalog: retry a
+		// transient failure like the other billing reads instead of disabling them.
+		...transientQueryRetry,
 	});
 }
 
