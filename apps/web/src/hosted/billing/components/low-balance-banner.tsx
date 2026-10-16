@@ -1,10 +1,9 @@
 "use client";
 
+import { billingCopy, lowBalanceBannerCopy, lowBalanceBannerView } from "@clawdi/shared/view";
 import { AlertTriangle, CreditCard, Repeat } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { lowBalanceBannerState } from "@/hosted/billing/components/low-balance-banner.logic";
-import { formatUsdExact } from "@/hosted/billing/format";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 
 /**
@@ -28,43 +27,32 @@ export function LowBalanceBanner({
 	onTopUp?: () => void;
 	onAutoReload?: () => void;
 }) {
-	const { show, hasAction, declined, needsAction } = lowBalanceBannerState(wallet);
-	if (!wallet || !show) return null;
-
-	const title = declined
-		? "Auto-reload was declined"
-		: needsAction
-			? "Your bank needs to confirm a top-up"
-			: "Your wallet balance is running low";
-
-	const services = hasWalletCompute ? "Clawdi AI and wallet-funded compute" : "Clawdi AI";
-	const body = declined
-		? `We couldn't charge your saved card. Top up or update your payment method to keep ${services} running.`
-		: needsAction
-			? `A top-up is waiting for your bank to confirm it. ${services} may pause if your balance stays low.`
-			: `You have about ${formatUsdExact(wallet.balance_usd)} left. Top up or turn on auto-reload to keep ${services} running.`;
+	const view = lowBalanceBannerView(wallet, { hasWalletCompute, cardBilling: true });
+	if (!wallet || !view) return null;
+	const { hasAction, declined } = view;
 
 	return (
-		<Alert data-hosted="true" variant={declined ? "destructive" : "default"}>
+		<Alert data-hosted="true" variant={view.tone}>
 			<AlertTriangle />
-			<AlertTitle>{title}</AlertTitle>
+			<AlertTitle>{view.title}</AlertTitle>
 			<AlertDescription className="flex flex-col items-start gap-3">
-				<span>{body}</span>
+				<span>{view.body}</span>
 				<div className="flex flex-wrap gap-2">
 					{/* A pending SCA / decline lives on the auto-reload card as an actual
 					    confirm control — lead users there rather than to a new top-up. */}
 					{hasAction && onAutoReload ? (
 						<Button size="sm" onClick={onAutoReload}>
-							<Repeat /> {declined ? "Retry payment" : "Confirm payment"}
+							<Repeat />{" "}
+							{declined ? lowBalanceBannerCopy.retryPayment : lowBalanceBannerCopy.confirmPayment}
 						</Button>
 					) : onTopUp ? (
 						<Button size="sm" onClick={onTopUp}>
-							<CreditCard /> Top up
+							<CreditCard /> {billingCopy.topUp}
 						</Button>
 					) : null}
 					{!hasAction && onAutoReload && !wallet.auto_reload_enabled ? (
 						<Button size="sm" variant="outline" onClick={onAutoReload}>
-							<Repeat /> Set up auto-reload
+							<Repeat /> {lowBalanceBannerCopy.setUpAutoReload}
 						</Button>
 					) : null}
 				</div>

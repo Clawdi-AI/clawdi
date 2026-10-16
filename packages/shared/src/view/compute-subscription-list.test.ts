@@ -1,27 +1,13 @@
-import { beforeAll, describe, expect, test } from "bun:test";
-import type { ComputeSubscriptionListItem } from "@/hosted/billing/contracts";
+import { describe, expect, test } from "bun:test";
+import type { DeployComponents } from "../api";
+import {
+	computeSubscriptionAssignment,
+	computeSubscriptionIdentity,
+	reusableInventoryState,
+	sortLoadedSubscriptions,
+} from "./compute-subscriptions";
 
-type SubscriptionsSectionModule =
-	typeof import("@/hosted/billing/subscription/subscriptions-section");
-
-let sortLoadedSubscriptions: SubscriptionsSectionModule["sortLoadedSubscriptions"] | null = null;
-let computeSubscriptionAssignment:
-	| SubscriptionsSectionModule["computeSubscriptionAssignment"]
-	| null = null;
-let computeSubscriptionIdentity: SubscriptionsSectionModule["computeSubscriptionIdentity"] | null =
-	null;
-let reusableInventoryState: SubscriptionsSectionModule["reusableInventoryState"] | null = null;
-
-beforeAll(async () => {
-	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
-	process.env.VITE_CLAWDI_DEPLOY_API_URL = "http://localhost:50021";
-	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
-	const module = await import("@/hosted/billing/subscription/subscriptions-section");
-	sortLoadedSubscriptions = module.sortLoadedSubscriptions;
-	computeSubscriptionAssignment = module.computeSubscriptionAssignment;
-	computeSubscriptionIdentity = module.computeSubscriptionIdentity;
-	reusableInventoryState = module.reusableInventoryState;
-});
+type ComputeSubscriptionListItem = DeployComponents["schemas"]["V2ComputeSubscriptionListItem"];
 
 function subscription(
 	subscriptionId: string,
@@ -47,9 +33,8 @@ function subscription(
 	};
 }
 
-describe("SubscriptionsSection", () => {
+describe("Compute subscription list", () => {
 	test("waits for canonical availability and only blocks errors without cached data", () => {
-		if (!reusableInventoryState) throw new Error("Subscriptions helpers were not loaded");
 		expect([
 			reusableInventoryState(null, undefined),
 			reusableInventoryState(new Error("offline"), undefined),
@@ -59,7 +44,6 @@ describe("SubscriptionsSection", () => {
 	});
 
 	test("lets canonical reusable inventory override stale deployment and orphan projections", () => {
-		if (!computeSubscriptionAssignment) throw new Error("Subscriptions helpers were not loaded");
 		const staleAssigned = subscription("reusable", "active");
 		const staleOrphan = {
 			...subscription("orphan", "active"),
@@ -84,7 +68,6 @@ describe("SubscriptionsSection", () => {
 		expect(computeSubscriptionAssignment(staleAssigned, new Set())).toBe("assigned");
 		expect(computeSubscriptionAssignment(staleOrphan, new Set())).toBe("unavailable");
 
-		if (!computeSubscriptionIdentity) throw new Error("Subscriptions helpers were not loaded");
 		expect(computeSubscriptionIdentity(staleAssigned, "assigned", undefined, null)).toMatchObject({
 			kind: "agent",
 			name: "reusable",
@@ -102,7 +85,6 @@ describe("SubscriptionsSection", () => {
 	});
 
 	test("stably prioritizes loaded current subscriptions without mutating query data", () => {
-		if (!sortLoadedSubscriptions) throw new Error("Subscriptions helpers were not loaded");
 		const loaded = [
 			subscription("canceled", "canceled"),
 			subscription("canceling-first", "canceling"),

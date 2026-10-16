@@ -44,3 +44,8 @@ export function computePlanComparisonView(plans: Plan[], term: number) {
 		sharedPricingUnavailable: basic !== undefined && performance !== undefined && !selectedTerm,
 	};
 }
+
+/** A plan's capacity feature line, e.g. "Up to 2 vCPU · 4 GB RAM · 40 GB storage". */
+export function planCapacityLabel(plan: Pick<Plan, "vcpu" | "ram_gb" | "disk_size">): string {
+	return `Up to ${plan.vcpu} vCPU · ${plan.ram_gb} GB RAM · ${plan.disk_size} GB storage`;
+}

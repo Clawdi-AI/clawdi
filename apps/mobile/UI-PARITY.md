@@ -58,23 +58,28 @@ grant cookie and redirects through Hermes login into the signed-in dashboard.
 The handoff URL stays local to the action. OpenClaw keeps its existing
 runtime-credentials browser handoff. Real signed-in dashboard acceptance still
 requires an authorized device check after the Hosted handoff endpoint is deployed.
-The Account tab root `/settings` is a native grouped settings menu: General,
-Account (Clerk's native `UserProfileView`), API Keys, then Wallet, Compute and
-AI Usage when a compute API is configured. Each row pushes a natively headed
-`/settings/{general,account,api-keys,wallet,compute,usage}` page. A last section
-carries Web's Help menu (Docs, email support, Telegram) plus the Privacy Policy
-and Terms of Use from the shared `CLAWDI_HELP_URLS`/`CLAWDI_LEGAL_URLS`; links
-open in `expo-web-browser` and email in the mail app. AI Usage is
-read-only; its Agent and time-range filters are native menus (a deleted Agent
-shows a "· Deleted" suffix instead of Web's badge), and amounts are USD like
-Web in every build. Web's `?settings=<panel>` opens the matching
-`/settings/<panel>`. Because the Account row is the account entry,
-mobile General shows only Appearance (mobile-only row subtitle and panel
-description; Web's General keeps its Account section). `SettingsShell` is only
-the panel screen container (`scroll` toggles the Web panel ScrollView) with no
-section navigation. Pushed settings pages use the native screen background
-(`bg-background`, matching the stack header) instead of the Web dialog's
-`bg-popover` surface. Hosted deployments open through their Agent id.
+The Settings tab (Web's "Settings" control) root `/settings` is a native grouped
+settings menu: General, API Keys, then Wallet, Compute and AI Usage when a compute
+API is configured. Each row pushes a natively headed
+`/settings/{general,api-keys,wallet,compute,usage}` page. General is Web's: the
+Account section (avatar, name, email and Manage account, which pushes Clerk's
+native `UserProfileView` at `/settings/account`), then Appearance. A last section
+carries Web's Help menu in Web's order from the shared `CLAWDI_HELP_MENU` (Live
+chat, Docs, GitHub, the support address, Telegram) plus the Privacy Policy and
+Terms of Use from `CLAWDI_LEGAL_URLS`; links open in `expo-web-browser` and email
+in the mail app. Live chat is Web's Chatwoot inbox in a native sheet (`/support`,
+see Native patterns). Wallet shows Web's low-balance banner; store builds omit its
+auto-reload states. Compute is Web's list: inline Cancel / End trial / Resume /
+Cancel scheduled change (store builds drop Resume, D-1), the agent link, recovery
+notices, the pending plan and Show history; store rows carry their store actions.
+There is no subscription details page; `/settings/compute/<id>` redirects to the
+list. AI Usage is read-only; its Agent and time-range filters are native menus (a
+deleted Agent shows a "· Deleted" suffix instead of Web's badge), and amounts are
+USD like Web in every build. Web's `?settings=<panel>` opens the matching
+`/settings/<panel>`. `SettingsShell` is only the panel screen container (`scroll`
+toggles the Web panel ScrollView) with no section navigation. Pushed settings
+pages use the native screen background (`bg-background`, matching the stack
+header) instead of the Web dialog's `bg-popover` surface. Hosted deployments open through their Agent id.
 The previous deployment inventory screen is covered by the Agents inventory.
 
 Web's `AccountSuspensionBoundary` maps to the root Stack: the shared API fetch
@@ -225,6 +230,19 @@ iOS. Pass `scroll={false}` when a `NativeList` owns the route scroll (the
 Provider chooser is the pilot). Its optional `actions` adds native step/back
 controls without drawing another header.
 forms with an existing dirty-state guard own their `NativeHeader` instead.
+
+**Live chat** — `src/hooks/use-support-chat.ts`, `src/pages/support-page.tsx`,
+`src/lib/chatwoot.ts`. `useSupportChat()` returns `open(context?)`, or null where
+Chatwoot isn't configured (callers keep Web's email fallback). It opens the
+`/support` route sheet (`SheetPage`, Done), which loads Chatwoot's widget page in
+an incognito `react-native-webview` the way the official React Native widget
+does, and posts the Web SDK's widget events: `set-user` with the identity hash
+from Web's `GET /api/chatwoot/identity`, locale, color scheme and, for Contact
+support, Web's conversation attributes and label (`openChatwootWithContext`).
+Like Web, the widget never opens unidentified. Links and attachments leave the
+widget origin for the browser. The official widget is not used as-is: it has no
+conversation attributes or labels and stores the conversation token unscoped in
+AsyncStorage across accounts.
 
 ```tsx
 // app/(sheets)/projects/[id]/sharing.tsx

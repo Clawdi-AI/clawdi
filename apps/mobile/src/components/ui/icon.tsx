@@ -1,6 +1,6 @@
 import { cn } from "cn";
-import type { LucideIcon } from "lucide-react-native";
-import { useContext } from "react";
+import type { LucideProps } from "lucide-react-native";
+import { type ComponentType, useContext } from "react";
 import { useResolveClassNames } from "uniwind";
 import { TextClassContext, TextColorContext } from "@/components/ui/text";
 
@@ -15,7 +15,8 @@ export function Icon({
 	strokeWidth = 1.75,
 	fill = "none",
 }: {
-	as: LucideIcon;
+	/** A Lucide icon, or a brand mark that takes the same size and color props. */
+	as: ComponentType<Pick<LucideProps, "size" | "color" | "strokeWidth" | "fill">>;
 	className?: string;
 	strokeWidth?: number;
 	fill?: "none" | "currentColor";

@@ -1,80 +1,86 @@
-import {
-	agentIconFallbackClasses,
-	agentIconRadiusClasses,
-	agentIconSizeClasses,
-	agentLabelClasses,
-	computeSubscriptionCardClasses as styles,
-} from "@clawdi/shared/ui";
+import { agentLabelClasses, computeSubscriptionCardClasses as styles } from "@clawdi/shared/ui";
 import {
 	agentIdentity,
-	computeSubscriptionCardView,
-	computeSubscriptionLifecycle,
-	storeSubscriptionCardView,
+	billingCopy,
+	type ComputeSubscriptionCardView,
+	type ComputeSubscriptionIdentity,
 } from "@clawdi/shared/view";
+import CircleCheck from "lucide-react-native/icons/circle-check";
+import UserRoundX from "lucide-react-native/icons/user-round-x";
 import type { ReactNode } from "react";
-import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
+import { AgentIcon } from "@/components/dashboard/agent-icon";
 import { EntityCardChassis } from "@/components/entity-card";
+import { Icon } from "@/components/ui/icon";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { Text } from "@/components/ui/text";
+import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
-import type { Subscription } from "@/hosted/billing/format";
-import { StoreSubscriptionNotice } from "@/hosted/billing/store/compute-store";
-import { useI18n } from "@/lib/i18n";
 
-/** The Agent tile a subscription funds; like Web, its current name wins over the billing row's. */
-export function useSubscriptionAgent(item: Subscription) {
-	const inventory = useDashboardAgents();
-	const deployment = inventory.inventory.data?.find(
-		(entry) => entry.resource.id === item.deployment_id,
+function SubscriptionIdentity({
+	identity,
+	onOpenAgent,
+}: {
+	identity: ComputeSubscriptionIdentity;
+	onOpenAgent?: () => void;
+}) {
+	if (identity.kind !== "agent") {
+		const available = identity.kind === "available";
+		return (
+			<WebView
+				recipe={available ? styles.includedIdentity : styles.orphanIdentity}
+				className="flex-row"
+			>
+				<WebView recipe={available ? styles.includedIconTile : styles.orphanIconTile}>
+					<Icon as={available ? CircleCheck : UserRoundX} className={styles.icon} />
+				</WebView>
+				<WebText recipe={styles.identityLabel} numberOfLines={1} className="flex-1">
+					{identity.label}
+				</WebText>
+			</WebView>
+		);
+	}
+	const label = agentIdentity({ name: identity.name, agent_type: identity.agentType });
+	const body = (
+		<WebView recipe={agentLabelClasses.root}>
+			<AgentIcon agent={identity.agentType} avatarUrl={identity.avatarUrl} size="md" />
+			<WebView recipe={agentLabelClasses.copy}>
+				<WebText recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.md}`}>
+					{label.primaryLabel}
+				</WebText>
+				{label.secondaryLabel ? (
+					<WebText
+						recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.subtitleGapBySize.md}`}
+					>
+						{label.secondaryLabel}
+					</WebText>
+				) : null}
+			</WebView>
+		</WebView>
 	);
-	return inventory.tiles.find((tile) => tile.id === deployment?.agent_id);
+	return onOpenAgent ? (
+		<AppPressable accessibilityRole="link" className="active:opacity-80" onPress={onOpenAgent}>
+			{body}
+		</AppPressable>
+	) : (
+		body
+	);
 }
 
+/** Web's compute subscription card: plan, status, commercial facts, user, notices, actions. */
 export function ComputeSubscriptionCard({
-	item,
-	actions,
+	view,
+	identity,
+	onOpenAgent,
 	notice,
-	storeNotice = true,
+	actions,
 }: {
-	item: Subscription;
-	actions?: ReactNode;
+	view: ComputeSubscriptionCardView;
+	identity?: ComputeSubscriptionIdentity;
+	/** Web links the agent to its settings. */
+	onOpenAgent?: () => void;
 	notice?: ReactNode;
-	/** Store billing lines; details screens show them with the store actions instead. */
-	storeNotice?: boolean;
+	actions?: ReactNode;
 }) {
-	const t = useI18n();
-	const agent = useSubscriptionAgent(item);
-	const identity = agentIdentity({
-		name: agent?.name ?? item.agent_name,
-		agent_type: agent?.agentType ?? null,
-	});
-	const lifecycle = computeSubscriptionLifecycle(item);
-	const status = { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone };
-	// Store prices are per storefront: store rows show the store contract, never a Clawdi price.
-	const fundingSource = item.funding_source;
-	const store = fundingSource === "store";
-	const showStoreNotice = store && storeNotice;
-	const view = store
-		? storeSubscriptionCardView({
-				planSlug: item.plan_slug,
-				billingTermMonths: item.billing_term_months,
-				management: item.store_management,
-				fallbackStatus: status,
-			})
-		: computeSubscriptionCardView({
-				status,
-				planSlug: item.plan_slug,
-				fundingSource:
-					item.subscription_kind === "included_basic"
-						? "included"
-						: (fundingSource ?? "unavailable"),
-				priceCents: item.price_cents,
-				currency: item.currency,
-				billingTermMonths: item.billing_term_months,
-				scheduleVerb: lifecycle.dateVerb,
-				scheduleAt: lifecycle.dateAt,
-			});
 	return (
 		<EntityCardChassis variant="compact" className={webView(styles.notices)}>
 			<WebView recipe={styles.heading} className="flex-row">
@@ -94,41 +100,17 @@ export function ComputeSubscriptionCard({
 					</WebText>
 				))}
 			</WebView>
-			{item.agent_name ? (
+			{identity ? (
 				<WebView recipe={styles.footer} className="flex-row">
-					<WebText recipe={styles.hint}>{t("billingParity.usedBy")}</WebText>
+					{identity.kind === "agent" ? (
+						<WebText recipe={styles.hint}>{billingCopy.usedBy}</WebText>
+					) : null}
 					<WebView recipe={styles.identity}>
-						<WebView recipe={agentLabelClasses.root}>
-							<AgentFrameworkIcon
-								agent={agent?.agentType}
-								pixelSize={24}
-								boxClassName={webView(
-									`${agentIconSizeClasses.md} ${agentIconRadiusClasses.rounded}`,
-								)}
-								fallbackIconClassName={agentIconFallbackClasses.md}
-							/>
-							<WebView recipe={agentLabelClasses.copy}>
-								<WebText recipe={`${agentLabelClasses.name} ${agentLabelClasses.nameBySize.md}`}>
-									{identity.primaryLabel}
-								</WebText>
-								{identity.secondaryLabel ? (
-									<WebText
-										recipe={`${agentLabelClasses.subtitle} ${agentLabelClasses.subtitleGapBySize.md}`}
-									>
-										{identity.secondaryLabel}
-									</WebText>
-								) : null}
-							</WebView>
-						</WebView>
+						<SubscriptionIdentity identity={identity} onOpenAgent={onOpenAgent} />
 					</WebView>
 				</WebView>
 			) : null}
-			{notice || showStoreNotice ? (
-				<WebView recipe={styles.price}>
-					{showStoreNotice ? <StoreSubscriptionNotice management={item.store_management} /> : null}
-					{notice}
-				</WebView>
-			) : null}
+			{notice ? <WebView recipe={styles.price}>{notice}</WebView> : null}
 			{actions ? (
 				<WebView recipe={styles.actions} className="flex-row">
 					{actions}

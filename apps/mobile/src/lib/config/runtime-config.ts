@@ -10,6 +10,8 @@ export type MobileRuntimeConfig = Readonly<{
 	revenueCatGoogleKey?: string;
 	revenueCatCustomerCenterEnabled?: boolean;
 	linkHosts?: readonly string[];
+	/** Web's Chatwoot website inbox; live chat needs both values, like Web. */
+	chatwoot?: Readonly<{ baseUrl: string; websiteToken: string }>;
 }>;
 
 export type MobileRuntimeConfigResult =
@@ -24,6 +26,8 @@ type RuntimeConfigValues = Readonly<{
 	revenueCatGoogleKey?: unknown;
 	revenueCatCustomerCenterEnabled?: unknown;
 	linkHosts?: unknown;
+	chatwootBaseUrl?: unknown;
+	chatwootWebsiteToken?: unknown;
 }>;
 
 function requiredString(value: unknown): string | undefined {
@@ -52,6 +56,8 @@ export function parseMobileRuntimeConfig(
 	const revenueCatAppleKey = requiredString(values.revenueCatAppleKey);
 	const revenueCatGoogleKey = requiredString(values.revenueCatGoogleKey);
 	const revenueCatCustomerCenterEnabled = values.revenueCatCustomerCenterEnabled === true;
+	const chatwootBaseUrl = requiredString(values.chatwootBaseUrl)?.replace(/\/+$/, "");
+	const chatwootWebsiteToken = requiredString(values.chatwootWebsiteToken);
 	// RevenueCat Test Store public SDK keys start with `test_`; never ship them to stores.
 	if (
 		environment === "production" &&
@@ -83,8 +89,9 @@ export function parseMobileRuntimeConfig(
 	try {
 		if (
 			!isDevelopment &&
-			(new URL(cloudApiUrl).protocol !== "https:" ||
-				(computeApiUrl && new URL(computeApiUrl).protocol !== "https:"))
+			[cloudApiUrl, computeApiUrl, chatwootBaseUrl].some(
+				(url) => url && new URL(url).protocol !== "https:",
+			)
 		)
 			return { ok: false, reason: "invalid" };
 		const linkHosts = readLinkHosts(values.linkHosts);
@@ -99,6 +106,9 @@ export function parseMobileRuntimeConfig(
 				...(revenueCatAppleKey ? { revenueCatAppleKey } : {}),
 				...(revenueCatGoogleKey ? { revenueCatGoogleKey } : {}),
 				...(revenueCatCustomerCenterEnabled ? { revenueCatCustomerCenterEnabled: true } : {}),
+				...(chatwootBaseUrl && chatwootWebsiteToken
+					? { chatwoot: { baseUrl: chatwootBaseUrl, websiteToken: chatwootWebsiteToken } }
+					: {}),
 			},
 		};
 	} catch {

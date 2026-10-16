@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingClient } from "@/hosted/billing/billing-client";
-import type { ReusableSubscription } from "@/hosted/billing/contracts";
-import { loadReusableSubscriptions } from "./reusable-subscriptions-query";
+import type { DeployComponents } from "../api";
+import { loadReusableSubscriptions } from "./compute-subscriptions";
+
+type ReusableSubscription = DeployComponents["schemas"]["V2ComputeReusableSubscriptionItem"];
+type GetPage = Parameters<typeof loadReusableSubscriptions<ReusableSubscription>>[0];
 
 function reusable(subscriptionId: string): ReusableSubscription {
 	return {
@@ -24,7 +26,7 @@ describe("reusable subscription pagination", () => {
 			{ items: [reusable("csub_two")], has_more: true, next_cursor: "cursor-3" },
 			{ items: [reusable("csub_three")], has_more: false, next_cursor: null },
 		];
-		const getPage: BillingClient["getReusableSubscriptions"] = async (_limit, cursor) => {
+		const getPage: GetPage = async (_limit, cursor) => {
 			cursors.push(cursor);
 			const page = pages.shift();
 			if (!page) throw new Error("Unexpected page request");
@@ -41,7 +43,7 @@ describe("reusable subscription pagination", () => {
 
 	test("rejects the whole load when a later page fails or repeats a cursor", async () => {
 		let page = 0;
-		const laterFailure: BillingClient["getReusableSubscriptions"] = async () => {
+		const laterFailure: GetPage = async () => {
 			page += 1;
 			if (page === 1) {
 				return { items: [reusable("csub_partial")], has_more: true, next_cursor: "next" };
@@ -50,7 +52,7 @@ describe("reusable subscription pagination", () => {
 		};
 		await expect(loadReusableSubscriptions(laterFailure)).rejects.toThrow("page failed");
 
-		const repeatedCursor: BillingClient["getReusableSubscriptions"] = async () => ({
+		const repeatedCursor: GetPage = async () => ({
 			items: [],
 			has_more: true,
 			next_cursor: "same",

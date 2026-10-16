@@ -9,7 +9,4 @@ export function uniqueBillingItems<Item>(
 ): Item[] {
 	return [...new Map(items.map((item) => [id(item), item])).values()];
 }
-
-export function validSubscriptionId(value: string | undefined): value is string {
-	return typeof value === "string" && /^csub_[A-Za-z0-9]+$/.test(value);
-}
+export type Wallet = DeployComponents["schemas"]["V2WalletResponse"];

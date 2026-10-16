@@ -1,7 +1,7 @@
 import { FieldGroup, Host } from "@expo/ui";
 import { Button, HStack, Image, RNHostView, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import { buttonStyle, contentShape, foregroundStyle, shapes } from "@expo/ui/swift-ui/modifiers";
-import type { LucideIcon } from "lucide-react-native";
+import type { ComponentProps } from "react";
 import { useUniwind } from "uniwind";
 import { IconChip } from "@/components/icon-chip";
 import { Icon } from "@/components/ui/icon";
@@ -10,7 +10,7 @@ export type SettingsMenuRow = {
 	id: string;
 	label: string;
 	description?: string;
-	icon: LucideIcon;
+	icon: ComponentProps<typeof Icon>["as"];
 	onPress: () => void;
 };
 export type SettingsMenuSection = { id: string; rows: SettingsMenuRow[] };

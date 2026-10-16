@@ -1,6 +1,6 @@
 "use client";
 
-import { formatShortDate } from "@clawdi/shared/view";
+import { formatShortDate, settingsCopy } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Terminal, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -86,7 +86,7 @@ export function ApiKeysPanel() {
 		onSuccess: () => {
 			revokeExit.beginClose();
 			setRevokeOpen(false);
-			toast.success("API key revoked");
+			toast.success(settingsCopy.keyRevoked);
 		},
 		onError: (mutationError, _keyId, context) => {
 			const removedKey = context?.removedKey;
@@ -95,7 +95,7 @@ export function ApiKeysPanel() {
 					restoreApiKeyToList(currentKeys, removedKey),
 				);
 			}
-			toastApiError("Couldn’t revoke API key")(mutationError);
+			toastApiError(settingsCopy.revokeKeyFailed)(mutationError);
 		},
 		onSettled: () => {
 			// Reconcile once the last overlapping revoke settles so a refetch cannot
@@ -121,8 +121,8 @@ export function ApiKeysPanel() {
 	return (
 		<div className="flex flex-col gap-8 px-5 sm:px-6 lg:px-8">
 			<SettingsPanelHeader
-				title="API Keys"
-				description="Review and revoke bearer tokens created for servers and automation."
+				title={settingsCopy.apiKeys}
+				description={settingsCopy.apiKeysDescription}
 			/>
 
 			{isEmpty ? null : (
@@ -135,7 +135,11 @@ export function ApiKeysPanel() {
 			)}
 
 			{listBlocked ? (
-				<ApiErrorPanel error={error} onRetry={() => refetch()} title="Couldn’t load API keys" />
+				<ApiErrorPanel
+					error={error}
+					onRetry={() => refetch()}
+					title={settingsCopy.loadKeysFailed}
+				/>
 			) : isLoading ? (
 				<>
 					<ApiKeysMobileLoading />
@@ -226,20 +230,22 @@ function apiKeyColumns({
 		},
 		{
 			accessorKey: "scopes",
-			header: "Permissions",
+			header: settingsCopy.permissions,
 			cell: ({ row }) => <ApiKeyScopes scopes={row.original.scopes} />,
 			size: 200,
 		},
 		{
 			accessorKey: "created_at",
-			header: "Created",
+			header: settingsCopy.created,
 			cell: ({ row }) => <ApiKeyDate value={row.original.created_at} />,
 			size: 104,
 		},
 		{
 			accessorKey: "last_used_at",
-			header: "Last used",
-			cell: ({ row }) => <ApiKeyDate value={row.original.last_used_at} emptyLabel="Never" />,
+			header: settingsCopy.lastUsed,
+			cell: ({ row }) => (
+				<ApiKeyDate value={row.original.last_used_at} emptyLabel={settingsCopy.never} />
+			),
 			size: 104,
 		},
 	];
@@ -247,8 +253,10 @@ function apiKeyColumns({
 	if (showExpiration) {
 		columns.push({
 			accessorKey: "expires_at",
-			header: "Expires",
-			cell: ({ row }) => <ApiKeyDate value={row.original.expires_at} emptyLabel="Never" />,
+			header: settingsCopy.expires,
+			cell: ({ row }) => (
+				<ApiKeyDate value={row.original.expires_at} emptyLabel={settingsCopy.never} />
+			),
 			size: 104,
 		});
 	}
@@ -335,7 +343,7 @@ function ApiKeysEmptyState() {
 					<EmptyMedia variant="icon">
 						<KeyRound aria-hidden="true" />
 					</EmptyMedia>
-					<EmptyTitle>No active API keys</EmptyTitle>
+					<EmptyTitle>{settingsCopy.emptyKeys}</EmptyTitle>
 					<EmptyDescription>
 						<ApiKeysRetiredNote />
 					</EmptyDescription>
@@ -393,7 +401,7 @@ function ApiKeysMobileList({
 						<div className="min-w-0">
 							<dt className="text-muted-foreground">Last used</dt>
 							<dd className="mt-0.5 font-medium text-foreground">
-								<ApiKeyDate value={key.last_used_at} emptyLabel="Never" />
+								<ApiKeyDate value={key.last_used_at} emptyLabel={settingsCopy.never} />
 							</dd>
 						</div>
 						{key.expires_at ? (

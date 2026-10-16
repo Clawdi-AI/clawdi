@@ -34,6 +34,7 @@ import { Route as ProtectedDashboardAiProvidersRouteImport } from './routes/_pro
 import { Route as ProtectedDashboardDashboardRouteImport } from './routes/_protected/_dashboard/dashboard'
 import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
 import { Route as ProtectedTerminalIdRouteImport } from './routes/_protected/terminal/$id'
+import { Route as ApiChatwootIdentityRouteImport } from './routes/api/chatwoot/identity'
 import { Route as SkillsClawdiSKILLDotmdRouteImport } from './routes/skills/clawdi/SKILL[.]md'
 import { Route as ProtectedDashboardAgentsIndexRouteImport } from './routes/_protected/_dashboard/agents/index'
 import { Route as ProtectedDashboardAgentsIdRouteImport } from './routes/_protected/_dashboard/agents/$id'
@@ -198,6 +199,11 @@ const ProtectedTerminalIdRoute = ProtectedTerminalIdRouteImport.update({
   id: '/terminal/$id',
   path: '/terminal/$id',
   getParentRoute: () => ProtectedRoute,
+} as any)
+const ApiChatwootIdentityRoute = ApiChatwootIdentityRouteImport.update({
+  id: '/api/chatwoot/identity',
+  path: '/api/chatwoot/identity',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SkillsClawdiSKILLDotmdRoute = SkillsClawdiSKILLDotmdRouteImport.update({
   id: '/skills/clawdi/SKILL.md',
@@ -427,6 +433,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof ProtectedDashboardDashboardRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/terminal/$id': typeof ProtectedTerminalIdRoute
+  '/api/chatwoot/identity': typeof ApiChatwootIdentityRoute
   '/skills/clawdi/SKILL.md': typeof SkillsClawdiSKILLDotmdRoute
   '/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
@@ -486,6 +493,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof ProtectedDashboardDashboardRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
   '/terminal/$id': typeof ProtectedTerminalIdRoute
+  '/api/chatwoot/identity': typeof ApiChatwootIdentityRoute
   '/skills/clawdi/SKILL.md': typeof SkillsClawdiSKILLDotmdRoute
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
@@ -545,6 +553,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard/dashboard': typeof ProtectedDashboardDashboardRoute
   '/_protected/_dashboard/deploy': typeof ProtectedDashboardDeployRoute
   '/_protected/terminal/$id': typeof ProtectedTerminalIdRoute
+  '/api/chatwoot/identity': typeof ApiChatwootIdentityRoute
   '/skills/clawdi/SKILL.md': typeof SkillsClawdiSKILLDotmdRoute
   '/_protected/_dashboard/': typeof ProtectedDashboardIndexRoute
   '/_protected/_dashboard/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
@@ -607,6 +616,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/deploy'
     | '/terminal/$id'
+    | '/api/chatwoot/identity'
     | '/skills/clawdi/SKILL.md'
     | '/agents/$id'
     | '/channels/$id'
@@ -666,6 +676,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/deploy'
     | '/terminal/$id'
+    | '/api/chatwoot/identity'
     | '/skills/clawdi/SKILL.md'
     | '/channels/$id'
     | '/connectors/$name'
@@ -724,6 +735,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/dashboard'
     | '/_protected/_dashboard/deploy'
     | '/_protected/terminal/$id'
+    | '/api/chatwoot/identity'
     | '/skills/clawdi/SKILL.md'
     | '/_protected/_dashboard/'
     | '/_protected/_dashboard/agents/$id'
@@ -778,6 +790,7 @@ export interface RootRouteChildren {
   SChar123idChar125DotmdRoute: typeof SChar123idChar125DotmdRoute
   ShareTokenRoute: typeof ShareTokenRoute
   DotwellKnownAgentSkillsIndexDotjsonRoute: typeof DotwellKnownAgentSkillsIndexDotjsonRoute
+  ApiChatwootIdentityRoute: typeof ApiChatwootIdentityRoute
   SkillsClawdiSKILLDotmdRoute: typeof SkillsClawdiSKILLDotmdRoute
 }
 
@@ -957,6 +970,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/terminal/$id'
       preLoaderRoute: typeof ProtectedTerminalIdRouteImport
       parentRoute: typeof ProtectedRoute
+    }
+    '/api/chatwoot/identity': {
+      id: '/api/chatwoot/identity'
+      path: '/api/chatwoot/identity'
+      fullPath: '/api/chatwoot/identity'
+      preLoaderRoute: typeof ApiChatwootIdentityRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/skills/clawdi/SKILL.md': {
       id: '/skills/clawdi/SKILL.md'
@@ -1376,6 +1396,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShareTokenRoute: ShareTokenRoute,
   DotwellKnownAgentSkillsIndexDotjsonRoute:
     DotwellKnownAgentSkillsIndexDotjsonRoute,
+  ApiChatwootIdentityRoute: ApiChatwootIdentityRoute,
   SkillsClawdiSKILLDotmdRoute: SkillsClawdiSKILLDotmdRoute,
 }
 export const routeTree = rootRouteImport

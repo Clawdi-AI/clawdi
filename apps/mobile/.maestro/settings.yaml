@@ -1,23 +1,19 @@
 appId: ${MAESTRO_APP_ID}
-name: Account settings and fixture API keys
+name: Settings and fixture API keys
 ---
 # select-tab.yaml handles each platform's native tab accessibility.
 - runFlow:
     file: select-tab.yaml
     env:
-      TAB_LABEL: Account
-      TAB_ID: account
-# The Account tab root is the native settings menu; rows push `/settings/<panel>`.
+      TAB_LABEL: Settings
+      TAB_ID: settings
+# The Settings tab root is the native settings menu; rows push `/settings/<panel>`.
 # @expo/ui exports row testIDs through SwiftUI accessibility or Compose IDs.
 # https://github.com/expo/expo/blob/sdk-57/packages/expo-ui/android/src/main/java/expo/modules/ui/Modifiers.kt
 - extendedWaitUntil:
     visible:
       id: settings-row-general
     timeout: 30000
-- assertVisible:
-    id: settings-row-account
-- assertVisible:
-    text: avery@clawdi.dev
 - assertVisible:
     id: settings-row-api-keys
 # The fixture configures a compute API, so the hosted rows are present.
@@ -43,6 +39,9 @@ name: Account settings and fixture API keys
     id: settings-row-general
 - assertVisible:
     id: settings-general
+# Web's General: the Account section (fixture identity), then Appearance.
+- assertVisible:
+    text: avery@clawdi.dev
 - assertVisible:
     id: settings-appearance
 - takeScreenshot: settings
@@ -57,7 +56,8 @@ name: Account settings and fixture API keys
     id: api-key-a9100000-0002-4000-8000-000000000002
 - takeScreenshot: api-keys
 - runFlow: navigate-back.yaml
-# Help and legal rows (Web's Help menu, Privacy Policy and Terms) close the menu.
+# Help and legal rows (Web's Help menu, Privacy Policy and Terms) close the menu. Live chat
+# appears only with a configured Chatwoot inbox, which the fixture build has not.
 - scrollUntilVisible:
     element:
       id: settings-row-terms
@@ -65,7 +65,9 @@ name: Account settings and fixture API keys
 - assertVisible:
     id: settings-row-docs
 - assertVisible:
-    id: settings-row-support
+    id: settings-row-github
+- assertVisible:
+    id: settings-row-email
 - assertVisible:
     id: settings-row-telegram
 - assertVisible:

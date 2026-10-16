@@ -1,4 +1,5 @@
 import { DESKTOP_DEEP_LINK_SCHEME } from "../desktop";
+import { SUPPORT_EMAIL } from "./initial-deployment-support";
 
 // Tests keep these install steps in sync with the READMEs and get-started.md.
 export const CLI_STEPS = [
@@ -70,11 +71,44 @@ export const CLAWDI_HELP_URLS = {
 } as const;
 
 export const CLAWDI_HELP_COPY = {
+	liveChat: "Live chat",
 	docs: "Docs",
 	github: "GitHub",
 	telegram: "Telegram @clawdiofficial",
 	emailSupport: "Email support",
 } as const;
+
+/**
+ * Help entries in Web's order. Live chat has no link: it opens the support chat, and clients
+ * show it only where live chat is configured.
+ */
+export const CLAWDI_HELP_MENU = [
+	{ id: "live-chat", label: CLAWDI_HELP_COPY.liveChat },
+	{
+		id: "docs",
+		label: CLAWDI_HELP_COPY.docs,
+		href: CLAWDI_HELP_URLS.docs,
+		accessibilityLabel: "Open Docs",
+	},
+	{
+		id: "github",
+		label: CLAWDI_HELP_COPY.github,
+		href: CLAWDI_HELP_URLS.github,
+		accessibilityLabel: "Open GitHub",
+	},
+	{
+		id: "email",
+		label: SUPPORT_EMAIL,
+		href: `mailto:${SUPPORT_EMAIL}`,
+		accessibilityLabel: CLAWDI_HELP_COPY.emailSupport,
+	},
+	{
+		id: "telegram",
+		label: CLAWDI_HELP_COPY.telegram,
+		href: CLAWDI_HELP_URLS.telegram,
+		accessibilityLabel: "Open Telegram",
+	},
+] as const;
 
 /** Path of the published onboarding guide (Web `AGENT_FILES.getStarted`). */
 const GET_STARTED_PATH = "/get-started.md";

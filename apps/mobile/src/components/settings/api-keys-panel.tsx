@@ -84,21 +84,31 @@ function ApiKeysView() {
 								<KeysRetiredNote />
 							</Alert>
 						)}
-						{action.error ? <ApiErrorPanel error={t("account.actionFailed")} /> : null}
+						{action.error ? (
+							<ApiErrorPanel title={settingsCopy.revokeKeyFailed} error={action.failure} />
+						) : null}
 					</WebView>
 				}
 				empty={
 					keys.isPending ? (
 						<RouteLoadingSkeleton />
 					) : keys.isError ? (
-						<ApiErrorPanel error={keys.error} onRetry={() => void keys.refetch()} />
+						<ApiErrorPanel
+							title={settingsCopy.loadKeysFailed}
+							error={keys.error}
+							onRetry={() => void keys.refetch()}
+						/>
 					) : (
 						<EmptyState title={settingsCopy.emptyKeys} description={<KeysRetiredNote />} />
 					)
 				}
 				footer={
 					keys.isError && keys.data ? (
-						<ApiErrorPanel error={keys.error} onRetry={() => void keys.refetch()} />
+						<ApiErrorPanel
+							title={settingsCopy.loadKeysFailed}
+							error={keys.error}
+							onRetry={() => void keys.refetch()}
+						/>
 					) : null
 				}
 				renderItem={({ item: key }) => (

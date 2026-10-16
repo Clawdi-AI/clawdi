@@ -23,6 +23,17 @@ export const BILLING_ERROR_CODE_COPY: Readonly<Record<string, string>> = {
 		"A checkout is already open for this agent. Continue with the same subscription choice.",
 };
 
+/** Error panel titles on the Wallet and Compute pages. */
+export const BILLING_ERROR_TITLES = {
+	loadTransactions: "Couldn’t load transactions",
+	loadMoreTransactions: "Couldn’t load more transactions",
+	refreshTransactions: "Couldn’t refresh transactions",
+	loadSubscriptions: "Couldn't load subscriptions",
+	loadSubscriptionAvailability: "Couldn't load subscription availability",
+	loadMoreSubscriptions: "Couldn't load more subscriptions",
+	loadPlans: "Couldn't load plans",
+} as const;
+
 /**
  * One user-facing sentence for a failed billing request. Hides backend internals and
  * reads balance exhaustion as the top-up narrative, never a raw gateway error.

@@ -84,6 +84,8 @@ module.exports = ({ config }) => {
 				["UserID", true],
 				["PurchaseHistory", true],
 				["OtherUserContent", true],
+				// Live chat (Chatwoot): support messages linked to the signed-in contact.
+				["CustomerSupport", true],
 				["PhotosorVideos", true],
 				["CrashData", false],
 				["PerformanceData", false],
@@ -182,6 +184,8 @@ module.exports = ({ config }) => {
 					publicValue("EXPO_PUBLIC_REVENUECAT_CUSTOMER_CENTER_ENABLED") === "1",
 				clerkPublishableKey,
 				linkHosts: publicValue("EXPO_PUBLIC_CLAWDI_LINK_HOSTS"),
+				chatwootBaseUrl: publicValue("EXPO_PUBLIC_CHATWOOT_BASE_URL"),
+				chatwootWebsiteToken: publicValue("EXPO_PUBLIC_CHATWOOT_WEBSITE_TOKEN"),
 			},
 		},
 	};

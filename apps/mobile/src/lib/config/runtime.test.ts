@@ -172,6 +172,27 @@ describe("release configuration", () => {
 			},
 		});
 	});
+	test("live chat needs both Chatwoot values and an https widget origin", () => {
+		const chatwoot = (extra: Record<string, string>) =>
+			parseMobileRuntimeConfig({ ...values, ...extra }, { environment: "production" });
+		const configured = chatwoot({
+			chatwootBaseUrl: " https://chat.example.test/ ",
+			chatwootWebsiteToken: " website-token ",
+		});
+		if (!configured.ok) throw new Error("Invalid fixture config");
+		expect(configured.value.chatwoot).toEqual({
+			baseUrl: "https://chat.example.test",
+			websiteToken: "website-token",
+		});
+		const tokenOnly = chatwoot({ chatwootWebsiteToken: "website-token" });
+		expect(tokenOnly.ok && tokenOnly.value.chatwoot).toBeUndefined();
+		expect(
+			chatwoot({
+				chatwootBaseUrl: "http://chat.example.test",
+				chatwootWebsiteToken: "website-token",
+			}),
+		).toEqual({ ok: false, reason: "invalid" });
+	});
 	test("an empty Updates channel still enforces production auth and Sentry environment", () => {
 		for (const dsn of ["", "https://public@example.test/1"]) {
 			const result = Bun.spawnSync(

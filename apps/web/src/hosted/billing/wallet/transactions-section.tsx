@@ -2,6 +2,7 @@
 
 import { transactionsSectionClasses } from "@clawdi/shared/ui";
 import {
+	BILLING_ERROR_TITLES,
 	billingCopy,
 	formatShortDate,
 	transactionStatusLabel as statusLabel,
@@ -133,7 +134,7 @@ export function TransactionsSection() {
 						normalizer={billingErrorNormalizer}
 						error={transactions.error}
 						onRetry={() => void transactions.refetch()}
-						title="Couldn’t load transactions"
+						title={BILLING_ERROR_TITLES.loadTransactions}
 					/>
 				) : rows.length === 0 ? (
 					<EmptyState
@@ -230,8 +231,8 @@ export function TransactionsSection() {
 						}}
 						title={
 							transactions.isFetchNextPageError
-								? "Couldn’t load more transactions"
-								: "Couldn’t refresh transactions"
+								? BILLING_ERROR_TITLES.loadMoreTransactions
+								: BILLING_ERROR_TITLES.refreshTransactions
 						}
 					/>
 				) : null}

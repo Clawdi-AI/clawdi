@@ -1,7 +1,12 @@
 "use client";
 
 import { planComparisonClasses } from "@clawdi/shared/ui";
-import { billingCopy, computePlanComparisonView } from "@clawdi/shared/view";
+import {
+	BILLING_ERROR_TITLES,
+	billingCopy,
+	computePlanComparisonView,
+	planCapacityLabel,
+} from "@clawdi/shared/view";
 import { Check, Cpu, Zap } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsSection } from "@/components/settings-section";
@@ -61,7 +66,11 @@ export function PlanComparison({
 
 	if (plansQuery.isLoading) {
 		return (
-			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
+			<SettingsSection
+				headingLevel={3}
+				title={billingCopy.plans}
+				description={billingCopy.plansDescription}
+			>
 				<div className={planComparisonClasses.grid}>
 					<Skeleton className={planComparisonClasses.skeletonCard} />
 					<Skeleton className={planComparisonClasses.skeletonCard} />
@@ -72,12 +81,16 @@ export function PlanComparison({
 
 	if (shouldBlockQueryError(plansQuery.error, plansQuery.data)) {
 		return (
-			<SettingsSection headingLevel={3} title="Plans" description="Compare Cloud Agent plans.">
+			<SettingsSection
+				headingLevel={3}
+				title={billingCopy.plans}
+				description={billingCopy.plansDescription}
+			>
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={plansQuery.error}
 					onRetry={() => void plansQuery.refetch()}
-					title="Couldn't load plans"
+					title={BILLING_ERROR_TITLES.loadPlans}
 				/>
 			</SettingsSection>
 		);
@@ -99,7 +112,7 @@ export function PlanComparison({
 		<SettingsSection
 			data-hosted="true"
 			headingLevel={3}
-			title="Plans"
+			title={billingCopy.plans}
 			actions={
 				commonOffers.length > 1 && selectedTerm !== null ? (
 					<div className={planComparisonClasses.skeletonTitle}>
@@ -108,7 +121,7 @@ export function PlanComparison({
 							value={selectedTerm}
 							onChange={onTermChange}
 							showDiscount={false}
-							ariaLabel="Billing term for Basic and Performance"
+							ariaLabel={billingCopy.plansTermLabel}
 						/>
 					</div>
 				) : null
@@ -116,7 +129,7 @@ export function PlanComparison({
 			description={
 				sharedPricingUnavailable
 					? billingCopy.sharedPricingUnavailable
-					: "Compare Cloud Agent plans."
+					: billingCopy.plansDescription
 			}
 		>
 			<div>
@@ -125,27 +138,25 @@ export function PlanComparison({
 					<Card size="sm">
 						<CardHeader className={planComparisonClasses.header}>
 							<CardTitle className={planComparisonClasses.title}>
-								<Cpu className={planComparisonClasses.icon} aria-hidden /> Basic
+								<Cpu className={planComparisonClasses.icon} aria-hidden /> {billingCopy.basic}
 							</CardTitle>
-							<CardDescription>Balanced capacity for everyday workloads.</CardDescription>
+							<CardDescription>{billingCopy.basicDescription}</CardDescription>
 							<div className={planComparisonClasses.priceBlock}>
-								<p className={planComparisonClasses.description}>Basic subscription</p>
+								<p className={planComparisonClasses.description}>{billingCopy.basicSubscription}</p>
 								{basicPrice && basicOffer ? (
 									<PlanPrice offer={basicOffer} presentation={basicPrice} />
 								) : (
-									<p className={planComparisonClasses.subheading}>Pricing unavailable</p>
+									<p className={planComparisonClasses.subheading}>
+										{billingCopy.pricingUnavailable}
+									</p>
 								)}
 							</div>
 						</CardHeader>
 						<CardContent className={planComparisonClasses.stretch}>
 							<ul className={planComparisonClasses.features}>
-								{basic ? (
-									<FeatureRow>
-										Up to {basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB storage
-									</FeatureRow>
-								) : null}
-								<FeatureRow>Managed confidential compute · choose OpenClaw or Hermes</FeatureRow>
-								<FeatureRow>Bring your own API key (BYOK) · pay your provider directly</FeatureRow>
+								{basic ? <FeatureRow>{planCapacityLabel(basic)}</FeatureRow> : null}
+								<FeatureRow>{billingCopy.confidentialCompute}</FeatureRow>
+								<FeatureRow>{billingCopy.byok}</FeatureRow>
 							</ul>
 						</CardContent>
 					</Card>
@@ -154,28 +165,28 @@ export function PlanComparison({
 					<Card size="sm" className={planComparisonClasses.featuredCard}>
 						<CardHeader className={planComparisonClasses.header}>
 							<CardTitle className={planComparisonClasses.title}>
-								<Zap className={planComparisonClasses.featuredIcon} aria-hidden /> Performance
+								<Zap className={planComparisonClasses.featuredIcon} aria-hidden />{" "}
+								{billingCopy.performance}
 							</CardTitle>
-							<CardDescription>Higher capacity for production workloads.</CardDescription>
+							<CardDescription>{billingCopy.performanceDescription}</CardDescription>
 							<div className={planComparisonClasses.priceBlock}>
-								<p className={planComparisonClasses.description}>Performance subscription</p>
+								<p className={planComparisonClasses.description}>
+									{billingCopy.performanceSubscription}
+								</p>
 								{performancePrice && performanceOffer ? (
 									<PlanPrice offer={performanceOffer} presentation={performancePrice} />
 								) : (
-									<p className={planComparisonClasses.subheading}>Pricing unavailable</p>
+									<p className={planComparisonClasses.subheading}>
+										{billingCopy.pricingUnavailable}
+									</p>
 								)}
 							</div>
 						</CardHeader>
 						<CardContent className={planComparisonClasses.stretch}>
 							<ul className={planComparisonClasses.features}>
-								{performance ? (
-									<FeatureRow>
-										Up to {performance.vcpu} vCPU · {performance.ram_gb} GB RAM ·{" "}
-										{performance.disk_size} GB storage
-									</FeatureRow>
-								) : null}
-								<FeatureRow>Managed confidential compute · choose OpenClaw or Hermes</FeatureRow>
-								<FeatureRow>Bring your own API key (BYOK) · pay your provider directly</FeatureRow>
+								{performance ? <FeatureRow>{planCapacityLabel(performance)}</FeatureRow> : null}
+								<FeatureRow>{billingCopy.confidentialCompute}</FeatureRow>
+								<FeatureRow>{billingCopy.byok}</FeatureRow>
 							</ul>
 						</CardContent>
 					</Card>

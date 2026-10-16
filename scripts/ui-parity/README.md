@@ -81,6 +81,8 @@ Additional CLI flags:
 | `--reusable-subscriptions` | `none` | `mixed` lists unassigned card, Wallet and store subscriptions in the deploy wizard's Compute section. |
 | `--included-basic` | `available` | `none` reports no free Included Basic slot, so the deploy wizard offers only paid compute. |
 | `--subscription-actions` | `false` | `true` adds hosted's per-row `actions` (cancel or resume) to paid subscriptions and answers `POST /v2/subscription/{cancel,resume}`. |
+| `--wallet-balance` | `default` | `low` starts the Wallet at $1.50, below the low-balance threshold, for the low-balance banner and warning. |
+| `--subscription-history` | `false` | `true` adds an ended Wallet subscription of a deleted Agent (`csub_ParityEnded`), so Compute shows Show history (1). |
 
 Settings PATCH persists the provider and configured/unconfigured toggle.
 Submitted Mem0 values are discarded; GET returns only a fixed synthetic marker

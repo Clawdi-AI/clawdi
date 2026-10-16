@@ -1,6 +1,7 @@
 import { computeSubscriptionCardClasses } from "@clawdi/shared/ui";
 import {
 	billingCopy,
+	type ComputeSubscriptionIdentity,
 	type StoreManagement,
 	storeBillingNotice,
 	storeRenewalIssue,
@@ -14,17 +15,6 @@ import { entityCardChassisClass } from "@/components/entity-card";
 import { Button } from "@/components/ui/button";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { cn } from "@/lib/utils";
-
-export type ComputeSubscriptionIdentity =
-	| {
-			kind: "agent";
-			name: string;
-			agentType: string | null;
-			avatarUrl?: string | null;
-			href?: string;
-	  }
-	| { kind: "available"; label: string }
-	| { kind: "unavailable"; label: string };
 
 export { computeSubscriptionCardView, computeSubscriptionPlanLabel } from "@clawdi/shared/view";
 

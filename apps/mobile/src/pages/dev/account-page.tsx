@@ -11,9 +11,8 @@ import { SettingsPanelHeader, SettingsSection } from "@/components/settings/sett
 import { SheetPage } from "@/components/ui/sheet-page";
 import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webView } from "@/components/ui/web-layout";
-import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
-import { SubscriptionDetails } from "@/hosted/billing/subscription/subscription-details";
+import { SubscriptionRow } from "@/hosted/billing/subscription/subscription-row";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { TransactionRow } from "@/hosted/billing/wallet/transactions-section";
 import { WalletSettingsSections } from "@/hosted/billing/wallet/wallet-sections";
@@ -160,18 +159,6 @@ function AccountStories() {
 				/>
 			</SheetPage>
 		);
-	if (panel === "subscription-details")
-		return (
-			<SafeAreaScreen>
-				<AppScrollView
-					contentContainerClassName={webView(`${billingPageClass} ${settingsDialogClasses.panel}`)}
-				>
-					<SettingsPanelHeader title={t("billing.details")} />
-					<SubscriptionDetails item={subscriptionFixture} onDeployment={noop} />
-				</AppScrollView>
-			</SafeAreaScreen>
-		);
-
 	if (panel === "billing" || panel === "wallet")
 		return (
 			<SafeAreaScreen>
@@ -229,7 +216,11 @@ function AccountStories() {
 								title={t("billingParity.subscriptions")}
 								description={t("billingParity.subscriptionsDescription")}
 							>
-								<ComputeSubscriptionCard item={subscriptionFixture} />
+								<SubscriptionRow
+									item={subscriptionFixture}
+									reusableSubscriptionIds={new Set()}
+									reusableInventoryUncertain={false}
+								/>
 							</SettingsSection>
 							<PlanComparison
 								plans={[
