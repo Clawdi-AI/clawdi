@@ -129,7 +129,7 @@ async def test_account_provider_url_dns_failure_is_retryable(
     error: type[OSError],
 ) -> None:
     def failed_dns(*_args: object) -> None:
-        raise error
+        raise error("internal-resolver-detail-must-not-escape")
 
     monkeypatch.setattr(socket, "getaddrinfo", failed_dns)
     ciphertext, nonce = channels.encrypt_optional_token("provider-token")
@@ -147,3 +147,5 @@ async def test_account_provider_url_dns_failure_is_retryable(
 
     assert caught.value.status_code == 503
     assert caught.value.headers == {"Retry-After": "1"}
+
+    assert "internal-resolver-detail-must-not-escape" not in str(caught.value.detail)

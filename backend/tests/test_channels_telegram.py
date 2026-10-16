@@ -1123,7 +1123,7 @@ async def test_telegram_set_webhook_dns_failure_is_retryable(
     ).json()
 
     def failed_dns(*_args: object) -> None:
-        raise error
+        raise error("internal-resolver-detail-must-not-escape")
 
     monkeypatch.setattr(socket, "getaddrinfo", failed_dns)
     response = await client.post(
@@ -1134,6 +1134,7 @@ async def test_telegram_set_webhook_dns_failure_is_retryable(
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "1"
+    assert "internal-resolver-detail-must-not-escape" not in response.text
     assert response.json()["ok"] is False
     assert response.json()["error_code"] == 503
 

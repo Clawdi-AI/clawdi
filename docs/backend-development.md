@@ -84,13 +84,22 @@ uv run python -m compileall app scripts tests alembic
 ## Channel provider URLs
 
 Operator-configured Discord and Telegram API base URLs must use HTTPS and a
-public hostname or address. They are checked without DNS pre-validation;
-HTTPX resolves the host when connecting. Account URL overrides and agent webhook
-URLs still require DNS validation. Lookup timeouts and resolution failures
-return `503` with `Retry-After: 1`; unsafe URL shapes and private targets return
-`400`. See [URL validation](../backend/app/services/url_security.py).
+public hostname or address; the Discord Gateway setting requires WSS. They are
+checked without DNS pre-validation; the transport resolves the host when
+connecting. Account URL overrides, provider-supplied Gateway Resume URLs and
+agent webhook URLs still require DNS validation. URL-validation lookup timeouts
+and resolution failures return `503` with `Retry-After: 1`; unsafe URL shapes and
+private targets return `400`. Gateway worker failures use its existing reconnect
+boundary. See [URL validation](../backend/app/services/url_security.py).
 
-Done: `scripts/test.sh backend tests/test_channel_provider_http.py tests/test_url_security.py`
+The public URL resolver uses `loop.getaddrinfo` with its existing three-second
+deadline. Uvicorn's uvloop resolver runs independently of application
+`asyncio.to_thread` work, such as S3 I/O and archive processing. The standard
+asyncio loop uses the default executor for DNS. Every returned address is
+checked before the dial cap, and safe webhook delivery still pins the validated
+addresses. See [public HTTP delivery](../backend/app/services/safe_public_http.py).
+
+Done: `scripts/test.sh backend tests/test_channel_provider_http.py tests/test_url_security.py tests/test_safe_public_http.py tests/test_discord_gateway_resource_boundary.py`
 exits 0 with passing tests (Docker required).
 
 ## Discord Gateway ownership

@@ -71,7 +71,7 @@ async def test_outbound_url_reports_unresolved_hosts_without_claiming_they_are_p
     error: type[OSError],
 ) -> None:
     def unresolved(*_args: object) -> list[tuple[object, ...]]:
-        raise error
+        raise error("internal-resolver-detail-must-not-escape")
 
     monkeypatch.setattr(socket, "getaddrinfo", unresolved)
 
@@ -83,3 +83,5 @@ async def test_outbound_url_reports_unresolved_hosts_without_claiming_they_are_p
         )
 
     assert str(caught.value) == "webhook url could not resolve to a public host"
+
+    assert "internal-resolver-detail-must-not-escape" not in str(caught.value)

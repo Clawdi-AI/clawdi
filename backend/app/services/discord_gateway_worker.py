@@ -49,7 +49,11 @@ from app.services.discord_command_reconciliation_worker import (
     reconcile_discord_guild_commands,
     reconcile_discord_guild_departure,
 )
-from app.services.url_security import UnsafeOutboundUrlError, validate_channel_websocket_url
+from app.services.url_security import (
+    UnsafeOutboundUrlError,
+    validate_channel_provider_gateway_url,
+    validate_channel_websocket_url,
+)
 
 log = logging.getLogger(__name__)
 
@@ -368,11 +372,16 @@ class DiscordGatewayWorker:
             raise RuntimeError(_provider_token_error_detail(exc.detail)) from exc
 
         can_resume = state.can_resume()
-        gateway_url = state.resume_gateway_url
-        if not can_resume or gateway_url is None:
-            gateway_url = _account_gateway_url(account)
+        # Only the operator fallback is trusted configuration. Account overrides
+        # and provider-supplied Resume URLs retain DNS validation, even when the
+        # hostname happens to match the operator setting.
+        gateway_url = state.resume_gateway_url if can_resume else _account_gateway_url(account)
         try:
-            await validate_channel_websocket_url(gateway_url, label="discord gateway url")
+            if gateway_url is None:
+                gateway_url = settings.channel_discord_gateway_url.strip()
+                validate_channel_provider_gateway_url(gateway_url, label="discord gateway url")
+            else:
+                await validate_channel_websocket_url(gateway_url, label="discord gateway url")
         except UnsafeOutboundUrlError as exc:
             raise RuntimeError(str(exc)) from exc
         uri = discord_gateway_uri(gateway_url)
@@ -897,11 +906,11 @@ def _gateway_json(payload: GatewayFrame) -> str:
     return json.dumps(payload, separators=(",", ":"))
 
 
-def _account_gateway_url(account: ChannelAccount) -> str:
+def _account_gateway_url(account: ChannelAccount) -> str | None:
     value = _account_config_value(account, "gateway_url")
     if isinstance(value, str) and value.strip():
         return value.strip()
-    return settings.channel_discord_gateway_url.strip()
+    return None
 
 
 def _account_config_value(account: ChannelAccount, key: str) -> object:

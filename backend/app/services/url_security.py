@@ -78,6 +78,14 @@ def validate_channel_provider_base_url(url: str, *, label: str) -> None:
         raise UnsafeOutboundUrlError(f"{label} must be a public https URL") from None
 
 
+def validate_channel_provider_gateway_url(url: str, *, label: str) -> None:
+    """Validate operator configuration before the WebSocket transport resolves DNS."""
+    try:
+        parse_public_http_url(url, allowed_schemes=_CHANNEL_WEBSOCKET_SCHEMES)
+    except UnsafePublicHttpUrlError:
+        raise UnsafeOutboundUrlError(f"{label} must be a public wss URL") from None
+
+
 async def validate_channel_websocket_url(url: str, *, label: str) -> None:
     await validate_outbound_url(
         url,

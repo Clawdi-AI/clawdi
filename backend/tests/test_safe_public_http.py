@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import socket
 import ssl
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
 import pytest
+import uvloop
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -92,6 +95,15 @@ def test_public_url_rejects_invalid_network_ports(url: str) -> None:
     assert url not in str(caught.value)
 
 
+@pytest.mark.parametrize("hostname", ["empty..invalid", f"{'a' * 64}.invalid"])
+def test_public_url_rejects_invalid_dns_labels(hostname: str) -> None:
+    with pytest.raises(UnsafePublicHttpUrlError) as caught:
+        safe_public_http.parse_public_http_url(f"https://{hostname}/hook")
+
+    assert caught.value.reason == "invalid"
+    assert hostname not in str(caught.value)
+
+
 @pytest.mark.asyncio
 async def test_public_resolver_rejects_mixed_dns_even_after_address_cap(
     monkeypatch: pytest.MonkeyPatch,
@@ -118,6 +130,38 @@ async def test_public_resolver_rejects_mixed_dns_even_after_address_cap(
     assert len(lookups) == 1
 
 
+def test_public_resolver_uses_native_dns_when_default_executor_is_busy() -> None:
+    """Use real uvloop/libc DNS and an occupied executor, without external DNS."""
+
+    async def exercise() -> None:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        started = asyncio.Event()
+        release = threading.Event()
+
+        def occupy_executor() -> None:
+            loop.call_soon_threadsafe(started.set)
+            release.wait()
+
+        busy = loop.run_in_executor(None, occupy_executor)
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            # localhost comes from /etc/hosts. Reaching the private-address
+            # rejection proves DNS completed while unrelated work was queued.
+            with pytest.raises(UnsafePublicHttpUrlError) as caught:
+                await safe_public_http._resolve_public_addresses(
+                    "localhost", 443, timeout_seconds=1
+                )
+            assert caught.value.reason == "private_address"
+            assert not busy.done()
+        finally:
+            release.set()
+            await busy
+
+    with asyncio.Runner(loop_factory=uvloop.new_event_loop) as runner:
+        runner.run(exercise())
+
+
 @pytest.mark.asyncio
 async def test_public_resolver_has_a_bounded_dns_timeout(
     monkeypatch: pytest.MonkeyPatch,
@@ -126,7 +170,7 @@ async def test_public_resolver_has_a_bounded_dns_timeout(
         await asyncio.Future()
         raise AssertionError("unreachable")
 
-    monkeypatch.setattr(asyncio, "to_thread", never_returns)
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", never_returns)
 
     with pytest.raises(SafePublicHttpDnsTimeout):
         await resolve_public_http_target(

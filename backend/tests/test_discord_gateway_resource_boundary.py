@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
 
@@ -18,6 +19,7 @@ from app.core.database import _create_engine
 from app.models.channel import ChannelAccount
 from app.services import discord_advisory_session as locks
 from app.services import discord_gateway_worker as gateway
+from app.services.url_security import OutboundUrlResolutionError
 from app.services.vault_crypto import encrypt
 from app.workers import channels
 
@@ -145,6 +147,95 @@ async def provider(engine, monkeypatch):
     finally:
         await worker.stop()
         await ordinary.dispose()
+
+
+@pytest.mark.asyncio
+async def test_operator_gateway_url_does_not_pre_resolve_dns(provider, monkeypatch):
+    engine, accounts, network, worker = provider
+    # Establish the database connection before injecting provider DNS faults.
+    async with engine.connect():
+        pass
+
+    def unexpected_dns(*_args, **_kwargs):
+        pytest.fail("Operator Gateway URLs must not perform DNS pre-validation")
+
+    monkeypatch.setattr(socket, "getaddrinfo", unexpected_dns)
+    stop = asyncio.Event()
+    stop.set()
+
+    await worker._connect_and_record(accounts[0], stop, gateway._GatewayState())
+
+    assert len(network.transports) == 1
+    assert network.transports[0].sent[0]["op"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ws://gateway.discord.gg",
+        "wss://localhost",
+        "wss://10.0.0.1",
+        "wss://user:secret@gateway.discord.gg",
+    ],
+)
+async def test_operator_gateway_url_rejects_unsafe_settings(provider, monkeypatch, url):
+    _engine, accounts, network, worker = provider
+    monkeypatch.setattr(settings, "channel_discord_gateway_url", url)
+
+    with pytest.raises(RuntimeError, match="discord gateway url must be a public wss URL"):
+        await worker._connect_and_record(accounts[0], asyncio.Event(), gateway._GatewayState())
+
+    assert network.transports == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["account", "resume"])
+@pytest.mark.parametrize("answer", ["public", "private", "unresolved"])
+async def test_untrusted_gateway_urls_keep_dns_validation(provider, monkeypatch, source, answer):
+    engine, accounts, network, worker = provider
+    async with engine.connect():
+        pass
+    # Matching an operator setting must not grant trust to an override or a
+    # provider-supplied Resume URL.
+    url = settings.channel_discord_gateway_url
+    state = gateway._GatewayState()
+    if source == "account":
+        async with async_sessionmaker(engine)() as db:
+            await db.execute(
+                update(ChannelAccount)
+                .where(ChannelAccount.id == accounts[0])
+                .values(config={"gateway_enabled": True, "gateway_url": url})
+            )
+            await db.commit()
+    else:
+        state.session_id = "existing-session"
+        state.sequence = 17
+        state.resume_gateway_url = url
+
+    lookups = []
+
+    def resolve(host, port, *_args):
+        lookups.append(host)
+        if answer == "unresolved":
+            raise socket.gaierror("internal DNS failure must not escape")
+        address = "8.8.8.8" if answer == "public" else "10.0.0.5"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    stop = asyncio.Event()
+    stop.set()
+    if answer == "public":
+        await worker._connect_and_record(accounts[0], stop, state)
+        assert len(network.transports) == 1
+        assert network.transports[0].sent[0]["op"] == (6 if source == "resume" else 2)
+    else:
+        error = OutboundUrlResolutionError if answer == "unresolved" else RuntimeError
+        with pytest.raises(error) as caught:
+            await worker._connect_and_record(accounts[0], stop, state)
+        assert "internal DNS failure" not in str(caught.value)
+        assert network.transports == []
+    assert len(lookups) == 1
 
 
 async def lock_pid(engine, account_id):
