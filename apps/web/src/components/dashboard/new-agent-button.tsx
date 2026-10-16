@@ -42,9 +42,11 @@ export function NewAgentButton({
 	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
+	// Server-rendered markup has no click handler, so it must not look actionable.
+	const disabled = !hydrated || checkingDeployAccess;
 
 	function handleClick() {
-		if (checkingDeployAccess) return;
+		if (disabled) return;
 		if (canDeployOnClawdi || deployAccessError) {
 			setChooserOpen(true);
 			return;
@@ -69,7 +71,7 @@ export function NewAgentButton({
 			tooltip={compact ? undefined : newAgentChooserCopy.title}
 			aria-label={newAgentChooserCopy.title}
 			onClick={handleClick}
-			disabled={checkingDeployAccess}
+			disabled={disabled}
 			className={cn(
 				"duration-200 ease-linear",
 				compact &&
