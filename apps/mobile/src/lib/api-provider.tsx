@@ -28,6 +28,7 @@ import {
 	createPublicSessionClient,
 	createSessionSharingClient,
 	createSkillClient,
+	createSupportChatClient,
 	createTerminalClient,
 	createVaultClient,
 	createVaultSupplyClient,
@@ -42,6 +43,7 @@ import {
 	type PublicSessionClient,
 	type SessionSharingClient,
 	type SkillClient,
+	type SupportChatClient,
 	type TerminalClient,
 	type VaultClient,
 	type WhatsAppClient,
@@ -89,6 +91,8 @@ type MobileApiClients = Readonly<{
 	providerRemoval: ProviderRemovalClient | null;
 	hosted: HostedApiClient | null;
 	store: HostedStoreClient | null;
+	/** Live chat identity from the Web dashboard; null without Chatwoot or a Web link host. */
+	supportChat: SupportChatClient | null;
 }>;
 
 const MobileApiContext = createContext<MobileApiClients | null>(null);
@@ -131,6 +135,8 @@ export function MobileApiProvider({
 		return token ?? null;
 	}, [getToken, scope, sessionId]);
 	const suspension = accountSuspension(scope);
+	// Live chat identity comes from the Web dashboard, which serves the app-link hosts.
+	const supportChatHost = config.chatwoot ? config.linkHosts?.[0] : undefined;
 	const fetcher = useMemo<ApiClientFetch>(
 		() => observeAccountSuspension(suspension, (request, init) => globalThis.fetch(request, init)),
 		[suspension],
@@ -262,8 +268,15 @@ export function MobileApiProvider({
 						fetch: fetcher,
 					})
 				: null,
+			supportChat: supportChatHost
+				? createSupportChatClient({
+						baseUrl: `https://${supportChatHost}`,
+						getToken: readToken,
+						fetch: fetcher,
+					})
+				: null,
 		}),
-		[config.cloudApiUrl, config.computeApiUrl, fetcher, readToken],
+		[config.cloudApiUrl, config.computeApiUrl, supportChatHost, fetcher, readToken],
 	);
 	return (
 		<AccountSuspensionContext.Provider value={suspension}>

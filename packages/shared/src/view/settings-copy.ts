@@ -6,6 +6,7 @@ export const settingsCopy = {
 	generalDescription: "Account and app preferences.",
 	account: "Account",
 	accountDescription: "Your Clawdi identity.",
+	anonymous: "Anonymous",
 	manageAccount: "Manage account",
 	appearance: "Appearance",
 	theme: "Theme",
@@ -31,6 +32,9 @@ export const settingsCopy = {
 	revokeTitle: "Revoke “{label}”?",
 	revokeKey: "Revoke key",
 	emptyKeys: "No active API keys",
+	loadKeysFailed: "Couldn’t load API keys",
+	keyRevoked: "API key revoked",
+	revokeKeyFailed: "Couldn’t revoke API key",
 	done: "Done",
 	revokeDescription:
 		"Requests using this key will stop working. This can’t be undone; reconnect the client with clawdi auth login.",
@@ -50,10 +54,10 @@ export const billingCopy = {
 	autoReloadMonthlyLimit: "Monthly limit (USD)",
 	sharedPricingUnavailable:
 		"A shared Basic and Performance billing term is not currently available.",
-	lowBalance: "Low — top up before Clawdi AI pauses",
 	topUp: "Top up",
 	plans: "Plans",
 	plansDescription: "Compare Cloud Agent plans.",
+	plansTermLabel: "Billing term for Basic and Performance",
 	basic: "Basic",
 	performance: "Performance",
 	basicDescription: "Balanced capacity for everyday workloads.",
@@ -90,4 +94,39 @@ export const billingCopy = {
 	emptyTransactions: "No transactions yet",
 	emptyTransactionsDescription:
 		"Top-ups, grants, compute charges, and other money movements will appear here.",
+} as const;
+
+/** The balance card's low-balance chip; wallet-funded compute also stops when the balance runs out. */
+export function lowBalanceWarning(hasWalletCompute: boolean): string {
+	return `Low — top up before ${hasWalletCompute ? "AI or compute is interrupted" : "Clawdi AI pauses"}`;
+}
+
+/** Wallet top-up results, shared by Web's toasts and the app's store top-up notices. */
+export const walletTopupCopy = {
+	accepted: {
+		title: "Payment accepted",
+		description: "We're confirming your wallet credit now.",
+	},
+	processing: {
+		title: "Top-up processing",
+		description: "We'll credit your wallet once the payment settles.",
+	},
+	notFinished: {
+		title: "Top-up didn't finish",
+		description: "No payment was collected. Start a new top-up and choose another method.",
+	},
+	unknown: {
+		title: "Top-up status unknown",
+		description:
+			"We couldn't confirm whether Stripe finished the payment. We won't charge it again.",
+	},
+	credited: {
+		title: "Wallet credited",
+		description: "Your balance and Transactions now include the top-up.",
+	},
+	notConfirmed: {
+		title: "Wallet credit not confirmed yet",
+		description:
+			"The wallet has not linked this payment to the displayed balance and Transactions yet.",
+	},
 } as const;

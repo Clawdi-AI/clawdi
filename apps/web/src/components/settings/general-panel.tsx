@@ -32,9 +32,9 @@ const AccountProfileDialog = IS_HOSTED_BUILD
 	: null;
 
 const THEME_ITEMS = [
-	{ label: "Light", value: "light" },
-	{ label: "Dark", value: "dark" },
-	{ label: "System", value: "system" },
+	{ label: settingsCopy.light, value: "light" },
+	{ label: settingsCopy.dark, value: "dark" },
+	{ label: settingsCopy.system, value: "system" },
 ] as const;
 
 /** General settings — account identity and app-wide preferences. */
@@ -69,7 +69,9 @@ export function GeneralPanel() {
 							<AvatarFallback>{initial}</AvatarFallback>
 						</Avatar>
 						<div className={generalPanelClasses.identityText}>
-							<div className={generalPanelClasses.name}>{user?.fullName ?? "Anonymous"}</div>
+							<div className={generalPanelClasses.name}>
+								{user?.fullName ?? settingsCopy.anonymous}
+							</div>
 							<div className={generalPanelClasses.email}>
 								{user?.primaryEmailAddress?.emailAddress}
 							</div>

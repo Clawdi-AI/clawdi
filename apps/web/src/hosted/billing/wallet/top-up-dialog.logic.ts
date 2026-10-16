@@ -1,8 +1,8 @@
+import { walletTopupCopy } from "@clawdi/shared/view";
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import type { WalletTransaction } from "@/hosted/billing/contracts";
 import { wholeDollarTopUpCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { WALLET_TOPUP_ACCEPTED_TOAST } from "@/hosted/billing/wallet/top-up-return.logic";
 import {
 	TOPUP_INCREMENT_CENTS,
 	TOPUP_MAX_CENTS,
@@ -54,12 +54,12 @@ export function completeTopup(
 	controls.resetAttempt();
 	controls.onComplete?.(status);
 	if (status === "succeeded") {
-		controls.toastInfo(WALLET_TOPUP_ACCEPTED_TOAST.title, {
-			description: WALLET_TOPUP_ACCEPTED_TOAST.description,
+		controls.toastInfo(walletTopupCopy.accepted.title, {
+			description: walletTopupCopy.accepted.description,
 		});
 	} else {
 		controls.toastInfo("Payment processing", {
-			description: "We'll credit your wallet once the payment settles.",
+			description: walletTopupCopy.processing.description,
 		});
 	}
 	controls.closeDialog();

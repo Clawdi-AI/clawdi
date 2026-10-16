@@ -13,6 +13,7 @@ import {
 	MANAGED_PROVIDER_ID,
 	modelDisplayName,
 	modelOptionsForProvider,
+	OVERVIEW_COPY,
 	providerDisplayLabel,
 	shouldBlockQueryError,
 	sortModelBreakdown,
@@ -52,10 +53,10 @@ import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { ProviderIcon } from "@/hosted/v2/ai-providers/provider-icon";
 import { useProviderInventory } from "@/hosted/v2/ai-providers/providers-hooks";
 import { useMobileApi } from "@/lib/api-provider";
-import { useI18n } from "@/lib/i18n";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 
 type UsageRangeSelection = { days: UsageRangeDays; onChange: (days: UsageRangeDays) => void };
@@ -103,7 +104,6 @@ export function UsageScreen() {
 }
 
 function UsageView() {
-	const t = useI18n();
 	const { compute } = useMobileApi();
 	const [rangeDays, setRangeDays] = useState<UsageRangeDays>(7);
 	const [selectedAgentId, setSelectedAgentId] = useState("all");
@@ -148,7 +148,7 @@ function UsageView() {
 		body = (
 			<>
 				<SettingsPanelHeader title={copy.title} />
-				<EmptyState variant="inset" title={t("billing.unavailable")} />
+				<EmptyState variant="inset" title={OVERVIEW_COPY.cloudInventoryError} />
 			</>
 		);
 	} else if (allUsage.isPending || (selectedAgentId !== "all" && scopedUsage.isPending)) {
@@ -169,7 +169,7 @@ function UsageView() {
 		body = (
 			<>
 				<SettingsPanelHeader title={copy.title} actions={filters} />
-				<ApiErrorPanel error={usage.error} onRetry={onRetry} />
+				<ApiErrorPanel normalizer={billingErrorNormalizer} error={usage.error} onRetry={onRetry} />
 			</>
 		);
 	} else {

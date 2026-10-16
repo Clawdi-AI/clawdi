@@ -63,9 +63,9 @@ function AppTabs() {
 				<NativeTabs.Trigger.Label>{t("navigation.library")}</NativeTabs.Trigger.Label>
 				<NativeTabs.Trigger.Icon sf="books.vertical" md="library_books" />
 			</NativeTabs.Trigger>
-			<NativeTabs.Trigger name="(account)" testID="tab-account">
-				<NativeTabs.Trigger.Label>{t("navigation.account")}</NativeTabs.Trigger.Label>
-				<NativeTabs.Trigger.Icon sf="person.crop.circle" md="person" />
+			<NativeTabs.Trigger name="(account)" testID="tab-settings">
+				<NativeTabs.Trigger.Label>{t("settingsParity.title")}</NativeTabs.Trigger.Label>
+				<NativeTabs.Trigger.Icon sf="gearshape" md="settings" />
 			</NativeTabs.Trigger>
 		</NativeTabs>
 	);

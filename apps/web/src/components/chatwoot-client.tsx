@@ -1,11 +1,12 @@
 "use client";
 
+import { resolveChatwootIdentity } from "@clawdi/shared/view";
 import * as Sentry from "@sentry/tanstackstart-react";
 import { useLocation } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { useTheme } from "@/components/theme-provider";
 import { useCurrentUser } from "@/lib/auth-client";
-import { CHATWOOT_SETTINGS, resolveChatwootIdentity, shouldHideChatwoot } from "@/lib/chatwoot";
+import { CHATWOOT_SETTINGS, shouldHideChatwoot } from "@/lib/chatwoot";
 import { getChatwootIdentifierHash } from "@/lib/chatwoot.functions";
 import { env } from "@/lib/env";
 

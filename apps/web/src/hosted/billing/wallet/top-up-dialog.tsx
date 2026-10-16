@@ -1,5 +1,6 @@
 "use client";
 
+import { walletTopupCopy } from "@clawdi/shared/view";
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -52,14 +53,13 @@ export async function confirmWalletTopup(
 		return;
 	}
 	if (await waitForWalletTopupCredit(queryClient, paymentReference)) {
-		toast.success("Wallet credited", {
-			description: "Your balance and Transactions now include the top-up.",
+		toast.success(walletTopupCopy.credited.title, {
+			description: walletTopupCopy.credited.description,
 		});
 		return;
 	}
-	toast.info("Wallet credit not confirmed yet", {
-		description:
-			"The wallet has not linked this payment to the displayed balance and Transactions yet.",
+	toast.info(walletTopupCopy.notConfirmed.title, {
+		description: walletTopupCopy.notConfirmed.description,
 		action: {
 			label: "Check again",
 			onClick: () => void confirmWalletTopup(queryClient, paymentReference),

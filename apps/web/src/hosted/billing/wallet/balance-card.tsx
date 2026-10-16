@@ -1,7 +1,7 @@
 "use client";
 
 import { balanceCardClasses } from "@clawdi/shared/ui";
-import { billingCopy } from "@clawdi/shared/view";
+import { billingCopy, lowBalanceWarning } from "@clawdi/shared/view";
 import { Coins, CreditCard, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,16 +41,15 @@ export function BalanceCard({
 						<span>{billingCopy.walletExplanation}</span>
 						{low ? (
 							<span className={balanceCardClasses.warning}>
-								<TriangleAlert className={balanceCardClasses.warningIcon} aria-hidden /> Low — top
-								up before
-								{hasWalletCompute ? " AI or compute is interrupted" : " Clawdi AI pauses"}
+								<TriangleAlert className={balanceCardClasses.warningIcon} aria-hidden />{" "}
+								{lowBalanceWarning(hasWalletCompute)}
 							</span>
 						) : null}
 					</div>
 				</div>
 				<div className={balanceCardClasses.actions}>
 					<Button onClick={onTopUp} className={balanceCardClasses.action}>
-						<CreditCard /> Top up
+						<CreditCard /> {billingCopy.topUp}
 					</Button>
 				</div>
 			</CardContent>

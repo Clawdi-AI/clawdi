@@ -1,5 +1,10 @@
 import { billingPageStackClass, transactionsSectionClasses } from "@clawdi/shared/ui";
-import { nextBillingCursor, transactionsCountLabel } from "@clawdi/shared/view";
+import {
+	BILLING_ERROR_TITLES,
+	nextBillingCursor,
+	OVERVIEW_COPY,
+	transactionsCountLabel,
+} from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -9,6 +14,9 @@ import { SettingsPanelHeader, SettingsSection } from "@/components/settings/sett
 import { SettingsShell } from "@/components/settings/shell";
 import { NativeList } from "@/components/ui/native-list";
 import { WebText, WebView } from "@/components/ui/web-layout";
+import { useDashboardDeployments } from "@/hooks/use-dashboard-agents";
+import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { uniqueBillingItems } from "@/hosted/billing/format";
 import { useWallet } from "@/hosted/billing/hooks";
 import { useCreditsNotice, useStoreRecoveryRefresh } from "@/hosted/billing/store/add-credits";
@@ -39,6 +47,12 @@ function WalletView() {
 	const transactionsKey = accountQueryKey(scope, "billing-transactions");
 	useRefreshOnFocus([walletKey, transactionsKey]);
 	const wallet = useWallet();
+	// Web's wording names wallet-funded compute when the balance also pays for an Agent.
+	const deployments = useDashboardDeployments();
+	const hasWalletCompute = (deployments.data ?? []).some(
+		(deployment) =>
+			deployment.commercial_display?.compute_subscription?.funding_source === "wallet",
+	);
 	const transactions = useInfiniteQuery({
 		queryKey: transactionsKey,
 		initialPageParam: initialCursor(),
@@ -81,14 +95,19 @@ function WalletView() {
 							description={t("billingParity.walletDescription")}
 						/>
 						{!compute ? (
-							<EmptyState variant="inset" title={t("billing.unavailable")} />
+							<EmptyState variant="inset" title={OVERVIEW_COPY.cloudInventoryError} />
 						) : wallet.isPending ? (
 							<RouteLoadingSkeleton />
 						) : wallet.isError || !wallet.data ? (
-							<ApiErrorPanel error={wallet.error} onRetry={() => void wallet.refetch()} />
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={wallet.error}
+								onRetry={() => void wallet.refetch()}
+							/>
 						) : (
 							<>
-								<BalanceCard wallet={wallet.data} />
+								<LowBalanceBanner wallet={wallet.data} hasWalletCompute={hasWalletCompute} />
+								<BalanceCard wallet={wallet.data} hasWalletCompute={hasWalletCompute} />
 								<WalletSettingsSections wallet={wallet.data} />
 								<SettingsSection
 									title={t("billingParity.transactions")}
@@ -105,6 +124,8 @@ function WalletView() {
 								<RouteLoadingSkeleton />
 							) : transactions.isError ? (
 								<ApiErrorPanel
+									normalizer={billingErrorNormalizer}
+									title={BILLING_ERROR_TITLES.loadTransactions}
 									error={transactions.error}
 									onRetry={() => void transactions.refetch()}
 								/>
@@ -123,6 +144,12 @@ function WalletView() {
 						{transactions.isFetchingNextPage ? <RouteLoadingSkeleton /> : null}
 						{transactions.isError && transactions.data ? (
 							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								title={
+									transactions.isFetchNextPageError
+										? BILLING_ERROR_TITLES.loadMoreTransactions
+										: BILLING_ERROR_TITLES.refreshTransactions
+								}
 								error={transactions.error}
 								onRetry={() => void transactions.refetch()}
 							/>

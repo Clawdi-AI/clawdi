@@ -34,32 +34,8 @@ const agentSettingsEn = {
 		"We couldn't confirm this change. Refresh before trying again — it may already be saved. For avatars, check the image format and size.",
 };
 const billingEn = {
-	cpuSeparator: "vCPU ·",
-	ramSeparator: "GB RAM ·",
-	gb: "GB",
-	retries: "Next payment retry",
-	cancellation: "Cancellation is scheduled for the end of the current period.",
-	pendingPlan: "Pending compute plan",
-	providerRecovery: "Resolve this payment on the Clawdi web dashboard.",
-	unavailable: "The v2 compute API is not configured.",
 	unknown: "Unavailable",
-	details: "Subscription details",
-	status: "Status",
-	plan: "Compute plan",
-	price: "Price per billing term",
-	term: "Billing term",
-	periodEnd: "Current period ends",
-	source: "Funding source",
-	stripe: "Stripe",
-	wallet: "Wallet",
-	included: "Included Basic",
-	agent: "Agent",
-	deployment: "View deployment",
-	management: "Change plans and payment methods on the Clawdi web dashboard.",
-	walletNotice: "This subscription is paid from your Wallet balance.",
 	noStore: "Store purchases, top-ups, restore and refunds are not available in this build.",
-	moreToSearch:
-		"This subscription was not on the loaded pages. Load more before concluding it is unavailable.",
 } as const;
 const channelsEn = {
 	singular: "Channel",
@@ -140,36 +116,31 @@ const storeEn = {
 	checkPending: "Check pending purchases",
 	checkingPending: "Checking pending purchases…",
 	noPending: "No pending purchases found.",
-	recoveryStatus: "This subscription needs attention. Refresh to see its latest status.",
 	usdcInApp: "Browser-wallet USDC funding isn't available in this app.",
 	walletExplanation: "Pays for AI usage and wallet-funded compute subscriptions.",
 	walletSummary: "Balance and transactions",
-	purchasing: "Confirming purchase…",
+	purchasing: "Confirming top-up…",
 	unavailable: "Purchases aren't available right now. Your Wallet balance is unaffected.",
-	fundingApplied: "Credits were added to your Wallet.",
-	submitted: "Purchase submitted; credits will arrive in your Wallet.",
-	processing:
-		"Your purchase is still being confirmed. Credits are added automatically when it completes.",
-	paymentPending:
-		"Your purchase is waiting for approval. Credits are added automatically after it is approved.",
+	// Web's top-up results; store-only states keep their meaning in the same wording.
+	fundingApplied: `${walletTopupCopy.credited.title}. ${walletTopupCopy.credited.description}`,
+	submitted: `${walletTopupCopy.accepted.title}. ${walletTopupCopy.accepted.description}`,
+	processing: `${walletTopupCopy.processing.title}. ${walletTopupCopy.processing.description}`,
+	paymentPending: "Top-up waiting for approval. We'll credit your wallet once it's approved.",
 	unconfirmed:
-		"This purchase couldn't be confirmed yet. If you were charged, credits are added automatically, and trying again won't charge you twice.",
-	purchaseInProgress: "Another purchase is still being confirmed. Try again after it completes.",
+		"Top-up not confirmed yet. If you were charged, we'll credit your wallet automatically, and trying again won't charge you twice.",
+	purchaseInProgress: "Another top-up is still being confirmed. Try again after it completes.",
 	reviewRequired:
 		"This purchase needs billing review. Contact support; buying again won't resolve it.",
-	notCompleted: "The purchase wasn't completed. No credits were added.",
-	refundDebt: "Credits can't be added while a refunded purchase is unresolved. Contact support.",
-	paywallUnavailable: "Credit packs couldn't be loaded. Try again later.",
+	notCompleted: `${walletTopupCopy.notFinished.title}. Your wallet wasn't credited.`,
+	refundDebt: "Purchases are paused while a refunded purchase is unresolved. Contact support.",
+	paywallUnavailable: "Top-up options couldn't be loaded. Try again later.",
 	accountChanged: "Your account changed during the purchase. Check your Wallet after signing in.",
-	failed: "The purchase couldn't be started. Try again.",
-	creditsNotice: "Credits bought in this app are added to your Wallet and don't expire.",
-	cardBillingStatus: "This subscription is billed by card.",
+	failed: "The top-up couldn't be started. Try again.",
+	creditsNotice: "Top-ups bought in this app are added to your Wallet and don't expire.",
 	cardDunning:
 		"Payment for this subscription needs attention. Card payments can't be updated in this app.",
 	walletDunning:
 		"Your Wallet balance is too low to renew this subscription. Top up; billing updates automatically after funding.",
-	cardSource: "Card",
-	quoteBalance: "Wallet balance after payment",
 	shortfall:
 		"Add {amount} to cover this plan. The price preview refreshes after your credits arrive.",
 } as const;
@@ -511,6 +482,7 @@ import {
 	sessionDetailCopy,
 	settingsCopy,
 	usageCopy,
+	walletTopupCopy,
 	whatsappOnboardingCopy,
 } from "@clawdi/shared/view";
 export const en = {
@@ -605,10 +577,11 @@ export const en = {
 		failed: "Could not read or save your appearance preference. Please retry.",
 		retry: "Retry loading appearance",
 	},
+	support: {
+		failed: "Couldn’t open live chat",
+	},
 	settingsMenu: {
 		unavailable: "Settings unavailable",
-		generalSummary: "Appearance",
-		generalDescription: "Appearance preferences for this device.",
 		privacyPolicy: "Privacy Policy",
 		termsOfUse: "Terms of Use",
 		linkFailed: "Couldn't open this link. Try again.",
@@ -681,7 +654,6 @@ export const en = {
 		sessions: "Sessions",
 		library: "Library",
 		vaults: "Vaults",
-		account: "Account",
 		back: "Back",
 		deployments: "Deployments",
 	},
@@ -706,7 +678,6 @@ export const en = {
 	},
 	inventory: {
 		loadMore: "Load more",
-		refresh: "Refresh",
 		notFound: "This item is unavailable or no longer exists.",
 		viewAll: "View all",
 		viewDetails: "Details",
@@ -867,7 +838,6 @@ export const en = {
 	account: {
 		apiKey: "API key",
 		cancel: "Cancel",
-		actionFailed: "The action could not be confirmed. Refresh the key list before trying again.",
 	},
 } as const;
 export type TranslationKey = {

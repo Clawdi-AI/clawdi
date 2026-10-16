@@ -5,7 +5,7 @@ import { AppScrollView } from "@/components/ui/view";
 import { webView } from "@/components/ui/web-layout";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
-/** One settings panel screen; the Account tab's settings menu owns panel navigation. */
+/** One settings panel screen; the Settings tab's menu owns panel navigation. */
 export function SettingsShell({
 	children,
 	scroll = true,

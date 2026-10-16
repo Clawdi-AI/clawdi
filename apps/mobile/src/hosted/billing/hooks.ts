@@ -1,5 +1,6 @@
 import {
 	computeSubscriptionsRecoveryRefetchInterval,
+	loadReusableSubscriptions,
 	nextBillingCursor,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
@@ -51,6 +52,26 @@ export function useWallet() {
 				return compute.getWallet(s);
 			}, signal),
 		enabled: scope.isReady && Boolean(compute),
+		...transientQueryRetry,
+	});
+}
+
+/** Web's reusable inventory, every page: it alone decides "Available for a new agent". */
+export function useReusableSubscriptions() {
+	const { compute } = useMobileApi();
+	const scope = useAccountScope();
+	const read = useAccountRead();
+	return useQuery({
+		queryKey: accountQueryKey(scope, "billing-reusable"),
+		queryFn: ({ signal }) =>
+			read((s) => {
+				if (!compute) throw new Error("Compute API unavailable");
+				return loadReusableSubscriptions((limit, cursor) =>
+					compute.getReusableSubscriptions({ limit, cursor }, s),
+				);
+			}, signal),
+		enabled: scope.isReady && Boolean(compute),
+		staleTime: 30_000,
 		...transientQueryRetry,
 	});
 }

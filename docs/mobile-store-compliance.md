@@ -43,6 +43,9 @@ with `NSPrivacyCollectedDataTypeTracking: false` and
 WhatsApp phone numbers use `NSPrivacyCollectedDataTypePhoneNumber` with the
 same linked, non-tracking App Functionality declaration: stored authenticated
 PN JIDs can be mapped back to phone numbers.
+Live chat messages use `NSPrivacyCollectedDataTypeCustomerSupport`, linked,
+non-tracking and App Functionality: Chatwoot identifies the contact by the Clerk
+user id, name and email, validated by Web's server-side identity hash.
 
 From `apps/mobile`, inspect the plugin output, then generate the native project:
 
@@ -77,6 +80,7 @@ transactions and breadcrumbs involving `/vault-request`; replay is disabled.
 | Memories, skill content, Vault entries and user-authored session/channel configuration / Cloud APIs and connected agents | User Content: Other User Content | App activity: Other user-generated content | App functionality, content storage/sync and agent configuration | Linked; optional, collected when using the feature |
 | Skill archive uploads / Cloud skill library and connected agents | User Content: Other User Content | Files and docs: Files and docs | App functionality, skill import/sync | Linked; optional upload |
 | Agent avatars and optional Clerk profile images / Cloud agent API or Clerk | User Content: Photos or Videos | Photos and videos: Photos | App functionality, profile/agent personalization | Linked; optional upload; system picker does not grant general photo-library access |
+| Live chat messages and attachments / Chatwoot (support inbox) when configured | Other Data: Customer Support | Messages: Other in-app messages | Customer support | Linked to the Clawdi account (user id, name, email); optional, only when the user opens Live chat |
 | Crash reports / Sentry when DSN configured | Diagnostics: Crash Data | App info and performance: Crash logs | App functionality, reliability | Not explicitly linked; conditional on DSN |
 | Performance and diagnostic metadata / Sentry when DSN configured | Diagnostics: Performance Data, Other Diagnostic Data | App info and performance: Diagnostics | App functionality, reliability | Not explicitly linked; conditional on DSN |
 

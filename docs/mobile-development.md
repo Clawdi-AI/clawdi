@@ -945,6 +945,13 @@ Configure these exact release values in **each** environment:
 | `EXPO_PUBLIC_REVENUECAT_APPLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
 | `EXPO_PUBLIC_REVENUECAT_GOOGLE_KEY` | Owner's public SDK key, or unset pending IAP setup | Owner's public SDK key, or unset pending IAP setup |
 | `EXPO_PUBLIC_SENTRY_DSN` | Owner's DSN, or unset | Owner's DSN, or unset |
+| `EXPO_PUBLIC_CHATWOOT_BASE_URL` | Web's `VITE_CHATWOOT_BASE_URL`, or unset | Web's `VITE_CHATWOOT_BASE_URL`, or unset |
+| `EXPO_PUBLIC_CHATWOOT_WEBSITE_TOKEN` | Web's `VITE_CHATWOOT_WEBSITE_TOKEN`, or unset | Web's `VITE_CHATWOOT_WEBSITE_TOKEN`, or unset |
+
+Live chat appears in Help only with both Chatwoot values (an `https` origin) and a
+link host, like Web's widget. The app reads Chatwoot's identity hash from the
+first link host's `GET /api/chatwoot/identity`, which the Web server signs with
+`CHATWOOT_HMAC_SECRET` for the bearer session; the secret never ships in the app.
 
 For `development`, set `EXPO_PUBLIC_CLAWDI_ENV=development`, a device-reachable
 development Cloud URL and a Clerk test key; compute, link hosts,

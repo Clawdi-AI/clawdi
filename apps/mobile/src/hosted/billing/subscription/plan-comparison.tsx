@@ -4,6 +4,7 @@ import {
 	billingTermLabel,
 	cardTrialPricePresentation,
 	computePlanComparisonView,
+	planCapacityLabel,
 } from "@clawdi/shared/view";
 import Check from "lucide-react-native/icons/check";
 import Cpu from "lucide-react-native/icons/cpu";
@@ -125,11 +126,7 @@ export function PlanComparison({ plans }: { plans: Plan[] }) {
 									{plan ? (
 										<WebView recipe={styles.feature} className="flex-row">
 											<Icon as={Check} className={styles.featureIcon} />
-											<WebText recipe={styles.feature}>
-												{t("billingParity.upTo")} {plan.vcpu} {t("billing.cpuSeparator")}{" "}
-												{plan.ram_gb} {t("billing.ramSeparator")} {plan.disk_size} {t("billing.gb")}{" "}
-												{t("billingParity.storage")}
-											</WebText>
+											<WebText recipe={styles.feature}>{planCapacityLabel(plan)}</WebText>
 										</WebView>
 									) : null}
 									{(["billingParity.confidentialCompute", "billingParity.byok"] as const).map(

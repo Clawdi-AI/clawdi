@@ -1,4 +1,6 @@
-import type { DeployComponents, DeploymentRead } from "../api";
+import type { ComputeRecoveryTarget, DeployComponents, DeploymentRead } from "../api";
+import type { AgentTile } from "./agent-tiles";
+import { shouldBlockQueryError } from "./query-state";
 
 type Schemas = DeployComponents["schemas"];
 type BillingOffer = Schemas["V2BillingOfferResponse"];
@@ -42,6 +44,156 @@ export function isHistoricalAccountSubscription(
 	return (
 		subscription.actions?.command_state == null && subscription.recovery_action === "start_new"
 	);
+}
+
+/** Web's Compute list copy: subscription identity, history toggle and recovery notices. */
+export const computeSubscriptionListCopy = {
+	availableForNewAgent: "Available for a new agent",
+	deletedAgent: "Deleted agent",
+	agentFallback: "Agent",
+	openAgentSettings: "Open agent settings",
+	loadMore: "Load more",
+	loading: "Loading…",
+	loadingSubscriptions: "Loading subscriptions",
+	loadingAvailability: "Loading subscription availability",
+	hideHistory: "Hide history",
+	showHistory: (endedCount: number) => `Show history${endedCount ? ` (${endedCount})` : ""}`,
+	noCurrentSubscriptions: "No current subscriptions",
+	endedHidden: "Ended subscriptions are hidden. Show history to view them.",
+	loadMoreToFind: "Load more records to find current subscriptions.",
+} as const;
+
+/** Card notice for a subscription's payment recovery, or null when it has none to explain. */
+export function computeSubscriptionRecoveryNotice(
+	target: ComputeRecoveryTarget | null,
+	{ canStartNew }: { canStartNew: boolean },
+): string | null {
+	switch (target?.kind) {
+		case "top_up":
+			return "Top up wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
+		case "invoice":
+		case "fix_payment":
+			return "Resolve the outstanding payment to restore this subscription. Payment source changes apply to future renewals.";
+		case "start_new":
+			return canStartNew ? "Start a new subscription from agent settings." : null;
+		case undefined:
+			return null;
+	}
+}
+
+export type ComputeSubscriptionAssignment = "available" | "assigned" | "unavailable";
+
+export function computeSubscriptionAssignment(
+	subscription: Pick<
+		ComputeSubscriptionListItem,
+		"deployment_id" | "is_orphan" | "subscription_id" | "subscription_kind"
+	>,
+	reusableSubscriptionIds: ReadonlySet<string>,
+): ComputeSubscriptionAssignment {
+	if (subscription.subscription_kind === "included_basic") {
+		return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
+	}
+	if (reusableSubscriptionIds.has(subscription.subscription_id)) return "available";
+	return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
+}
+
+/** Who a subscription card says it is used by. */
+export type ComputeSubscriptionIdentity =
+	| {
+			kind: "agent";
+			name: string;
+			agentType: string | null;
+			avatarUrl?: string | null;
+			href?: string;
+	  }
+	| { kind: "available"; label: string }
+	| { kind: "unavailable"; label: string };
+
+export function computeSubscriptionIdentity(
+	subscription: Pick<ComputeSubscriptionListItem, "agent_name" | "subscription_kind">,
+	assignment: ComputeSubscriptionAssignment,
+	agentTile: Pick<AgentTile, "name" | "agentType" | "avatarUrl"> | undefined,
+	href: string | null,
+	inventoryUncertain = false,
+): ComputeSubscriptionIdentity | undefined {
+	if (subscription.subscription_kind === "included_basic" && assignment !== "assigned") {
+		return undefined;
+	}
+	if (assignment === "available") {
+		return { kind: "available", label: computeSubscriptionListCopy.availableForNewAgent };
+	}
+	if (assignment === "unavailable") {
+		if (inventoryUncertain) return undefined;
+		return { kind: "unavailable", label: computeSubscriptionListCopy.deletedAgent };
+	}
+	return {
+		kind: "agent",
+		name: agentTile?.name ?? subscription.agent_name ?? computeSubscriptionListCopy.agentFallback,
+		agentType: agentTile?.agentType ?? null,
+		avatarUrl: agentTile?.avatarUrl,
+		href: href ?? undefined,
+	};
+}
+
+function subscriptionStatusPriority(status: string): number {
+	switch (status) {
+		case "trialing":
+		case "active":
+			return 0;
+		case "past_due":
+			return 1;
+		case "canceling":
+			return 2;
+		case "canceled":
+			return 3;
+		default:
+			return 4;
+	}
+}
+
+/** Current subscriptions first, keeping the server's order within each status. */
+export function sortLoadedSubscriptions<T extends Pick<ComputeSubscriptionListItem, "status">>(
+	subscriptions: readonly T[],
+): T[] {
+	return subscriptions
+		.map((subscription, index) => ({ subscription, index }))
+		.sort(
+			(a, b) =>
+				subscriptionStatusPriority(a.subscription.status) -
+					subscriptionStatusPriority(b.subscription.status) || a.index - b.index,
+		)
+		.map(({ subscription }) => subscription);
+}
+
+type ReusablePage<Item> = { items?: Item[]; has_more: boolean; next_cursor?: string | null };
+
+/** Every reusable subscription, in cursor order; a failed or looping page rejects the whole load. */
+export async function loadReusableSubscriptions<Item>(
+	getPage: (limit: number, cursor: string | undefined) => Promise<ReusablePage<Item>>,
+): Promise<Item[]> {
+	const items: Item[] = [];
+	const seenCursors = new Set<string>();
+	let cursor: string | undefined;
+	while (true) {
+		const page = await getPage(100, cursor);
+		items.push(...(page.items ?? []));
+		if (!page.has_more) return items;
+		const nextCursor = page.next_cursor?.trim();
+		if (!nextCursor || seenCursors.has(nextCursor)) {
+			throw new Error("Reusable subscription pagination returned an invalid cursor.");
+		}
+		seenCursors.add(nextCursor);
+		cursor = nextCursor;
+	}
+}
+
+/** Whether the reusable-subscription inventory can decide "Available for a new agent". */
+export function reusableInventoryState(
+	error: unknown,
+	data: readonly unknown[] | undefined,
+): "loading" | "error" | "ready" {
+	if (shouldBlockQueryError(error, data)) return "error";
+	return data === undefined ? "loading" : "ready";
 }
 
 export function isComputeSubscriptionActionUnconfirmed(

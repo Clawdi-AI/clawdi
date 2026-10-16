@@ -9,6 +9,7 @@ import {
 	CONSOLE_NAVIGATION_ITEMS as SHARED_CONSOLE_NAVIGATION_ITEMS,
 	type ConsoleNavigationGroup as SharedConsoleNavigationGroup,
 	type ConsoleNavigationItemMetadata as SharedConsoleNavigationItemMetadata,
+	settingsCopy,
 	consoleCommandPaletteItems as sharedConsoleCommandPaletteItems,
 	consoleNavigationGroups as sharedConsoleNavigationGroups,
 } from "@clawdi/shared/view";
@@ -88,7 +89,7 @@ export const CANONICAL_NAVIGATION_IDENTITIES = {
 	},
 	channels: { label: "Channels", icon: MessagesSquare },
 	"ai-providers": { label: "AI Providers", icon: BrainCircuit },
-	settings: { label: "Settings", icon: Settings },
+	settings: { label: settingsCopy.title, icon: Settings },
 } satisfies Record<CanonicalNavigationConceptId, { label: string; icon: LucideIcon }>;
 
 type ConsoleNavigationItemMetadata = SharedConsoleNavigationItemMetadata & { icon: LucideIcon };

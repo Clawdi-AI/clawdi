@@ -72,6 +72,8 @@ for (const [name, allowed, fallback] of [
 	["reusable-subscriptions", ["none", "mixed"], "none"],
 	["included-basic", ["available", "none"], "available"],
 	["subscription-actions", ["false", "true"], "false"],
+	["wallet-balance", ["default", "low"], "default"],
+	["subscription-history", ["false", "true"], "false"],
 ] satisfies [string, string[], string][]) {
 	if (!allowed.includes(readFlag(name, fallback))) {
 		console.error(`Invalid --${name}; expected ${allowed.join("|")}`);
@@ -2078,52 +2080,82 @@ const deploymentOperations = deployments.map(
 		}) satisfies DeploySchemas["LongRunningOperation"],
 );
 
+/** `--subscription-history true`: an ended Wallet subscription whose Agent was deleted. */
+const endedSubscriptions: DeploySchemas["V2ComputeSubscriptionListItem"][] =
+	readFlag("subscription-history", "false") === "true"
+		? [
+				{
+					subscription_id: "csub_ParityEnded",
+					subscription_kind: "paid",
+					plan_slug: "compute_basic",
+					funding_source: "wallet",
+					status: "canceled",
+					price_cents: 1000,
+					currency: "usd",
+					billing_term_months: 1,
+					current_period_end: ago(10 * DAY),
+					cancel_at_period_end: false,
+					deployment_id: null,
+					agent_name: "Retired Hermes",
+					is_orphan: true,
+					payment_state: "ok",
+					latest_failed_invoice_hosted_url: null,
+					next_payment_attempt_at: null,
+					recovery_action: "start_new",
+					pending_plan_slug: null,
+				},
+			]
+		: [];
+
 const computeSubscriptions = {
-	items: deployments.map(
-		(deployment, index) =>
-			({
-				subscription_id:
-					index === 0
-						? "csub_ParityIncluded"
-						: index === 1
-							? "csub_ParityPerformance"
-							: `csub_${deployment.resource.id.slice(5)}`,
-				subscription_kind: index === 0 ? "included_basic" : "paid",
-				plan_slug: deployment.current_plan_slug,
-				funding_source: index === 0 ? null : "wallet",
-				status: deployment.resource.id === "hdep_ParityDunning" ? "past_due" : "active",
-				price_cents: index === 0 ? 0 : 2500,
-				currency: "usd",
-				billing_term_months: 1,
-				current_period_end: ago(-20 * DAY),
-				cancel_at_period_end:
-					deployment.commercial_display?.compute_subscription?.cancel_at_period_end ?? false,
-				deployment_id: deployment.resource.id,
-				agent_name: deployment.resource.name,
-				is_orphan: false,
-				payment_state: deployment.commercial_display?.compute_subscription?.payment_state ?? "ok",
-				latest_failed_invoice_hosted_url: null,
-				next_payment_attempt_at:
-					deployment.commercial_display?.compute_subscription?.next_payment_attempt_at ?? null,
-				recovery_action:
-					deployment.commercial_display?.compute_subscription?.recovery_action ?? null,
-				pending_plan_slug: null,
-				// Hosted's per-row commands; opt-in so default screenshots stay unchanged.
-				...(readFlag("subscription-actions", "false") === "true" && index > 0
-					? {
-							actions: {
-								cancel: deployment.commercial_display?.compute_subscription?.cancel_at_period_end
-									? null
-									: "cancel_at_period_end",
-								resume:
-									deployment.commercial_display?.compute_subscription?.cancel_at_period_end ??
-									false,
-								command_state: null,
-							},
-						}
-					: {}),
-			}) satisfies DeploySchemas["V2ComputeSubscriptionListItem"],
-	),
+	items: [
+		...deployments.map(
+			(deployment, index) =>
+				({
+					subscription_id:
+						index === 0
+							? "csub_ParityIncluded"
+							: index === 1
+								? "csub_ParityPerformance"
+								: `csub_${deployment.resource.id.slice(5)}`,
+					subscription_kind: index === 0 ? "included_basic" : "paid",
+					plan_slug: deployment.current_plan_slug,
+					funding_source: index === 0 ? null : "wallet",
+					status: deployment.resource.id === "hdep_ParityDunning" ? "past_due" : "active",
+					price_cents: index === 0 ? 0 : 2500,
+					currency: "usd",
+					billing_term_months: 1,
+					current_period_end: ago(-20 * DAY),
+					cancel_at_period_end:
+						deployment.commercial_display?.compute_subscription?.cancel_at_period_end ?? false,
+					deployment_id: deployment.resource.id,
+					agent_name: deployment.resource.name,
+					is_orphan: false,
+					payment_state: deployment.commercial_display?.compute_subscription?.payment_state ?? "ok",
+					latest_failed_invoice_hosted_url: null,
+					next_payment_attempt_at:
+						deployment.commercial_display?.compute_subscription?.next_payment_attempt_at ?? null,
+					recovery_action:
+						deployment.commercial_display?.compute_subscription?.recovery_action ?? null,
+					pending_plan_slug: null,
+					// Hosted's per-row commands; opt-in so default screenshots stay unchanged.
+					...(readFlag("subscription-actions", "false") === "true" && index > 0
+						? {
+								actions: {
+									cancel: deployment.commercial_display?.compute_subscription?.cancel_at_period_end
+										? null
+										: "cancel_at_period_end",
+									resume:
+										deployment.commercial_display?.compute_subscription?.cancel_at_period_end ??
+										false,
+									command_state: null,
+								},
+							}
+						: {}),
+				}) satisfies DeploySchemas["V2ComputeSubscriptionListItem"],
+		),
+		...endedSubscriptions,
+	],
 	has_more: false,
 	next_cursor: null,
 } satisfies DeployGetOk<"/v2/subscriptions">;
@@ -2185,7 +2217,7 @@ const reusableSubscriptions = {
 } satisfies DeployGetOk<"/v2/subscriptions/reusable">;
 
 const wallet = {
-	balance_usd: "42.50",
+	balance_usd: readFlag("wallet-balance", "default") === "low" ? "1.50" : "42.50",
 	x402_enabled: false,
 	x402_payment_status: "idle",
 	auto_reload_enabled: false,

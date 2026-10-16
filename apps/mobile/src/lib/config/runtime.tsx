@@ -26,6 +26,8 @@ export function loadMobileRuntimeConfig(): MobileRuntimeConfigResult {
 			revenueCatGoogleKey: configuredValue("revenueCatGoogleKey"),
 			revenueCatCustomerCenterEnabled: configuredValue("revenueCatCustomerCenterEnabled"),
 			linkHosts: configuredValue("linkHosts"),
+			chatwootBaseUrl: configuredValue("chatwootBaseUrl"),
+			chatwootWebsiteToken: configuredValue("chatwootWebsiteToken"),
 		},
 		{
 			isDevelopment: __DEV__,

@@ -20,6 +20,7 @@ export function SheetPage({
 	fallback,
 	busy = false,
 	scroll = true,
+	closeLabel,
 	sheet: suppliedSheet,
 }: {
 	title: string;
@@ -30,6 +31,8 @@ export function SheetPage({
 	busy?: boolean;
 	/** Disable when a NativeList owns the route content scroll. */
 	scroll?: boolean;
+	/** Sheets without a form close with Done rather than Cancel. */
+	closeLabel?: string;
 	/** Pass the form's useSheet instance when it also closes with a mutation result. */
 	sheet?: { close: () => Promise<void> };
 }) {
@@ -53,7 +56,7 @@ export function SheetPage({
 					...actions,
 					{
 						id: "close",
-						label: t("composite.cancel"),
+						label: closeLabel ?? t("composite.cancel"),
 						disabled: busy,
 						onPress: () => {
 							void sheet.close().catch(setError);

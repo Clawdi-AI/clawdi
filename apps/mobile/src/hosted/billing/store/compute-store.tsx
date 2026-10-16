@@ -19,13 +19,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import ArrowUp from "lucide-react-native/icons/arrow-up";
 import RotateCcw from "lucide-react-native/icons/rotate-ccw";
 import Settings from "lucide-react-native/icons/settings";
-import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import { useState } from "react";
 import { Linking } from "react-native";
 import type { PurchasesPackage } from "react-native-purchases";
 import RevenueCatUI from "react-native-purchases-ui";
 import { EntityCardChassis, EntityChoiceCard } from "@/components/entity-card";
-import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { RichConfirmAction } from "@/components/ui/confirm-action";
 import { Icon } from "@/components/ui/icon";
@@ -34,7 +32,6 @@ import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
 import { formatDate } from "@/hooks/cloud-inventory";
 import { useDashboardAgents } from "@/hooks/use-dashboard-agents";
-import type { Subscription } from "@/hosted/billing/format";
 import {
 	computePurchaseErrorNotice,
 	computePurchaseNotice,
@@ -371,15 +368,29 @@ function StoreChangePlanAction({
 	);
 }
 
-/** Read-only store billing lines shared with Web (#1767), for the card's notice area. */
+/** The platform's store actions for a store-funded row; another platform's rows say where. */
+function useStoreSubscriptionActions(management: StoreManagement | null | undefined) {
+	const store = useMobileStore();
+	const platform = currentStorePlatform();
+	return store.storeBuild && platform && management
+		? resolveStoreSubscriptionActions({ management, platform })
+		: { actions: [], managedElsewhere: null };
+}
+
+/** Web's read-only store billing lines (#1767) for the card's notice area. */
 export function StoreSubscriptionNotice({
 	management,
 }: {
 	management: StoreManagement | null | undefined;
 }) {
+	const { managedElsewhere } = useStoreSubscriptionActions(management);
 	return (
 		<AppView className="gap-1">
-			<Text className="text-xs text-muted-foreground">{storeBillingNotice(management)}</Text>
+			<Text className="text-xs text-muted-foreground">
+				{managedElsewhere
+					? storeSubscriptionCopy.managedElsewhere[managedElsewhere]
+					: storeBillingNotice(management)}
+			</Text>
 			{storeRenewalIssue(management) ? (
 				<Text
 					accessibilityRole="alert"
@@ -392,45 +403,19 @@ export function StoreSubscriptionNotice({
 	);
 }
 
-/**
- * Store-funded subscription details: grace/lapse banner and the platform-aware store
- * actions. Stripe actions never apply to these rows.
- */
-export function StoreSubscriptionPanel({ item }: { item: Subscription }) {
-	const store = useMobileStore();
-	const platform = currentStorePlatform();
-	const management = item.store_management;
-	const resolved =
-		store.storeBuild && platform && management
-			? resolveStoreSubscriptionActions({ management, platform })
-			: { actions: [], managedElsewhere: null };
-	const contractId = management?.contract_id ?? null;
+/** Store-funded rows' inline actions: change plan and manage in the store, never Stripe. */
+export function StoreSubscriptionActions({ management }: { management: StoreManagement }) {
+	const { actions } = useStoreSubscriptionActions(management);
+	const contractId = management.contract_id ?? null;
 	return (
-		<AppView className="gap-3">
-			{storeRenewalIssue(management) ? (
-				<Alert
-					icon={TriangleAlert}
-					title={storeSubscriptionStatus(management, { label: "", tone: "warning" }).label}
-				>
-					{storeSubscriptionCopy.renewalIssue}
-				</Alert>
+		<>
+			{actions.includes("change_store_plan") && contractId ? (
+				<StoreChangePlanAction management={management} contractId={contractId} />
 			) : null}
-			<Text className="text-muted-foreground">
-				{resolved.managedElsewhere
-					? storeSubscriptionCopy.managedElsewhere[resolved.managedElsewhere]
-					: storeBillingNotice(management)}
-			</Text>
-			{management && resolved.actions.length ? (
-				<AppView className="gap-2">
-					{resolved.actions.includes("change_store_plan") && contractId ? (
-						<StoreChangePlanAction management={management} contractId={contractId} />
-					) : null}
-					{resolved.actions.includes("manage_store_subscription") ? (
-						<ManageStoreSubscriptionAction management={management} />
-					) : null}
-				</AppView>
+			{actions.includes("manage_store_subscription") ? (
+				<ManageStoreSubscriptionAction management={management} />
 			) : null}
-		</AppView>
+		</>
 	);
 }
 

@@ -78,7 +78,7 @@ export function TransactionRow({ item }: { item: Transaction }) {
 				) : null}
 				{action.error ? (
 					<WebText accessibilityRole="alert" recipe={transactions.description}>
-						{t("account.actionFailed")}
+						{t("settingsMenu.linkFailed")}
 					</WebText>
 				) : null}
 			</WebView>

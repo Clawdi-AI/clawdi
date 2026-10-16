@@ -111,7 +111,7 @@ test("Web paths resolve identically for custom scheme and verified universal lin
 	}
 });
 
-test("settings app links land on the Account tab's native Settings menu", () => {
+test("settings app links land on the Settings tab's native menu", () => {
 	// app/(tabs)/(account)/settings/index.tsx renders pages/settings/menu-page.
 	const settingsMenu = "/settings" satisfies Href;
 	const stage = () => {

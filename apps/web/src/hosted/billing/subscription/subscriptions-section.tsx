@@ -2,9 +2,16 @@
 
 import type { AgentTile } from "@clawdi/shared/view";
 import {
+	BILLING_ERROR_TITLES,
 	billingCopy,
+	computeSubscriptionAssignment,
 	computeSubscriptionCancelTitle,
+	computeSubscriptionIdentity,
+	computeSubscriptionRecoveryNotice,
 	formatShortDate,
+	computeSubscriptionListCopy as listCopy,
+	reusableInventoryState,
+	sortLoadedSubscriptions,
 	storeSubscriptionCardView,
 } from "@clawdi/shared/view";
 import { CreditCard, History } from "lucide-react";
@@ -23,7 +30,6 @@ import { ComputeSubscriptionActionList } from "@/hosted/billing/subscription/com
 import { resolveComputeSubscriptionActions } from "@/hosted/billing/subscription/compute-subscription-actions";
 import {
 	ComputeSubscriptionCard,
-	type ComputeSubscriptionIdentity,
 	computeSubscriptionCardView,
 	computeSubscriptionPlanLabel,
 	StoreSubscriptionNotice,
@@ -105,46 +111,6 @@ function subscriptionManagement(
 	});
 }
 
-export function computeSubscriptionAssignment(
-	subscription: Pick<
-		ComputeSubscriptionListItem,
-		"deployment_id" | "is_orphan" | "subscription_id" | "subscription_kind"
-	>,
-	reusableSubscriptionIds: ReadonlySet<string>,
-): "available" | "assigned" | "unavailable" {
-	if (subscription.subscription_kind === "included_basic") {
-		return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
-	}
-	if (reusableSubscriptionIds.has(subscription.subscription_id)) return "available";
-	return subscription.deployment_id && !subscription.is_orphan ? "assigned" : "unavailable";
-}
-
-export function computeSubscriptionIdentity(
-	subscription: Pick<ComputeSubscriptionListItem, "agent_name" | "subscription_kind">,
-	assignment: "available" | "assigned" | "unavailable",
-	agentTile: AgentTile | undefined,
-	href: string | null,
-	inventoryUncertain = false,
-): ComputeSubscriptionIdentity | undefined {
-	if (subscription.subscription_kind === "included_basic" && assignment !== "assigned") {
-		return undefined;
-	}
-	if (assignment === "available") {
-		return { kind: "available", label: "Available for a new agent" };
-	}
-	if (assignment === "unavailable") {
-		if (inventoryUncertain) return undefined;
-		return { kind: "unavailable", label: "Deleted agent" };
-	}
-	return {
-		kind: "agent",
-		name: agentTile?.name ?? subscription.agent_name ?? "Agent",
-		agentType: agentTile?.agentType ?? null,
-		avatarUrl: agentTile?.avatarUrl,
-		href: href ?? undefined,
-	};
-}
-
 export function SubscriptionLoadMore({
 	isLoading,
 	onLoadMore,
@@ -155,7 +121,7 @@ export function SubscriptionLoadMore({
 	return (
 		<div className="flex justify-center">
 			<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
-				{isLoading ? "Loading…" : "Load more"}
+				{isLoading ? listCopy.loading : listCopy.loadMore}
 			</Button>
 		</div>
 	);
@@ -217,19 +183,9 @@ export function SubscriptionRow({
 				formatShortDate(subscription.current_period_end),
 			)
 		: null;
-	const recoveryNotice = (() => {
-		switch (recoveryTarget?.kind) {
-			case "top_up":
-				return "Top up wallet to settle the outstanding balance. Payment source changes apply to future renewals.";
-			case "invoice":
-			case "fix_payment":
-				return "Resolve the outstanding payment to restore this subscription. Payment source changes apply to future renewals.";
-			case "start_new":
-				return startNewHref ? "Start a new subscription from agent settings." : null;
-			case undefined:
-				return null;
-		}
-	})();
+	const recoveryNotice = computeSubscriptionRecoveryNotice(recoveryTarget, {
+		canStartNew: startNewHref !== null,
+	});
 	const hasActions =
 		actions.some((candidate) => candidate.kind !== "start_new") || startNewHref !== null;
 	const fundingSource =
@@ -314,7 +270,7 @@ export function SubscriptionRow({
 							onPlanChange={() => onPlanChange(subscription)}
 							onStartNew={
 								startNewHref
-									? { kind: "link", href: startNewHref, label: "Open agent settings" }
+									? { kind: "link", href: startNewHref, label: listCopy.openAgentSettings }
 									: null
 							}
 							cancelCopy={{
@@ -341,46 +297,9 @@ export function SubscriptionRow({
 	);
 }
 
-function subscriptionStatusPriority(status: string): number {
-	switch (status) {
-		case "trialing":
-		case "active":
-			return 0;
-		case "past_due":
-			return 1;
-		case "canceling":
-			return 2;
-		case "canceled":
-			return 3;
-		default:
-			return 4;
-	}
-}
-
-export function sortLoadedSubscriptions(
-	subscriptions: readonly ComputeSubscriptionListItem[],
-): ComputeSubscriptionListItem[] {
-	return subscriptions
-		.map((subscription, index) => ({ subscription, index }))
-		.sort(
-			(a, b) =>
-				subscriptionStatusPriority(a.subscription.status) -
-					subscriptionStatusPriority(b.subscription.status) || a.index - b.index,
-		)
-		.map(({ subscription }) => subscription);
-}
-
-export function reusableInventoryState(
-	error: unknown,
-	data: readonly unknown[] | undefined,
-): "loading" | "error" | "ready" {
-	if (shouldBlockQueryError(error, data)) return "error";
-	return data === undefined ? "loading" : "ready";
-}
-
 const SUBSCRIPTION_CARD_GRID_CLASS = "grid gap-2 lg:grid-cols-2";
 
-function SubscriptionListSkeleton({ label = "Loading subscriptions" }: { label?: string }) {
+function SubscriptionListSkeleton({ label = listCopy.loadingSubscriptions }: { label?: string }) {
 	return (
 		<div className={SUBSCRIPTION_CARD_GRID_CLASS} role="status">
 			<span className="sr-only">{label}</span>
@@ -488,16 +407,16 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 						normalizer={billingErrorNormalizer}
 						error={subscriptions.error}
 						onRetry={() => void subscriptions.refetch()}
-						title="Couldn't load subscriptions"
+						title={BILLING_ERROR_TITLES.loadSubscriptions}
 					/>
 				) : availabilityState === "loading" ? (
-					<SubscriptionListSkeleton label="Loading subscription availability" />
+					<SubscriptionListSkeleton label={listCopy.loadingAvailability} />
 				) : availabilityState === "error" ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}
 						error={reusableSubscriptions.error}
 						onRetry={() => void reusableSubscriptions.refetch()}
-						title="Couldn't load subscription availability"
+						title={BILLING_ERROR_TITLES.loadSubscriptionAvailability}
 					/>
 				) : rows.length || subscriptions.hasNextPage ? (
 					<>
@@ -511,9 +430,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 									onClick={() => setShowHistory((current) => !current)}
 								>
 									<History />
-									{showHistory
-										? "Hide history"
-										: `Show history${endedRows.length ? ` (${endedRows.length})` : ""}`}
+									{showHistory ? listCopy.hideHistory : listCopy.showHistory(endedRows.length)}
 								</Button>
 							</div>
 						) : null}
@@ -551,12 +468,8 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 							<EmptyState
 								variant="inset"
 								icon={CreditCard}
-								title="No current subscriptions"
-								description={
-									endedRows.length
-										? "Ended subscriptions are hidden. Show history to view them."
-										: "Load more records to find current subscriptions."
-								}
+								title={listCopy.noCurrentSubscriptions}
+								description={endedRows.length ? listCopy.endedHidden : listCopy.loadMoreToFind}
 								className="py-8 md:p-8"
 							/>
 						)}
@@ -571,7 +484,7 @@ export function SubscriptionsSection({ agentTiles }: { agentTiles: readonly Agen
 								normalizer={billingErrorNormalizer}
 								error={subscriptions.error}
 								onRetry={() => void subscriptions.fetchNextPage()}
-								title="Couldn't load more subscriptions"
+								title={BILLING_ERROR_TITLES.loadMoreSubscriptions}
 							/>
 						) : null}
 					</>

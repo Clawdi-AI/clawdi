@@ -1,3 +1,4 @@
+import { walletTopupCopy } from "@clawdi/shared/view";
 import {
 	buildWalletStripeReturnUrl,
 	WALLET_PAYMENT_FLOW_PARAM,
@@ -13,11 +14,6 @@ export interface WalletTopupReturnToast {
 	description: string;
 }
 
-export const WALLET_TOPUP_ACCEPTED_TOAST = {
-	title: "Payment accepted",
-	description: "We're confirming your wallet credit now.",
-} as const;
-
 export function buildWalletAutoReloadReturnUrl(currentHref: string): string {
 	return buildWalletStripeReturnUrl(currentHref, [
 		[SETTINGS_QUERY_KEY, "billing-wallet"],
@@ -28,29 +24,13 @@ export function buildWalletAutoReloadReturnUrl(currentHref: string): string {
 
 export function walletTopupReturnToast(status: string | null | undefined): WalletTopupReturnToast {
 	if (status === "succeeded") {
-		return {
-			kind: "info",
-			...WALLET_TOPUP_ACCEPTED_TOAST,
-		};
+		return { kind: "info", ...walletTopupCopy.accepted };
 	}
 	if (status === "processing") {
-		return {
-			kind: "info",
-			title: "Top-up processing",
-			description: "We'll credit your wallet once the payment settles.",
-		};
+		return { kind: "info", ...walletTopupCopy.processing };
 	}
 	if (status === "requires_payment_method") {
-		return {
-			kind: "error",
-			title: "Top-up didn't finish",
-			description: "No payment was collected. Start a new top-up and choose another method.",
-		};
+		return { kind: "error", ...walletTopupCopy.notFinished };
 	}
-	return {
-		kind: "info",
-		title: "Top-up status unknown",
-		description:
-			"We couldn't confirm whether Stripe finished the payment. We won't charge it again.",
-	};
+	return { kind: "info", ...walletTopupCopy.unknown };
 }
