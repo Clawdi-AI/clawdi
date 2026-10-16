@@ -17,6 +17,8 @@ export const subscriptionSourceCopy = {
 	dueNow: "$0 due now",
 	newTitle: "New paid subscription",
 	newDescription: "Choose a plan, billing term, and payment source.",
+	checking: "Checking compute availability…",
+	loadFailed: "Couldn’t load reusable subscriptions",
 } as const;
 
 export const deployFormCopy = {

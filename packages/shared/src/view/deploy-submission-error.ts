@@ -4,7 +4,8 @@ export type DeploySubmissionContext =
 	| "card_checkout"
 	| "included_creation"
 	| "subscription_assignment"
-	| "wallet_creation";
+	| "wallet_creation"
+	| "wallet_subscription";
 
 /**
  * A platform-neutral reading of a failed Deploy request. `rejected` is a definitive
@@ -137,6 +138,31 @@ export function deploySubmissionErrorCopy(
 		return {
 			title: "We couldn’t confirm this attempt",
 			description: `${reason} Retry to safely resume the same attempt.`,
+		};
+	}
+
+	if (context === "wallet_subscription") {
+		if (kind === "rejected" && firstSend === true) {
+			return {
+				title: "Subscription didn’t start",
+				description: `${recovery ?? "The request was rejected."} No wallet payment was made. Review your choices and retry.`,
+			};
+		}
+		if (kind === "rejected") {
+			return {
+				title: "We couldn’t confirm this attempt",
+				description: "We couldn’t confirm the payment — check status before trying again.",
+			};
+		}
+		const reason =
+			kind === "timeout"
+				? "The request timed out before the payment was confirmed."
+				: kind === "offline"
+					? "The connection dropped before the payment was confirmed."
+					: "The service didn’t confirm the payment.";
+		return {
+			title: "We couldn’t confirm this attempt",
+			description: `${reason} Check status to safely resume the same attempt.`,
 		};
 	}
 

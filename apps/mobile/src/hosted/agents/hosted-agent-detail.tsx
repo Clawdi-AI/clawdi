@@ -251,12 +251,11 @@ function DeploymentDetail({
 	};
 
 	// Web shows the start control when stopped, and otherwise only while start is available.
-	const startAction = (deployment: DeploymentRead, stopped: boolean, inSettings = false) =>
+	const startAction = (deployment: DeploymentRead, stopped: boolean) =>
 		stopped || deploymentLifecycleAvailable("start", status.kind) ? (
 			<StartComputeAction
 				deployment={deployment}
 				startLabel={stopped ? agentSettingsCopy.controls.start : undefined}
-				inSettings={inSettings}
 				blocked={query.isError}
 				transitioning={Boolean(activeOperation && !activeOperation.done)}
 				onAccepted={async (result) => {
@@ -427,7 +426,7 @@ function DeploymentDetail({
 					</>
 				}
 				computePlan={deployment ? <ComputePlanSection deployment={deployment} /> : null}
-				startFallback={deployment ? startAction(deployment, true, true) : null}
+				startFallback={deployment ? startAction(deployment, true) : null}
 			/>
 		);
 	return (

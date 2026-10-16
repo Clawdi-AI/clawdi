@@ -9,6 +9,7 @@ import { storeSurfaces } from "@/platform/store/store-policy";
 const passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
 const none = () => null;
 for (const icon of [
+	"arrow-up",
 	"calendar-x-2",
 	"circle-check",
 	"coins",
@@ -64,8 +65,10 @@ mock.module("@/components/ui/web-layout", () => ({
 }));
 mock.module("@/hooks/use-dashboard-agents", () => ({
 	useDashboardAgents: () => ({ inventory: { data: [] }, tiles: [] }),
+	useProductCapabilities: () => ({ data: { can_use_v2: true } }),
 }));
 mock.module("@/hosted/billing/hooks", () => ({
+	usePlans: () => ({ isPending: false, data: [] }),
 	useWallet: () => ({ isPending: false, data: { balance_usd: "10" } }),
 }));
 mock.module("@/hosted/billing/store/compute-store", () => ({

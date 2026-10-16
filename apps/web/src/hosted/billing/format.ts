@@ -9,7 +9,6 @@ export {
 	formatUsd,
 	formatUsdExact,
 	persistedUsdToCents,
-	subtractDecimals,
 	usdInputToCents,
 	wholeDollarTopUpCents,
 } from "@clawdi/shared/view";

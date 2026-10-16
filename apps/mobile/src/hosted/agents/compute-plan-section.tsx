@@ -1,21 +1,15 @@
-import { computeSubscriptionRecoveryPresentation, type DeploymentRead } from "@clawdi/shared/api";
+import type { DeploymentRead } from "@clawdi/shared/api";
 import {
 	agentSettingsCopy,
+	appComputeActions,
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
-	computeDunningState,
-	computeFundingSource,
 	computeSubscriptionCancelTitle,
 	computeSubscriptionCardView,
-	computeSubscriptionLifecycle,
 	computeTierLabel,
-	detachedStoreRecoveryTarget,
 	formatShortDate,
-	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
-	planChangeBillingTerm,
 	resolveBasicPlan,
-	resolveComputeSubscriptionActions,
 	resolvePerformancePlan,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
@@ -25,41 +19,32 @@ import { SettingsSection } from "@/components/settings-section";
 import { Badge } from "@/components/ui/badge";
 import { Text } from "@/components/ui/text";
 import { AppView } from "@/components/ui/view";
-import { usePlans } from "@/hosted/billing/hooks";
+import { useComputePlanModel } from "@/hosted/agents/compute-plan-model";
 import {
 	StoreSubscriptionActions,
 	StoreSubscriptionNotice,
 	StoreUpgradeAction,
 } from "@/hosted/billing/store/compute-store";
 import { ComputeSubscriptionCard } from "@/hosted/billing/subscription/compute-subscription-card";
-import { SubscriptionCommands } from "@/hosted/billing/subscription/subscription-row";
+import { ComputeSubscriptionActions } from "@/hosted/billing/subscription/subscription-row";
 import { WalletTopUpAction } from "@/hosted/billing/wallet/balance-card";
-import { appSubscriptionActions } from "@/platform/store/store-policy";
 import { useStoreSurfaces } from "@/platform/store/store-provider";
 
 /**
- * Web's agent Settings "Compute plan" section: the card with its inline actions. Plan changes
- * and new card/Wallet subscriptions stay on Web (C9); store builds offer their store actions.
+ * Web's agent Settings "Compute plan" section: the card with its inline actions. Upgrade,
+ * Manage and Check status open the plan sheet; "Choose a subscription" opens the
+ * subscription sheet. Store builds keep their store actions and the shared store policy.
  */
 export function ComputePlanSection({ deployment }: { deployment: DeploymentRead }) {
-	const plans = usePlans();
 	const surfaces = useStoreSurfaces();
+	const model = useComputePlanModel(deployment);
+	const { planSlug, subscription, fundingSource, billingTerm, recovery, lifecycle } = model;
 	const rawPlanSlug = deployment.current_plan_slug;
-	const planSlug =
-		rawPlanSlug === COMPUTE_BASIC_SLUG || rawPlanSlug === COMPUTE_PERFORMANCE_SLUG
-			? rawPlanSlug
-			: undefined;
-	const subscription = deployment.commercial_display?.compute_subscription;
-	const fundingSource = computeFundingSource(planSlug, subscription);
-	const dunning = computeDunningState(deployment);
-	const terminalRecovery = dunning?.recoveryTarget?.kind === "start_new" ? dunning : null;
-	const pendingPlanSlug = pendingComputePlanSlug(subscription);
-	const billingTerm = planChangeBillingTerm(subscription?.billing_term_months ?? 1);
 	const paidPlan =
 		planSlug === COMPUTE_BASIC_SLUG
-			? resolveBasicPlan(plans.data)
+			? resolveBasicPlan(model.plans.data)
 			: planSlug === COMPUTE_PERFORMANCE_SLUG
-				? resolvePerformancePlan(plans.data)
+				? resolvePerformancePlan(model.plans.data)
 				: undefined;
 	const offer = paidPlan
 		? planSlug === COMPUTE_BASIC_SLUG
@@ -74,17 +59,6 @@ export function ComputePlanSection({ deployment }: { deployment: DeploymentRead 
 				: null;
 	const endsAt = subscription?.cancel_at ?? subscription?.current_period_end ?? null;
 	const periodLabel = formatShortDate(endsAt);
-	const lifecycle = subscription ? computeSubscriptionLifecycle(subscription) : null;
-	const recovery = computeSubscriptionRecoveryPresentation(
-		subscription,
-		lifecycle
-			? { label: lifecycle.badgeLabel, tone: lifecycle.badgeTone }
-			: { label: "Unavailable", tone: "neutral" },
-	);
-	const recoveryTarget =
-		terminalRecovery?.recoveryTarget ??
-		recovery.recoveryTarget ??
-		detachedStoreRecoveryTarget(deployment);
 	const store = fundingSource === "store";
 	const storeManagement = store ? subscription?.store_management : null;
 	const view = store
@@ -110,27 +84,18 @@ export function ComputePlanSection({ deployment }: { deployment: DeploymentRead 
 				scheduleAt: recovery.schedule?.at ?? lifecycle?.dateAt,
 				scheduleFallback: recovery.schedule?.fallback ?? undefined,
 			});
-	const pendingPlanCopy = pendingPlanSlug
-		? pendingPlanScheduleCopy(pendingPlanSlug, subscription?.current_period_end, periodLabel)
+	const pendingPlanCopy = model.pendingPlanSlug
+		? pendingPlanScheduleCopy(model.pendingPlanSlug, subscription?.current_period_end, periodLabel)
 		: null;
-	const actions = resolveComputeSubscriptionActions({
-		entitlement: {
-			deploymentId: deployment.resource.id,
-			planSlug,
-			fundingSource: subscription?.funding_source,
-			priceCents: subscription?.price_cents,
-			status: subscription?.status ?? "unavailable",
-			paymentState: subscription?.payment_state ?? "ok",
-			cancelAtPeriodEnd: Boolean(subscription?.cancel_at_period_end),
-			pendingPlanSlug,
-			actions: subscription?.actions,
-		},
-		management: { action: "hidden", target: null, unavailableReason: null },
-		recoveryTarget,
-	});
-	const commands = appSubscriptionActions(surfaces, actions);
+	const actions = appComputeActions(
+		!surfaces.cardBilling,
+		// The normalized source: legacy null funding with a price is a card row.
+		{ fundingSource },
+		model.actions,
+	);
+	const managementReason = model.management.unavailableReason;
 	const hasActions =
-		Boolean(storeManagement) || recoveryTarget?.kind === "top_up" || commands.length > 0;
+		Boolean(storeManagement) || model.recoveryTarget?.kind === "top_up" || actions.length > 0;
 	return (
 		<SettingsSection
 			title={agentSettingsCopy.computePlan.title}
@@ -139,7 +104,7 @@ export function ComputePlanSection({ deployment }: { deployment: DeploymentRead 
 			<ComputeSubscriptionCard
 				view={view}
 				badges={
-					terminalRecovery?.fundingSource === "wallet" ? (
+					model.terminalRecovery?.fundingSource === "wallet" ? (
 						<Badge variant="outline">
 							<Text className="font-normal text-muted-foreground">
 								{agentSettingsCopy.computePlan.walletFallback}
@@ -148,12 +113,20 @@ export function ComputePlanSection({ deployment }: { deployment: DeploymentRead 
 					) : null
 				}
 				notice={
-					store || pendingPlanCopy ? (
+					store || pendingPlanCopy || managementReason || model.createUnavailableMessage ? (
 						<AppView className="gap-1">
 							{store ? <StoreSubscriptionNotice management={storeManagement} /> : null}
 							{pendingPlanCopy ? (
 								<Text className="text-xs font-medium text-warning-muted-foreground">
 									{pendingPlanCopy}
+								</Text>
+							) : null}
+							{managementReason ? (
+								<Text className="text-xs text-muted-foreground">{managementReason}</Text>
+							) : null}
+							{model.createUnavailableMessage ? (
+								<Text className="text-xs text-muted-foreground">
+									{model.createUnavailableMessage}
 								</Text>
 							) : null}
 						</AppView>
@@ -163,10 +136,12 @@ export function ComputePlanSection({ deployment }: { deployment: DeploymentRead 
 					hasActions ? (
 						<>
 							{storeManagement ? <StoreSubscriptionActions management={storeManagement} /> : null}
-							{recoveryTarget?.kind === "top_up" ? <WalletTopUpAction size="sm" /> : null}
-							<SubscriptionCommands
-								target={{ deployment_id: deployment.resource.id }}
-								kinds={commands}
+							{model.recoveryTarget?.kind === "top_up" ? <WalletTopUpAction size="sm" /> : null}
+							<ComputeSubscriptionActions
+								actions={actions}
+								agentId={deployment.agent_id}
+								startNewLabel={agentSettingsCopy.computePlan.chooseSubscription}
+								commandTarget={{ deployment_id: deployment.resource.id }}
 								cancelTitle={computeSubscriptionCancelTitle(computeTierLabel(planSlug))}
 								isTrial={subscription?.actions?.cancel === "end_trial"}
 								periodEnd={endsAt}

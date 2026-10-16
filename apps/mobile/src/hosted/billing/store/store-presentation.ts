@@ -1,4 +1,4 @@
-import type { StoreComputeReconcileResponse } from "@clawdi/shared/api";
+import type { ComputeRecoveryTarget, StoreComputeReconcileResponse } from "@clawdi/shared/api";
 import type { TranslationKey } from "@/lib/i18n/en";
 import type { PurchaseOutcome } from "@/platform/store/purchase-flow";
 import type { PurchaseErrorCode } from "@/platform/store/store-error";
@@ -202,4 +202,17 @@ export function restorePurchasesNotices(
 	if (response.code === "reconciled" || codes.has("reconciled"))
 		notices.push({ key: "storeCompute.restored", tone: "success", refresh: true });
 	return notices;
+}
+
+/**
+ * The store purchase an existing Agent offers (hosted S4 admits both): the Included Basic
+ * upgrade, or a new store subscription for an Agent that needs one to start. Whether the
+ * store slot is free is the purchase gate's separate check.
+ */
+export function storeComputeEntry(
+	fundingMode: string | null | undefined,
+	recoveryTarget: Pick<ComputeRecoveryTarget, "kind"> | null | undefined,
+): "upgrade" | "subscribe" | null {
+	if (recoveryTarget?.kind === "start_new") return "subscribe";
+	return fundingMode === "included_basic" ? "upgrade" : null;
 }

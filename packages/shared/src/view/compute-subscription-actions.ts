@@ -393,6 +393,9 @@ export function subscriptionMutationNotice(
 
 /** Labels for the card/Wallet subscription commands shared by Web and the app. */
 export const computeSubscriptionActionCopy = {
+	upgrade: "Upgrade",
+	manage: "Manage",
+	checkChange: "Check subscription change status",
 	resume: "Keep subscription",
 	cancel: "Cancel subscription",
 	endTrial: "End trial now",

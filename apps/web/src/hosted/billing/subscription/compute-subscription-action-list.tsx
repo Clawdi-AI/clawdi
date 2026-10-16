@@ -144,7 +144,7 @@ export function ComputeSubscriptionActionList({
 							disabled={candidate.disabledReason !== null}
 						>
 							<RefreshCw data-icon="inline-start" />
-							Check subscription change status
+							{copy.checkChange}
 						</Button>
 					);
 				}
@@ -159,7 +159,7 @@ export function ComputeSubscriptionActionList({
 						onClick={onPlanChange}
 					>
 						<RefreshCw data-icon="inline-start" />
-						Check subscription change status
+						{copy.checkChange}
 					</Button>
 				);
 			case "fix_payment":

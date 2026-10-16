@@ -23,18 +23,13 @@ export type ComputeSubscriptionListItem = Schemas["V2ComputeSubscriptionListItem
 export type IncludedBasicAvailability = Schemas["V2ComputeIncludedBasicAvailabilityResponse"];
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
 export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
-export type ComputePlanChangeProgress = Schemas["ComputePlanChangeProgress"];
-export type ComputePlanChangeKind = ComputePlanChangeProgress["changeKind"];
-export type ComputePlanChangeBillingEffect = ComputePlanChangeProgress["billingEffect"];
-export type ComputePlanChangeFundingSource = ComputePlanChangeProgress["fundingSource"];
-export type ComputePlanChangeResult = {
-	kind: Extract<ComputePlanChangeProgress["state"], "complete" | "scheduled">;
-	operationName: string;
-	effectiveAt: string;
-	changeKind: ComputePlanChangeKind;
-	billingEffect: ComputePlanChangeBillingEffect;
-	fundingSource: ComputePlanChangeFundingSource;
-};
+export type {
+	ComputePlanChangeBillingEffect,
+	ComputePlanChangeFundingSource,
+	ComputePlanChangeKind,
+	ComputePlanChangeProgress,
+	ComputePlanChangeResult,
+} from "@clawdi/shared/api";
 export type ComputePlanChangeQuoteRequest = Schemas["V2ComputePlanChangeQuoteRequest"];
 export type ComputePlanChangeQuoteResponse = Schemas["V2ComputePlanChangeQuoteResponse"];
 export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];

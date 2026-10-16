@@ -5,73 +5,28 @@ import {
 	hostedSubscriptionActivationTarget,
 	hostedSubscriptionQuoteWalletDebit,
 } from "@clawdi/shared/api";
+import type { SubscriptionCreateSelection } from "@clawdi/shared/view";
 import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import type { CheckoutReturnNavigationTarget } from "@/hosted/billing/checkout-return";
 import type {
 	CheckoutRequest,
-	ComputePlanSlug,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionQuoteResponse,
 	DeployRequest,
-	ReusableSubscription,
 	SubscriptionSelection,
 } from "@/hosted/billing/contracts";
 import type { WalletDebitSummary } from "@/hosted/billing/wallet/wallet-debit-summary";
 
-export type SubscriptionFundingSource = ComputeSubscriptionQuoteRequest["funding_source"];
-export type SubscriptionBillingTermMonths = NonNullable<
-	ComputeSubscriptionQuoteRequest["billing_term_months"]
->;
-
-export function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
-	return value === 1 || value === 12 ? value : null;
-}
-
-/** UI selection for the rail-neutral subscription creation flow. */
-export type SubscriptionCreateSelection = {
-	planSlug: ComputePlanSlug;
-	billingTermMonths: SubscriptionBillingTermMonths;
-	fundingSource: SubscriptionFundingSource;
-};
-
-export type SubscriptionSource =
-	| { mode: "included" }
-	| { mode: "existing"; subscriptionId: string }
-	| { mode: "new" };
-
-const NEW_SUBSCRIPTION_SOURCE: SubscriptionSource = { mode: "new" };
-
-/**
- * Web assigns only card and Wallet subscriptions. Store subscriptions are bought and
- * assigned in the Clawdi app; server admission selects them without a Web choice.
- */
-export function isWebSelectableSubscription(
-	subscription: Pick<ReusableSubscription, "funding_source">,
-): boolean {
-	return subscription.funding_source === "stripe" || subscription.funding_source === "wallet";
-}
-
-export function resolveSubscriptionSource({
-	includedAvailable,
-	reusableSubscriptions,
-	selected,
-}: {
-	includedAvailable: boolean | undefined;
-	reusableSubscriptions: readonly ReusableSubscription[] | undefined;
-	selected: SubscriptionSource | null;
-}): SubscriptionSource | null {
-	if (includedAvailable === undefined || reusableSubscriptions === undefined) return selected;
-	const selectable = reusableSubscriptions.filter(isWebSelectableSubscription);
-	if (selected?.mode === "included" && !includedAvailable) selected = null;
-	if (selected?.mode === "existing") {
-		const subscriptionId = selected.subscriptionId;
-		if (!selectable.some((subscription) => subscription.subscription_id === subscriptionId)) {
-			selected = null;
-		}
-	}
-	if (selected) return selected;
-	return !includedAvailable && selectable.length === 0 ? NEW_SUBSCRIPTION_SOURCE : null;
-}
+export {
+	existingSubscriptionCreateSelection,
+	isWebSelectableSubscription,
+	resolveSubscriptionSource,
+	type SubscriptionBillingTermMonths,
+	type SubscriptionCreateSelection,
+	type SubscriptionFundingSource,
+	type SubscriptionSource,
+	supportedBillingTerm,
+} from "@clawdi/shared/view";
 
 /** Presentation model plus the exact server assertion used at confirmation. */
 export type SubscriptionCreateQuoteView = {
@@ -148,20 +103,6 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 		uiMode: request.uiMode,
 	});
 	return { body, idempotencyKey: request.idempotencyKey };
-}
-
-/** Null for store subscriptions, which never use the hosted checkout flow. */
-export function existingSubscriptionCreateSelection(
-	subscription: ReusableSubscription,
-): SubscriptionCreateSelection | null {
-	if (subscription.funding_source !== "stripe" && subscription.funding_source !== "wallet") {
-		return null;
-	}
-	return {
-		planSlug: subscription.plan_slug,
-		billingTermMonths: subscription.billing_term_months,
-		fundingSource: subscription.funding_source,
-	};
 }
 
 export function subscriptionCreateOutcome(

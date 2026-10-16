@@ -1,6 +1,10 @@
 "use client";
 
-import { formatShortDate } from "@clawdi/shared/view";
+import {
+	planChangeCopy as copy,
+	formatShortDate,
+	planChangeTargetFingerprint,
+} from "@clawdi/shared/view";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import type {
@@ -34,10 +38,7 @@ import {
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { useProductAccess } from "@/lib/product-access";
 
-const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
-	insufficientBalance: "Top up the shortfall, then request a fresh plan-change quote.",
-	refundDebt: "Top up before confirming this wallet-funded plan change.",
-} satisfies WalletFundingErrorCopy;
+const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY: WalletFundingErrorCopy = copy.walletFunding;
 
 export {
 	type PlanChangeTarget,
@@ -46,20 +47,8 @@ export {
 } from "@clawdi/shared/view";
 
 import { type PlanChangeTarget, planChangeTargetUnavailableReason } from "@clawdi/shared/view";
-export function planChangeTargetFingerprint(target: PlanChangeTarget): string {
-	return [
-		target.deploymentId.trim(),
-		target.currentPlanSlug,
-		target.initialPlanSlug,
-		target.currentBillingTermMonths,
-		target.currentFundingSource,
-		target.status,
-		target.paymentSourceOnly ? "payment-source-only" : "full-management",
-		target.cancelAtPeriodEnd ? "canceling" : "renewing",
-		target.isPaidCompute ? "paid-compute" : "included-compute",
-		target.allowCombinedChange ? "combined-change" : "single-change",
-	].join(":");
-}
+
+export { planChangeTargetFingerprint };
 
 export function PlanChangeController({
 	...props
@@ -140,13 +129,13 @@ function PlanChangeControllerState({
 				window.location.href = url;
 				return;
 			}
-			toast.error("Billing portal unavailable", {
-				description: "Refresh this page and try again in a moment.",
+			toast.error(copy.portalUnavailableTitle, {
+				description: copy.portalUnavailableDescription,
 			});
 			setPaymentMethodRequired(true);
 		} catch (error) {
 			setPaymentMethodRequired(true);
-			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
+			toast.error(copy.openBillingFailed, { description: normalizeBillingError(error) });
 		}
 	}
 
@@ -161,9 +150,8 @@ function PlanChangeControllerState({
 				target.currentFundingSource,
 			)
 		) {
-			toast.error("Only the payment source can be changed", {
-				description:
-					"This subscription can’t change plan or billing term while past due. Choose a different payment source to continue.",
+			toast.error(copy.paymentSourceOnlyTitle, {
+				description: copy.paymentSourceOnlyDescription,
 			});
 			return;
 		}
@@ -176,9 +164,8 @@ function PlanChangeControllerState({
 				target.currentFundingSource,
 			)
 		) {
-			toast.error("Choose one subscription change", {
-				description:
-					"Change the plan or billing term using the current payment source, or change only the payment source.",
+			toast.error(copy.oneChangeTitle, {
+				description: copy.oneChangeDescription,
 			});
 			return;
 		}
@@ -204,8 +191,8 @@ function PlanChangeControllerState({
 				setQuote(null);
 				setAcceptedOperationName(null);
 				setPaymentMethodRequired(false);
-				toast.error("Couldn’t verify subscription change", {
-					description: "The quote did not match the requested change. Request a fresh quote.",
+				toast.error(copy.quoteMismatchTitle, {
+					description: copy.quoteMismatchDescription,
 				});
 				return;
 			}
@@ -228,7 +215,7 @@ function PlanChangeControllerState({
 				setPaymentMethodRequired(true);
 				return;
 			}
-			toast.error("Couldn’t quote subscription change", {
+			toast.error(copy.quoteFailed, {
 				description: normalizeBillingError(error),
 			});
 		}
@@ -236,19 +223,16 @@ function PlanChangeControllerState({
 
 	function showResult(result: ComputePlanChangeResult) {
 		if (result.kind === "scheduled") {
-			toast.success("Downgrade scheduled", {
-				description: `Your current plan remains active until ${formatShortDate(result.effectiveAt)}.`,
+			toast.success(copy.downgradeScheduledTitle, {
+				description: copy.downgradeScheduledDescription(formatShortDate(result.effectiveAt)),
 			});
 		} else if (result.changeKind === "funding_source_switch") {
-			toast.success("Payment method updated", {
-				description:
-					result.fundingSource === "wallet"
-						? "Future renewals will use wallet."
-						: "Future renewals will use card.",
+			toast.success(copy.paymentMethodUpdatedTitle, {
+				description: copy.paymentMethodUpdatedDescription(result.fundingSource),
 			});
 		} else {
-			toast.success("Plan changed", {
-				description: "Your compute subscription has been updated.",
+			toast.success(copy.planChangedTitle, {
+				description: copy.planChangedDescription,
 			});
 		}
 		setAcceptedOperationName(null);
@@ -261,9 +245,8 @@ function PlanChangeControllerState({
 	function handleError(error: unknown) {
 		if (error instanceof PlanChangePendingError) {
 			setAcceptedOperationName(error.operationName);
-			toast.info("Still waiting for confirmation", {
-				description:
-					"Don't submit another change. Check again in a few minutes — checking won't resubmit or charge. Contact support if it doesn't finish.",
+			toast.info(copy.stillWaitingTitle, {
+				description: copy.stillWaitingNotice,
 			});
 			return;
 		}
@@ -284,13 +267,13 @@ function PlanChangeControllerState({
 		if (shouldResetUnacceptedPlanChangeQuote(error)) {
 			setQuote(null);
 			setPaymentMethodRequired(false);
-			toast.error("Subscription quote is no longer current", {
-				description: "Review the latest choices and request a fresh quote.",
+			toast.error(copy.quoteStaleTitle, {
+				description: copy.quoteStaleDescription,
 			});
 			return;
 		}
 		if (walletTopUp.handleFundingError(error)) return;
-		toast.error("Couldn’t update subscription", {
+		toast.error(copy.updateFailed, {
 			description: normalizeBillingError(error),
 		});
 	}

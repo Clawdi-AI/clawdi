@@ -95,14 +95,14 @@ export function SubscriptionSourcePicker({
 			</div>
 			{isLoading ? (
 				<p className={styles.loading} role="status">
-					<Spinner className={styles.icon} /> Checking compute availability…
+					<Spinner className={styles.icon} /> {copy.checking}
 				</p>
 			) : error != null ? (
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={error}
 					onRetry={onRetry}
-					title="Couldn’t load reusable subscriptions"
+					title={copy.loadFailed}
 				/>
 			) : null}
 		</div>
