@@ -54,7 +54,7 @@
 		"react-native-screens": "catalog:expo57",
 		"react-native-svg": "catalog:expo57",
 		"react-native-web": "catalog:expo57",
-		"react-native-webview": "13.16.1",
+		"react-native-webview": "catalog:expo57",
 		"react-native-worklets": "catalog:expo57",
 		"tailwindcss": "catalog:",
 		"uniwind": "1.12.2"
