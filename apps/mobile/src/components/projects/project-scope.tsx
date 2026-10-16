@@ -31,8 +31,11 @@ export function useProject(id?: string) {
 
 export function ProjectResourceBoundary({
 	children,
+	missingNotice,
 }: {
 	children: (project?: Project) => ReactNode;
+	/** Replaces the generic not-found text when the requested project is gone. */
+	missingNotice?: ReactNode;
 }) {
 	const scope = useAccountScope();
 	const t = useI18n();
@@ -47,19 +50,21 @@ export function ProjectResourceBoundary({
 		filter.kind === "invalid" ||
 		(id && (!project.data || project.isError || project.data.id !== id))
 	) {
+		const missing =
+			filter.kind === "invalid" ||
+			isNotFound(project.error) ||
+			(!project.isError && project.data?.id !== id);
 		return (
 			<SafeAreaScreen>
 				<AppView className="gap-4 p-6">
 					<BackButton />
 					{id && project.isPending ? (
 						<PageHeaderSkeleton />
+					) : missing && missingNotice ? (
+						missingNotice
 					) : (
 						<ResourceError
-							missing={
-								filter.kind === "invalid" ||
-								isNotFound(project.error) ||
-								(!project.isError && project.data?.id !== id)
-							}
+							missing={missing}
 							onRetry={project.isFetching ? undefined : () => void project.refetch()}
 						/>
 					)}

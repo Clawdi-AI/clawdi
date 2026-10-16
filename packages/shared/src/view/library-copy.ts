@@ -119,6 +119,33 @@ export const LIBRARY_COPY = {
 	category: "Category",
 	projectFormDescription: "Group skills and vaults in a project.",
 } as const;
+export const SKILLS_LIST_COPY = {
+	title: "Skills",
+	searchProject: "Search this project…",
+	loadFailed: "Couldn't load skills",
+	readOnlyTitle: "Read-only project",
+	readOnlyDescription:
+		"You can view these skills. Only the project owner can add, edit, copy, move, or remove them.",
+	projectUnavailableTitle: "Project unavailable",
+	projectUnavailableDescription:
+		"Choose another project. It may have been archived or your access may have changed.",
+	emptyProjects: "Create a project to bundle skills and vault access for agents.",
+	importLabel: "Repository or skill path",
+	importPlaceholder: "owner/repository/path-to-skill",
+	importSubmit: "Import skill",
+	importing: "Importing…",
+	imported: "Skill imported",
+	importFailed: "Couldn't import skill",
+} as const;
+export function skillsEmptyMessage({ search, writable }: { search: string; writable: boolean }) {
+	if (search) return "No skills in this project match that search.";
+	return writable
+		? "No skills yet. Add one with instructions or import one from GitHub."
+		: "No skills are in this project yet.";
+}
+export function importSkillDescription(project: ProjectMetadata) {
+	return `Copy a GitHub skill into ${displayProjectName(project)}. This project owns the imported copy.`;
+}
 export const PROJECT_LOCAL_TABS = [
 	{ id: "overview", label: "Overview" },
 	{ id: "skills", label: "Skills" },
@@ -136,6 +163,7 @@ export const SHARING_COPY = {
 	createLink: "Create invite link",
 	linkDescription: "Anyone with the link can preview and join this project.",
 	manage: "Manage sharing",
+	shareProject: "Share project",
 	stop: "Stop all sharing",
 	email: "Enter email address",
 	invite: "Invite",

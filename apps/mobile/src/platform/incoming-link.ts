@@ -225,7 +225,7 @@ function isWebPath(path: string): boolean {
 				const forms: Record<string, readonly string[]> = {
 					sessions: ["sharing"],
 					projects: ["sharing", "edit", "agents"],
-					skills: ["archive"],
+					skills: ["send"],
 					memories: ["edit"],
 					vault: ["add-keys", "transfer", "split", "requests"],
 					connectors: ["connect"],

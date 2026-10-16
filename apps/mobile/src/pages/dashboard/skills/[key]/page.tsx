@@ -3,7 +3,6 @@ import {
 	buildSkillCreateRequest,
 	buildSkillUpdateRequest,
 	isWritableSkillProject,
-	parseProjectSkillGitHubInput,
 	type SkillTextDraft,
 	skillCapabilities,
 	stripFrontmatter,
@@ -56,7 +55,7 @@ import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
 import { Text as AppText, Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
-import { AppScrollView, AppView } from "@/components/ui/view";
+import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -153,15 +152,12 @@ function SkillEditor({
 	const [draft, setDraft] = useState<EditDraft | null>(
 		create ? { name: "", description: "", instructions: "", revision: "" } : null,
 	);
-	const [source, setSource] = useState("");
-	const [importOpen, setImportOpen] = useState(false);
 	const [conflict, setConflict] = useState(false);
 	const dirty = Boolean(
-		source ||
-			(draft &&
-				(draft.name !== (baseline?.name ?? "") ||
-					draft.description !== (baseline?.description ?? "") ||
-					draft.instructions !== (baseline?.instructions ?? ""))),
+		draft &&
+			(draft.name !== (baseline?.name ?? "") ||
+				draft.description !== (baseline?.description ?? "") ||
+				draft.instructions !== (baseline?.instructions ?? "")),
 	);
 	usePreventRemove(scope.isReady && !completed && (dirty || action.busy), ({ data }) => {
 		// Redispatch the original action only after a confirmed mutation or explicit discard.
@@ -205,28 +201,23 @@ function SkillEditor({
 		!canWrite ||
 		(!create && (detail.isPending || detail.isError || detail.isFetching));
 	const invalidate = () => cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
-	const save = (install = false) =>
+	const save = () =>
 		action.run(async (isCurrent) => {
-			if (disabled || !selectedId || (!install && !draft)) return;
+			if (disabled || !selectedId || !draft) return;
 			confirmation.current++;
 			const visible = capture();
 			if (!visible()) return;
 			try {
-				if (install)
-					await read((s) => skills.install(selectedId, parseProjectSkillGitHubInput(source), s));
-				else if (draft) {
-					if (create)
-						await read((s) => skills.create(selectedId, buildSkillCreateRequest(draft), s));
-					else
-						await read((s) =>
-							skills.update(
-								selectedId,
-								skillKey ?? "",
-								buildSkillUpdateRequest(draft, draft.revision),
-								s,
-							),
-						);
-				}
+				if (create) await read((s) => skills.create(selectedId, buildSkillCreateRequest(draft), s));
+				else
+					await read((s) =>
+						skills.update(
+							selectedId,
+							skillKey ?? "",
+							buildSkillUpdateRequest(draft, draft.revision),
+							s,
+						),
+					);
 				if (!isCurrent()) return;
 				setConflict(false);
 				await invalidate();
@@ -450,36 +441,6 @@ function SkillEditor({
 							</Button>
 							{saveButton}
 						</WebView>
-						{create && importOpen ? (
-							<AppView className="gap-3">
-								<AppText className="text-foreground">{t("skills.import")}</AppText>
-								<Input
-									accessibilityLabel={t("skills.github")}
-									placeholder={t("skills.github")}
-									autoCapitalize="none"
-									autoCorrect={false}
-									editable={!disabled}
-									value={source}
-									onChangeText={setSource}
-								/>
-								<Button
-									variant="default"
-									size="sm"
-									disabled={disabled || !source.trim()}
-									onPress={() => {
-										void save(true);
-									}}
-								>
-									<Text>{t("skills.importSubmit")}</Text>
-								</Button>
-							</AppView>
-						) : null}
-						{/* One entry opens the import form; its own submit is "Import skill", as on Web. */}
-						{!importOpen ? (
-							<Button variant="ghost" onPress={() => setImportOpen(true)}>
-								<Text>{t("skills.import")}</Text>
-							</Button>
-						) : null}
 						{action.error ? <ErrorState /> : null}
 					</WebView>
 				) : draft ? (
@@ -595,7 +556,7 @@ function SkillEditor({
 																disabled: action.busy || detail.isError,
 																onPress: () =>
 																	router.push({
-																		pathname: "/skills/[key]/archive",
+																		pathname: "/skills/[key]/send",
 																		params: { projectId, key: skillKey ?? "" },
 																	}),
 															},

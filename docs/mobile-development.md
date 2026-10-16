@@ -460,21 +460,13 @@ normalization. Invalid share expiration dates fail closed on both platforms.
 Generated schema types remain authoritative. Platform UI, authentication,
 account-scoped query lifetime and navigation stay in their respective apps.
 
-Skill packages use the shared generated download/upload client and multipart
-builder (also consumed by the Web uploader). Uploads are limited to 25 MiB;
-new uploads and transfers use server `create_only`, while replacement requires
-explicit confirmation. Web/native share destination eligibility and transfer
-ordering. A move only deletes the source after a matching upload receipt and
-matching content hash, with the original hash as the delete precondition.
-Uncertain uploads never trigger removal; failed removal reports a partial copy.
-
-Native download uses Expo FileSystem and the SDK-aligned `expo-sharing` 57.0.22
-from `catalog:expo57`. Rebuild the development client for this native module.
-Files use random safe names under an account-hashed cache directory. Native
-sharing completion does not prove delivery or that Android receivers have read
-the file, so files remain until OS cache eviction or explicit account-scoped
-cleanup. A stale account/focus lease cannot open the share sheet or clear files.
-Incoming share extensions are not enabled by this outgoing-sharing feature.
+Copy and move use the shared generated download/upload client and multipart
+builder, as Web's Send skill dialog does. Transfers use server `create_only`.
+Web and native share destination eligibility and transfer ordering. A move only
+deletes the source after a matching upload receipt and matching content hash,
+with the original hash as the delete precondition. Uncertain uploads never
+trigger removal; failed removal reports a partial copy. Mobile has no tar.gz
+package upload, download or sharing; Web has none either.
 
 Hosted deployment detail now links to a separate GitHub Workspace Skills surface.
 It reads the server capability and resource version, renders desired-state status
@@ -1284,11 +1276,7 @@ On an authorized simulator/device build, verify:
    a concurrent revision change and confirm it cannot remove the replacement.
    Verify Agent-synced/shared Skills remain read-only and account switching
    retires every pending Skill action.
-   Upload a tar.gz package using the system picker; duplicate new keys must not
-   overwrite existing Skills. Confirm replacement separately. Download/share on
-   both OSes and confirm receiving apps can read the file before explicitly
-   clearing the account's export cache. Copy/move between owned workspace
-   Projects; fail destination upload and change source revision during transfer.
+   Copy/move between owned workspace Projects; fail destination upload and change source revision during transfer.
    Neither case may delete unconfirmed source content. A partial move must retain
    the destination and report that source removal was not confirmed.
    For a test hosted Agent, install/uninstall a GitHub Workspace Skill and check

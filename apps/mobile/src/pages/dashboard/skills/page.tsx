@@ -9,6 +9,11 @@ import {
 	displayProjectName,
 	formatResourceCount,
 	isCustomProject,
+	isProjectOwner,
+	LIBRARY_COPY,
+	SHARING_COPY,
+	SKILLS_LIST_COPY,
+	skillsEmptyMessage,
 	skillsPageDescription,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -18,7 +23,6 @@ import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { HeroCardSkeleton } from "@/components/entity-card";
-import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { ProjectCardActions } from "@/components/projects/project-actions";
 import { ProjectResourceCard } from "@/components/projects/project-resource-card";
@@ -26,9 +30,8 @@ import { ProjectResourceBoundary, ProjectScopeHeader } from "@/components/projec
 import { CreateProjectButton, useCloudProjects } from "@/components/projects/projects-surface";
 import { SkillCardActions } from "@/components/skills/skill-actions";
 import { SkillCard } from "@/components/skills/skill-card";
-import { Button } from "@/components/ui/button";
+import { Alert } from "@/components/ui/alert";
 import { NativeList } from "@/components/ui/native-list";
-import { Text } from "@/components/ui/text";
 import { WebText } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useI18n } from "@/lib/i18n";
@@ -80,7 +83,13 @@ export function SkillRow({ skill, project }: { skill: Skill; project?: Project }
 }
 export function SkillsScreen() {
 	return (
-		<ProjectResourceBoundary>
+		<ProjectResourceBoundary
+			missingNotice={
+				<Alert title={SKILLS_LIST_COPY.projectUnavailableTitle}>
+					{SKILLS_LIST_COPY.projectUnavailableDescription}
+				</Alert>
+			}
+		>
 			{(project) => <SkillsView project={project} />}
 		</ProjectResourceBoundary>
 	);
@@ -95,35 +104,65 @@ function SkillsView({ project }: { project?: Project }) {
 		.filter(isCustomProject)
 		.sort((a, b) => displayProjectName(a).localeCompare(displayProjectName(b)));
 	const items = skills.data?.pages.flatMap((p) => p.items) ?? [];
-	const writable = !project || (isWritableSkillProject(project) && !project.archived_at);
+	const owner = Boolean(project && isProjectOwner(project));
+	const writable = Boolean(
+		project && owner && isWritableSkillProject(project) && !project.archived_at,
+	);
 
 	const searchOptions = useHeaderSearch({
 		value: search,
 		onChange: setSearch,
-		placeholder: t("libraryPort.searchSkills"),
+		placeholder: SKILLS_LIST_COPY.searchProject,
 	});
 	const pageHeader = (
-		<>
-			<PageHeader
-				title={t("skills.title")}
-				description={skillsPageDescription(project)}
-				headerMenu={
-					project && writable
-						? {
-								label: t("sessionDetail.more"),
-								items: [
-									{
-										id: "create",
-										label: t("libraryPort.createSkill"),
-										onPress: () =>
-											router.push({ pathname: "/skills/new", params: { projectId: project.id } }),
-									},
-								],
-							}
-						: undefined
-				}
-			/>
-		</>
+		<PageHeader
+			title={SKILLS_LIST_COPY.title}
+			description={skillsPageDescription(project)}
+			headerMenu={
+				project && (owner || writable)
+					? {
+							label: t("sessionDetail.more"),
+							items: [
+								...(owner
+									? [
+											{
+												id: "share",
+												label: SHARING_COPY.shareProject,
+												onPress: () =>
+													router.push({
+														pathname: "/projects/[id]/sharing",
+														params: { id: project.id },
+													}),
+											},
+										]
+									: []),
+								...(writable
+									? [
+											{
+												id: "import",
+												label: LIBRARY_COPY.importSkill,
+												onPress: () =>
+													router.push({
+														pathname: "/skills/import",
+														params: { projectId: project.id },
+													}),
+											},
+											{
+												id: "create",
+												label: LIBRARY_COPY.addSkill,
+												onPress: () =>
+													router.push({
+														pathname: "/skills/new",
+														params: { projectId: project.id },
+													}),
+											},
+										]
+									: []),
+							],
+						}
+					: undefined
+			}
+		/>
 	);
 	return (
 		<SafeAreaScreen>
@@ -147,26 +186,17 @@ function SkillsView({ project }: { project?: Project }) {
 						<>
 							{pageHeader}
 							<ProjectScopeHeader project={project} />
-							<ListToolbar
-								actions={
-									writable ? (
-										<Button
-											variant="outline"
-											size="sm"
-											onPress={() =>
-												router.push({
-													pathname: "/skills/archive",
-													params: { projectId: project.id },
-												})
-											}
-										>
-											<Text>{t("skillArchive.title")}</Text>
-										</Button>
-									) : undefined
-								}
-							/>
+							{!writable ? (
+								<Alert title={SKILLS_LIST_COPY.readOnlyTitle}>
+									{SKILLS_LIST_COPY.readOnlyDescription}
+								</Alert>
+							) : null}
 							{skills.error ? (
-								<ApiErrorPanel error={skills.error} onRetry={() => void skills.refetch()} />
+								<ApiErrorPanel
+									error={skills.error}
+									onRetry={() => void skills.refetch()}
+									title={SKILLS_LIST_COPY.loadFailed}
+								/>
 							) : null}
 						</>
 					}
@@ -174,7 +204,7 @@ function SkillsView({ project }: { project?: Project }) {
 						skills.isPending ? (
 							<HeroCardSkeleton compact />
 						) : !skills.error ? (
-							<EmptyState description={t("skills.empty")} />
+							<EmptyState description={skillsEmptyMessage({ search: search.trim(), writable })} />
 						) : null
 					}
 				/>
@@ -204,11 +234,15 @@ function SkillsView({ project }: { project?: Project }) {
 									recipe={skillsPageClasses.projectChooserHeading}
 									accessibilityRole="header"
 								>
-									{t("libraryPort.chooseProject")}
+									{LIBRARY_COPY.chooseProject}
 								</WebText>
 							) : null}
 							{projects.error ? (
-								<ApiErrorPanel error={projects.error} onRetry={() => void projects.refetch()} />
+								<ApiErrorPanel
+									error={projects.error}
+									onRetry={() => void projects.refetch()}
+									title={LIBRARY_COPY.loadProjectsFailed}
+								/>
 							) : null}
 						</>
 					}
@@ -219,7 +253,7 @@ function SkillsView({ project }: { project?: Project }) {
 							// Same empty state as Web's Skills project chooser.
 							<EmptyState
 								icon={FolderKanban}
-								description={t("libraryPort.emptyProjects")}
+								description={SKILLS_LIST_COPY.emptyProjects}
 								action={<CreateProjectButton />}
 							/>
 						) : null

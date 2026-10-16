@@ -78,7 +78,7 @@ export function ShareProjectDialog({
 		children === undefined ? (
 			<Button variant="outline" size="sm" aria-label={`Share ${projectName}`}>
 				<Share2 className="mr-2 size-4" />
-				Share project
+				{SHARING_COPY.shareProject}
 			</Button>
 		) : (
 			children
