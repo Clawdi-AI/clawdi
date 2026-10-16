@@ -1,7 +1,11 @@
 "use client";
 
 import { channelFormClasses as formStyles } from "@clawdi/shared/ui";
-import { agentDisplayName, channelFormCopy as formCopy } from "@clawdi/shared/view";
+import {
+	agentDisplayName,
+	channelDetailCopy,
+	channelFormCopy as formCopy,
+} from "@clawdi/shared/view";
 import { Link2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -128,7 +132,7 @@ export function LinkChannelAgentAction({
 			onClick={replacementRequired ? undefined : () => void submitLink(selectedAgentId, false)}
 		>
 			{linkAgent.isPending ? <Spinner className="size-3.5" /> : <Link2 />}
-			{linkAgent.isPending ? "Linking…" : "Link agent"}
+			{linkAgent.isPending ? channelDetailCopy.linking : formCopy.linkTitle}
 		</Button>
 	);
 	const linksError = shouldBlockQueryError(links.error, links.data) ? links.error : null;
@@ -149,7 +153,7 @@ export function LinkChannelAgentAction({
 				}}
 			>
 				<Link2 className="size-3.5" />
-				Link agent
+				{formCopy.linkTitle}
 			</Button>
 			{disabledDescriptionId ? (
 				<span id={disabledDescriptionId} className="sr-only">

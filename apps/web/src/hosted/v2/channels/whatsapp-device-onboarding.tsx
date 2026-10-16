@@ -77,18 +77,17 @@ export function WhatsAppDeviceOnboarding({
 			data-whatsapp-account-choice
 		>
 			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-				Add a WhatsApp account you own by scanning a linked-device QR.
+				{whatsappOnboardingCopy.accountDescription}
 			</p>
 			<Alert data-whatsapp-account-warning className="border-warning/30 bg-warning-muted py-2.5">
 				<TriangleAlert aria-hidden />
-				<AlertTitle>Use a dedicated number</AlertTitle>
+				<AlertTitle>{whatsappOnboardingCopy.warningTitle}</AlertTitle>
 				<AlertDescription className="text-xs">
-					Clawdi connects as a WhatsApp linked device, and agent replies come from this account. Use
-					a separate number, not your personal one.
+					{whatsappOnboardingCopy.warningDescription}
 				</AlertDescription>
 			</Alert>
 			<p className="min-w-0 text-xs text-muted-foreground [overflow-wrap:anywhere]" role="status">
-				{readiness.isLoading ? "Checking linked-device availability…" : readinessMessage}
+				{readiness.isLoading ? whatsappOnboardingCopy.checking : readinessMessage}
 			</p>
 			<Button
 				type="button"
@@ -97,10 +96,10 @@ export function WhatsAppDeviceOnboarding({
 				onClick={() => setMode("custom")}
 			>
 				<QrCode className="size-4 shrink-0" />
-				Connect your account
+				{whatsappOnboardingCopy.connectAccount}
 			</Button>
 			<p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-				This adds the account under custom bots. Agent link and chat pair are separate next steps.
+				{whatsappOnboardingCopy.accountNextSteps}
 			</p>
 		</div>
 	);
@@ -278,9 +277,8 @@ function YourWhatsAppFlow({
 				<div className="min-w-0 space-y-4" data-whatsapp-onboarding-state="repairing">
 					{requestError ? (
 						<>
-							<PairingNotice title="Couldn't start WhatsApp repair">
-								The connection status may be temporarily unavailable. Your account and history were
-								not removed.
+							<PairingNotice title={whatsappOnboardingCopy.repairFailedTitle}>
+								{whatsappOnboardingCopy.repairFailed}
 							</PairingNotice>
 							<PairingDialogActions>
 								<Button type="button" variant="outline" onClick={onBack}>
@@ -317,22 +315,20 @@ function YourWhatsAppFlow({
 					WhatsApp setup
 				</button>
 				<div className="space-y-1.5">
-					<Label htmlFor="whatsapp-account-name">Account name</Label>
+					<Label htmlFor="whatsapp-account-name">{whatsappOnboardingCopy.accountName}</Label>
 					<Input
 						id="whatsapp-account-name"
 						value={name}
 						onChange={(event) => setName(event.target.value)}
-						placeholder="Personal WhatsApp"
+						placeholder={whatsappOnboardingCopy.accountPlaceholder}
 						maxLength={120}
 						autoComplete="off"
 					/>
-					<p className="text-xs text-muted-foreground">
-						This names the custom bot inventory entry. It does not rename your WhatsApp account.
-					</p>
+					<p className="text-xs text-muted-foreground">{whatsappOnboardingCopy.nameHint}</p>
 				</div>
 				{requestError ? (
-					<PairingNotice title="Couldn't start WhatsApp connection">
-						Try again. No account was added.
+					<PairingNotice title={whatsappOnboardingCopy.startFailedTitle}>
+						{whatsappOnboardingCopy.startFailed}
 					</PairingNotice>
 				) : null}
 				<PairingDialogActions>
@@ -354,7 +350,9 @@ function YourWhatsAppFlow({
 						) : (
 							<QrCode className="size-4" />
 						)}
-						{actions.start.isPending ? "Starting…" : "Generate QR"}
+						{actions.start.isPending
+							? whatsappOnboardingCopy.starting
+							: whatsappOnboardingCopy.generateQr}
 					</Button>
 				</PairingDialogActions>
 			</div>
@@ -377,19 +375,17 @@ function YourWhatsAppFlow({
 				pairingCodePending={actions.pairingCode.isPending}
 			/>
 			{statusCheckFailed ? (
-				<p className="text-xs text-warning">
-					Connection status is temporarily unavailable. Clawdi is still checking.
-				</p>
+				<p className="text-xs text-warning">{whatsappOnboardingCopy.statusCheckFailed}</p>
 			) : null}
 			{requestError ? (
-				<PairingNotice title="WhatsApp action couldn't be completed">
-					Try again. Sensitive pairing details were not included in this error.
+				<PairingNotice title={whatsappOnboardingCopy.actionFailedTitle}>
+					{whatsappOnboardingCopy.actionFailed}
 				</PairingNotice>
 			) : null}
 			{session.state === "connected" ? (
 				<Button type="button" className="w-full min-w-0 whitespace-normal" onClick={onDone}>
 					<Bot className="size-4 shrink-0" />
-					{repairAccountId ? "Done" : "Review custom bots"}
+					{repairAccountId ? whatsappOnboardingCopy.done : whatsappOnboardingCopy.reviewBots}
 				</Button>
 			) : session.state === "expired" || session.state === "error" ? (
 				<PairingDialogActions>
@@ -407,7 +403,7 @@ function YourWhatsAppFlow({
 						) : (
 							<RefreshCw className="size-4" />
 						)}
-						Retry
+						{whatsappOnboardingCopy.retry}
 					</Button>
 				</PairingDialogActions>
 			) : (
@@ -423,7 +419,9 @@ function YourWhatsAppFlow({
 					) : (
 						<Unplug className="size-4" />
 					)}
-					{actions.cancel.isPending ? "Canceling…" : "Cancel connection"}
+					{actions.cancel.isPending
+						? whatsappOnboardingCopy.canceling
+						: whatsappOnboardingCopy.cancelConnection}
 				</Button>
 			)}
 		</div>
@@ -448,14 +446,19 @@ export function WhatsAppSessionState({
 	pairingCodePending: boolean;
 }) {
 	if (session.state === "generating") {
-		return <CenteredState icon={<Spinner className="size-6" />} title="Generating QR code…" />;
+		return (
+			<CenteredState
+				icon={<Spinner className="size-6" />}
+				title={whatsappOnboardingCopy.generating}
+			/>
+		);
 	}
 	if (session.state === "scanned") {
 		return (
 			<CenteredState
 				icon={<Spinner className="size-6" />}
-				title="Device approved"
-				description="Finishing the encrypted WhatsApp connection. Keep this dialog open."
+				title={whatsappOnboardingCopy.scanned}
+				description={whatsappOnboardingCopy.scannedDescription}
 			/>
 		);
 	}
@@ -463,11 +466,11 @@ export function WhatsAppSessionState({
 		return (
 			<CenteredState
 				icon={<CheckCircle2 className="size-7 text-success" />}
-				title="WhatsApp connected"
+				title={whatsappOnboardingCopy.connected}
 				description={
 					repairing
-						? "WhatsApp reconnected. Existing custom bot settings, agent links, paired chats, and history remain unchanged."
-						: "The account now appears under custom bots. Link it to an agent, then pair an authorized chat."
+						? whatsappOnboardingCopy.reconnectedDescription
+						: whatsappOnboardingCopy.connectedDescription
 				}
 			/>
 		);
@@ -476,8 +479,8 @@ export function WhatsAppSessionState({
 		return (
 			<CenteredState
 				icon={<CircleAlert className="size-7 text-warning" />}
-				title="Connection expired"
-				description="The device session was stopped. Retry to generate a fresh QR code."
+				title={whatsappOnboardingCopy.expired}
+				description={whatsappOnboardingCopy.expiredDescription}
 			/>
 		);
 	}
@@ -485,7 +488,7 @@ export function WhatsAppSessionState({
 		return (
 			<CenteredState
 				icon={<Unplug className="size-7 text-muted-foreground" />}
-				title="Connection canceled"
+				title={whatsappOnboardingCopy.canceled}
 			/>
 		);
 	}
@@ -493,8 +496,8 @@ export function WhatsAppSessionState({
 		return (
 			<CenteredState
 				icon={<CircleAlert className="size-7 text-destructive" />}
-				title="Couldn't connect WhatsApp"
-				description="Clawdi couldn't confirm a safe connection. Retry, or go back to clean it up."
+				title={whatsappOnboardingCopy.error}
+				description={whatsappOnboardingCopy.errorDescription}
 			/>
 		);
 	}
@@ -503,17 +506,11 @@ export function WhatsAppSessionState({
 		return (
 			<div className="space-y-3">
 				<div>
-					<p className="text-sm font-medium">Enter this code in your WhatsApp account</p>
-					<p className="mt-1 text-xs text-muted-foreground">
-						WhatsApp &gt; Settings/Menu &gt; Linked devices &gt; Link a device &gt; Link with phone
-						number instead.
-					</p>
+					<p className="text-sm font-medium">{whatsappOnboardingCopy.codeTitle}</p>
+					<p className="mt-1 text-xs text-muted-foreground">{whatsappOnboardingCopy.codeSteps}</p>
 				</div>
 				<CopyablePairingCode value={session.pairing_code} label="WhatsApp pairing code" />
-				<p className="text-xs text-muted-foreground">
-					This links the WhatsApp account for the phone number you entered. Keep this page open
-					until Clawdi confirms the connection.
-				</p>
+				<p className="text-xs text-muted-foreground">{whatsappOnboardingCopy.codeHint}</p>
 			</div>
 		);
 	}
@@ -523,37 +520,34 @@ export function WhatsAppSessionState({
 			{session.qr ? (
 				<PairingQrCode value={session.qr} label={whatsappOnboardingCopy.qrLabel} />
 			) : (
-				<CenteredState icon={<Spinner className="size-6" />} title="Refreshing QR code…" />
+				<CenteredState
+					icon={<Spinner className="size-6" />}
+					title={whatsappOnboardingCopy.refreshingQr}
+				/>
 			)}
 			<PairingExpiry>{whatsappQrExpiryLabel(session.qr_expires_at, nowMs)}</PairingExpiry>
 			<PairingInstructionPanel>
-				<p className="font-medium">On the WhatsApp account you want to link:</p>
-				<p className="text-xs text-muted-foreground">
-					WhatsApp &gt; Settings/Menu &gt; Linked devices &gt; Link a device &gt; scan.
-				</p>
+				<p className="font-medium">{whatsappOnboardingCopy.qrHeading}</p>
+				<p className="text-xs text-muted-foreground">{whatsappOnboardingCopy.scanInstruction}</p>
 				<p className="text-xs text-muted-foreground sm:hidden">
-					A phone cannot scan a QR shown on the same phone. Open Clawdi on a computer, or use the
-					pairing-code fallback below.
+					{whatsappOnboardingCopy.phoneWarning}
 				</p>
 			</PairingInstructionPanel>
 			{session.manual_pairing_code_supported ? (
 				<details className="rounded-lg border bg-muted/10 p-3">
 					<summary className="cursor-pointer text-sm font-medium">
-						Can&apos;t scan? Use a pairing code
+						{whatsappOnboardingCopy.fallback}
 					</summary>
 					<div className="mt-3 space-y-2">
-						<p className="text-xs text-muted-foreground">
-							Enter the phone number for the WhatsApp account you are linking, including country
-							code, using digits only.
-						</p>
-						<Label htmlFor="whatsapp-phone-number">WhatsApp phone number</Label>
+						<p className="text-xs text-muted-foreground">{whatsappOnboardingCopy.phoneHint}</p>
+						<Label htmlFor="whatsapp-phone-number">{whatsappOnboardingCopy.phoneLabel}</Label>
 						<Input
 							id="whatsapp-phone-number"
 							inputMode="numeric"
 							autoComplete="off"
 							value={phoneNumber}
 							onChange={(event) => onPhoneNumberChange(event.target.value)}
-							placeholder="14155550123"
+							placeholder={whatsappOnboardingCopy.phonePlaceholder}
 							aria-invalid={Boolean(whatsappPhoneNumberError(phoneNumber))}
 						/>
 						{whatsappPhoneNumberError(phoneNumber) ? (
@@ -569,7 +563,9 @@ export function WhatsAppSessionState({
 							onClick={onRequestPairingCode}
 						>
 							{pairingCodePending ? <Spinner className="size-4" /> : null}
-							{pairingCodePending ? "Requesting…" : "Get pairing code"}
+							{pairingCodePending
+								? whatsappOnboardingCopy.requesting
+								: whatsappOnboardingCopy.requestCode}
 						</Button>
 					</div>
 				</details>

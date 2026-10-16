@@ -10,6 +10,7 @@ import {
 	AGENT_PROFILES_COPY,
 	agentChannelLinkUnavailableReason,
 	agentChannelSectionCopy,
+	agentChannelUnlinkCopy,
 	agentDisplayName,
 	agentFilesPresentation,
 	agentOverviewCopy,
@@ -2990,7 +2991,7 @@ function AgentChannelBotCard({
 			onClick={replacementRequired ? undefined : () => void onLink(false).catch(() => undefined)}
 		>
 			{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-			{linking ? "Linking…" : "Link"}
+			{linking ? agentChannelSectionCopy.linking : agentChannelSectionCopy.link}
 		</Button>
 	);
 	const deleteAction =
@@ -3037,7 +3038,7 @@ function AgentChannelBotCard({
 				<AgentChannelCard
 					provider={bot.provider}
 					title={bot.name}
-					state={unavailableReason ?? "Available"}
+					state={unavailableReason ?? agentChannelSectionCopy.available}
 					actions={
 						<div className="flex min-w-0 items-center gap-2">
 							{deleteAction}
@@ -3210,12 +3211,14 @@ function LinkedChannelRow({
 								) : (
 									<QrCode className="size-3.5" />
 								)}
-								{creatingPairCode ? "Generating…" : "Pair"}
+								{creatingPairCode
+									? agentChannelSectionCopy.generating
+									: agentChannelSectionCopy.pair}
 							</Button>
 							<ConfirmAction
-								title={`Unlink ${name}?`}
-								description={<p>{agentName} will stop answering through this bot.</p>}
-								confirmLabel="Unlink"
+								title={agentChannelUnlinkCopy(name, agentName).title}
+								description={<p>{agentChannelUnlinkCopy(name, agentName).description}</p>}
+								confirmLabel={agentChannelSectionCopy.unlink}
 								destructive
 								onConfirm={onUnlink}
 							>
@@ -3229,12 +3232,12 @@ function LinkedChannelRow({
 									{unlinking ? (
 										<>
 											<Spinner className="size-3.5" />
-											Unlinking…
+											{agentChannelSectionCopy.unlinking}
 										</>
 									) : (
 										<>
 											<Link2Off className="size-3.5" />
-											<span>Unlink</span>
+											<span>{agentChannelSectionCopy.unlink}</span>
 										</>
 									)}
 								</Button>

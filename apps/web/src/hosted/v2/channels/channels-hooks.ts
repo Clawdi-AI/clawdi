@@ -1,5 +1,6 @@
 "use client";
 
+import { channelDetailCopy, channelRemovalCopy, pairedChatsCopy } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { toast } from "sonner";
@@ -192,12 +193,12 @@ export function useDeleteChannelBinding(accountId: string, agentId: string) {
 				qc.invalidateQueries({ queryKey: keys.activity(accountId) }),
 			]);
 			if (result.warning) {
-				toast.warning("Chat unpaired", { description: result.warning });
+				toast.warning(pairedChatsCopy.unpaired, { description: result.warning });
 			} else if (result.unpaired) {
-				toast.success("Chat unpaired");
+				toast.success(pairedChatsCopy.unpaired);
 			}
 		},
-		onError: toastApiError("Couldn't unpair chat"),
+		onError: toastApiError(pairedChatsCopy.unpairFailed),
 	});
 }
 
@@ -254,9 +255,9 @@ export function useDeleteChannel() {
 		onSuccess: async (_data, variables) => {
 			const id = variables.params.path.account_id;
 			await removeDeletedChannelQueries(qc, id);
-			toast.success("Custom bot deleted");
+			toast.success(channelRemovalCopy.removed);
 		},
-		onError: toastApiError("Couldn't delete Custom bot"),
+		onError: toastApiError(channelRemovalCopy.removeFailed),
 	});
 }
 
@@ -295,7 +296,7 @@ export function useCreatePairCode(
 				discord_user_install_url: result.discord_user_install_url,
 			};
 		} catch (error) {
-			if (toastOnError) toastApiError("Couldn't create pairing code")(error);
+			if (toastOnError) toastApiError(channelDetailCopy.pairFailed)(error);
 			throw error;
 		}
 	});
@@ -353,7 +354,7 @@ export function useLinkChannelAgent(accountId: string) {
 					}),
 				);
 				await invalidateLinkQueries();
-				toast.success("Channel linked");
+				toast.success(channelDetailCopy.linked);
 				return result;
 			} catch (error) {
 				if (isWhatsAppRepairConflict(error)) throw error;
@@ -377,7 +378,7 @@ export function useLinkChannelAgent(accountId: string) {
 						// Preserve the original conflict when reconciliation cannot refresh state.
 					}
 				}
-				toastApiError("Couldn't link channel")(error);
+				toastApiError(channelDetailCopy.linkFailed)(error);
 				throw error;
 			}
 		},
@@ -406,10 +407,10 @@ export function useUnlinkChannelAgent(accountId: string) {
 				qc.invalidateQueries({ queryKey: keys.list }),
 				qc.invalidateQueries({ queryKey: keys.pool }),
 			]);
-			toast.success("Channel unlinked");
+			toast.success(channelDetailCopy.unlinked);
 			return result;
 		} catch (error) {
-			toastApiError("Couldn't unlink channel")(error);
+			toastApiError(channelDetailCopy.unlinkFailed)(error);
 			throw error;
 		}
 	});
@@ -428,9 +429,9 @@ export function useUnlinkAgentChannel(agentId: string) {
 			qc.invalidateQueries({ queryKey: keys.activity(accountId) });
 			qc.invalidateQueries({ queryKey: keys.list });
 			qc.invalidateQueries({ queryKey: keys.pool });
-			toast.success("Channel unlinked");
+			toast.success(channelDetailCopy.unlinked);
 		},
-		onError: toastApiError("Couldn't unlink channel"),
+		onError: toastApiError(channelDetailCopy.unlinkFailed),
 	});
 }
 
@@ -444,6 +445,6 @@ export function useSyncCommands(accountId: string) {
 					body: {},
 				}),
 			),
-		onError: toastApiError("Couldn't sync commands"),
+		onError: toastApiError(channelDetailCopy.syncFailed),
 	});
 }

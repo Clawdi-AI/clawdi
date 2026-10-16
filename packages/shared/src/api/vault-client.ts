@@ -37,10 +37,6 @@ export function createVaultClient(options: ApiClientOptions) {
 					}),
 				signal,
 			),
-		createRequest: (
-			body: components["schemas"]["VaultSecretRequestCreate"],
-			signal?: AbortSignal,
-		) => transport.read((init) => api.POST("/v1/vault/requests", { ...init, body }), signal),
 		list: (query?: VaultCatalogQuery, signal?: AbortSignal) =>
 			transport.read((init) => api.GET("/v1/vault", { ...init, params: { query } }), signal),
 		get: (vault: VaultIdentity, signal?: AbortSignal) =>

@@ -5,10 +5,12 @@ import { memoriesSurfaceClasses } from "@clawdi/shared/ui";
 import {
 	memoryFormCopy as copy,
 	getProjectResourceDefinition,
+	LIBRARY_COPY,
 	MEMORY_CATEGORIES,
 } from "@clawdi/shared/view";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, Stack, useLocalSearchParams } from "expo-router";
+import Brain from "lucide-react-native/icons/brain";
 import Plus from "lucide-react-native/icons/plus";
 import X from "lucide-react-native/icons/x";
 import { useEffect, useRef, useState } from "react";
@@ -20,6 +22,7 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { MemoryCard } from "@/components/memories/memory-card";
 import { MemorySettings } from "@/components/memories/memory-settings";
 import { PageHeader } from "@/components/page-header";
+import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Input, Label } from "@/components/ui/input";
@@ -41,6 +44,7 @@ import { routeParam } from "@/lib/route-params";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
 import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { useHeaderSearch } from "@/platform/navigation/native-header";
+import { useAgentRouteId } from "@/platform/navigation/use-agent-route";
 import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
@@ -87,6 +91,7 @@ function MemoriesView() {
 	const read = useAccountRead();
 	const { cloud } = useMobileApi();
 	const action = useAuthAction(scope);
+	const agentId = useAgentRouteId();
 	const [category, setCategory] = useState("all");
 	const [search, setSearch] = useState("");
 
@@ -171,6 +176,11 @@ function MemoriesView() {
 								],
 							}}
 						/>
+						{agentId ? (
+							<Alert icon={Brain} title={LIBRARY_COPY.sharedAcrossAgents}>
+								{LIBRARY_COPY.memoriesSharedAcrossAgents}
+							</Alert>
+						) : null}
 						{/* The applied category stays visible and clearable, like the Sessions profile filter. */}
 						{category !== "all" ? (
 							<ListToolbar
@@ -203,11 +213,11 @@ function MemoriesView() {
 						<HeroCardSkeleton />
 					) : !memories.error ? (
 						search || category !== "all" ? (
-							<EmptyState description={t("libraryPort.noMemoryMatches")} />
+							<EmptyState description={LIBRARY_COPY.noMemoryMatches} />
 						) : (
 							<EmptyState
-								title={t("libraryPort.noMemories")}
-								description={t("libraryPort.emptyMemories")}
+								title={LIBRARY_COPY.noMemories}
+								description={LIBRARY_COPY.emptyMemories}
 								action={
 									<Button onPress={() => router.push("/memories/new")}>
 										<Icon as={Plus} />

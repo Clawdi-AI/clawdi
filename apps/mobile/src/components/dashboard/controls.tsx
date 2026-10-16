@@ -63,30 +63,3 @@ export function ChoiceSelect<Value extends string | number>({
 		</Select>
 	);
 }
-
-import { settingsSectionClasses } from "@clawdi/shared/ui";
-import { Switch } from "@/components/ui/switch";
-import { WebView } from "@/components/ui/web-layout";
-export function NativeSwitch({
-	label,
-	value,
-	onValueChange,
-	disabled,
-}: {
-	label: string;
-	value: boolean;
-	onValueChange: (value: boolean) => void;
-	disabled?: boolean;
-}) {
-	return (
-		<WebView recipe={settingsSectionClasses.header} className="flex-row">
-			<Text className="flex-1">{label}</Text>
-			<Switch
-				accessibilityLabel={label}
-				checked={value}
-				onCheckedChange={onValueChange}
-				disabled={disabled}
-			/>
-		</WebView>
-	);
-}

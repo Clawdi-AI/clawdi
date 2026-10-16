@@ -84,10 +84,8 @@ export default function MemoryDetailPage({
 			{scope.kind === "agent" ? (
 				<Alert>
 					<Brain />
-					<AlertTitle>Shared across all agents</AlertTitle>
-					<AlertDescription>
-						This memory belongs to the account. Changes here affect all agents.
-					</AlertDescription>
+					<AlertTitle>{LIBRARY_COPY.sharedAcrossAgents}</AlertTitle>
+					<AlertDescription>{LIBRARY_COPY.memorySharedAcrossAgents}</AlertDescription>
 				</Alert>
 			) : null}
 			{blockingError && isApiNotFoundError(blockingError) ? (

@@ -1,7 +1,12 @@
 "use client";
 
 import { agentChannelSectionClasses } from "@clawdi/shared/ui";
-import { agentChannelPairedChatsLabel } from "@clawdi/shared/view";
+import {
+	agentChannelPairedChatsLabel,
+	pairedChatsCopy,
+	pairedChatsDescription,
+	pairedChatsLoadFailed,
+} from "@clawdi/shared/view";
 
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { useState } from "react";
@@ -71,7 +76,7 @@ export function PairedChatsDialog({
 	};
 	const panelId = `paired-chats-${linkId}`;
 	const label = agentChannelPairedChatsLabel(bindingCount);
-	const description = `${descriptionCount} ${descriptionCount === 1 ? "chat is" : "chats are"} paired through this channel. Unpairing affects only the selected chat.`;
+	const description = pairedChatsDescription(descriptionCount);
 	const trigger = (
 		<button
 			type="button"
@@ -113,7 +118,7 @@ export function PairedChatsDialog({
 					className="top-2 min-w-0 gap-0 overflow-hidden rounded-t-xl pb-[env(safe-area-inset-bottom)] [&>*]:min-w-0"
 				>
 					<SheetHeader className="shrink-0 border-b p-4 pr-12">
-						<SheetTitle>Paired chats</SheetTitle>
+						<SheetTitle>{pairedChatsCopy.title}</SheetTitle>
 						<p
 							data-agent-paired-chats-channel-name
 							className="min-w-0 truncate text-sm font-medium"
@@ -147,7 +152,7 @@ export function PairedChatsDialog({
 				className="max-h-[calc(100dvh-2rem)] min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-xl"
 			>
 				<DialogHeader className="border-b p-5 pr-14">
-					<DialogTitle>Paired chats</DialogTitle>
+					<DialogTitle>{pairedChatsCopy.title}</DialogTitle>
 					<p
 						data-agent-paired-chats-channel-name
 						className="min-w-0 truncate text-sm font-medium"
@@ -196,9 +201,7 @@ function PairedChatsList({
 				>
 					<AlertCircle className="size-4 shrink-0 text-destructive" />
 					<p className="min-w-0 break-words text-sm font-medium [overflow-wrap:anywhere]">
-						{provider === "discord"
-							? "Couldn’t load paired servers or direct messages"
-							: "Couldn’t load paired chats"}
+						{pairedChatsLoadFailed(provider)}
 					</p>
 					<Button
 						type="button"
@@ -213,7 +216,7 @@ function PairedChatsList({
 						) : (
 							<RefreshCw className="size-3.5" />
 						)}
-						{bindingsRetrying ? "Retrying…" : "Retry"}
+						{bindingsRetrying ? pairedChatsCopy.retrying : pairedChatsCopy.retry}
 					</Button>
 				</div>
 			) : null}
@@ -242,7 +245,9 @@ function PairedChatsList({
 				</div>
 			) : null}
 			{!bindingsLoading && !bindingsError && pairedChats.length === 0 ? (
-				<p className="px-1 py-6 text-center text-sm text-muted-foreground">No paired chats yet.</p>
+				<p className="px-1 py-6 text-center text-sm text-muted-foreground">
+					{pairedChatsCopy.empty}
+				</p>
 			) : null}
 		</div>
 	);

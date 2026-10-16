@@ -1,6 +1,11 @@
 import type { components, paths } from "@clawdi/shared/api";
 import { vaultRequestClasses } from "@clawdi/shared/ui";
-import { buildVaultSupplyAgentMessage, VAULT_REQUEST_COPY } from "@clawdi/shared/view";
+import {
+	buildVaultSupplyAgentMessage,
+	VAULT_REQUEST_COPY,
+	vaultRequestExpires,
+	vaultRequestSection,
+} from "@clawdi/shared/view";
 import { Eye, EyeOff } from "lucide-react";
 import createClient from "openapi-fetch";
 import { useEffect, useRef, useState } from "react";
@@ -178,13 +183,13 @@ export function VaultRequestPage() {
 					setPhase("ready");
 				} else if (response.status === 410 || response.status === 422) setPhase("unavailable");
 				else {
-					setError("Couldn't load this request. Try again.");
+					setError(VAULT_REQUEST_COPY.loadFailed);
 					setPhase("error");
 				}
 			})
 			.catch(() => {
 				if (!controller.signal.aborted) {
-					setError("Couldn't connect. Try again.");
+					setError(VAULT_REQUEST_COPY.offline);
 					setPhase("error");
 				}
 			});
@@ -211,9 +216,7 @@ export function VaultRequestPage() {
 			fields.some((name) => !REQUEST_FIELD_NAME_RE.test(name)) ||
 			new Set(fields).size !== fields.length
 		) {
-			setSelectionError(
-				"Use valid, distinct field names (letters, numbers, dots, underscores, and hyphens).",
-			);
+			setSelectionError(VAULT_REQUEST_COPY.invalidNames);
 			return;
 		}
 		const controller = new AbortController();
@@ -238,9 +241,7 @@ export function VaultRequestPage() {
 						token.current = "";
 						setPhase("unavailable");
 					} else if (response.status === 409) {
-						setSelectionError(
-							"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
-						);
+						setSelectionError(VAULT_REQUEST_COPY.selectionConflict);
 					} else if (response.status === 422) {
 						setSelectionError(
 							"Selected field names are invalid. Use distinct names and at most 32 fields.",
@@ -279,7 +280,7 @@ export function VaultRequestPage() {
 			new Set(rows.map((row) => row.name)).size !== rows.length ||
 			fields.some((name) => !REQUEST_FIELD_NAME_RE.test(name))
 		) {
-			setError("Use valid, distinct field names and at most 32 fields total.");
+			setError(VAULT_REQUEST_COPY.fieldsLimit);
 			return;
 		}
 		setImportBusy(true);
@@ -367,13 +368,11 @@ export function VaultRequestPage() {
 				setPreview(undefined);
 				setPhase("unavailable");
 			} else {
-				setError("Couldn't save. Supply every requested field and try again.");
+				setError(VAULT_REQUEST_COPY.saveFailed);
 				setPhase("ready");
 			}
 		} catch {
-			setError(
-				"Save couldn't be confirmed. Ask your agent to check the request status before trying again.",
-			);
+			setError(VAULT_REQUEST_COPY.saveUncertain);
 			setPhase("ready");
 		}
 	}
@@ -382,7 +381,7 @@ export function VaultRequestPage() {
 		return (
 			<main className={vaultRequestClasses.page}>
 				<p role="status" className={vaultRequestClasses.loading}>
-					Loading request…
+					{VAULT_REQUEST_COPY.loading}
 				</p>
 			</main>
 		);
@@ -394,7 +393,7 @@ export function VaultRequestPage() {
 				<CardHeader className={vaultRequestClasses.header}>
 					<div className={vaultRequestClasses.brand}>
 						<ClawdiLogo width={28} height={28} className={vaultRequestClasses.brandIcon} />
-						<span className={vaultRequestClasses.brandName}>Clawdi</span>
+						<span className={vaultRequestClasses.brandName}>{VAULT_REQUEST_COPY.brand}</span>
 					</div>
 					<CardTitle>
 						<h1 className={vaultRequestClasses.title}>
@@ -420,16 +419,16 @@ export function VaultRequestPage() {
 							<p className={vaultRequestClasses.receipt}>{agentMessage}</p>
 							{copyState === "error" && (
 								<p role="alert" className={vaultRequestClasses.error}>
-									Couldn't copy. Select and copy the message above manually.
+									{VAULT_REQUEST_COPY.copyFailed}
 								</p>
 							)}
 							<div className={vaultRequestClasses.footer}>
 								<Button onClick={copyMessage} disabled={copyState === "copying"}>
 									{copyState === "copied"
-										? "Copied"
+										? VAULT_REQUEST_COPY.copied
 										: copyState === "copying"
-											? "Copying…"
-											: "Copy message for agent"}
+											? VAULT_REQUEST_COPY.copying
+											: VAULT_REQUEST_COPY.copyMessage}
 								</Button>
 							</div>
 						</>
@@ -438,7 +437,9 @@ export function VaultRequestPage() {
 						<>
 							<p role="alert">{error}</p>
 							<div className={vaultRequestClasses.footer}>
-								<Button onClick={() => setAttempt((value) => value + 1)}>Try again</Button>
+								<Button onClick={() => setAttempt((value) => value + 1)}>
+									{VAULT_REQUEST_COPY.tryAgain}
+								</Button>
 							</div>
 						</>
 					)}
@@ -455,17 +456,15 @@ export function VaultRequestPage() {
 									{context.vault_name} · {context.project_name}
 								</p>
 								{context.section && (
-									<p className={vaultRequestClasses.wrap}>Section: {context.section}</p>
+									<p className={vaultRequestClasses.wrap}>{vaultRequestSection(context.section)}</p>
 								)}
 								<p className={vaultRequestClasses.muted}>
-									Expires {new Date(context.expires_at).toLocaleString()}
+									{vaultRequestExpires(context.expires_at)}
 								</p>
 							</div>
 							<p className={vaultRequestClasses.loading}>{VAULT_REQUEST_COPY.privacy}</p>
 							{!!updates.length && (
-								<p className={vaultRequestClasses.loading}>
-									Fields marked Update replace existing values when you save.
-								</p>
+								<p className={vaultRequestClasses.loading}>{VAULT_REQUEST_COPY.updateNote}</p>
 							)}
 							<fieldset
 								disabled={phase === "saving" || importBusy || !!preview}
@@ -478,7 +477,7 @@ export function VaultRequestPage() {
 												<Label htmlFor={`secret-${id}`}>{name}</Label>
 											) : (
 												<Input
-													aria-label="Field name"
+													aria-label={VAULT_REQUEST_COPY.fieldName}
 													value={name}
 													maxLength={200}
 													required
@@ -504,11 +503,13 @@ export function VaultRequestPage() {
 														setRows((current) => current.filter((row) => row.id !== id));
 													}}
 												>
-													Remove
+													{VAULT_REQUEST_COPY.remove}
 												</Button>
 											)}
 											{updates.includes(name) && (
-												<span className={vaultRequestClasses.update}>Update</span>
+												<span className={vaultRequestClasses.update}>
+													{VAULT_REQUEST_COPY.update}
+												</span>
 											)}
 										</div>
 										<SecretInput
@@ -540,7 +541,7 @@ export function VaultRequestPage() {
 											]);
 										}}
 									>
-										Add field
+										{VAULT_REQUEST_COPY.addField}
 									</Button>
 									<Button
 										type="button"
@@ -550,7 +551,7 @@ export function VaultRequestPage() {
 											setError("");
 										}}
 									>
-										Import .env
+										{VAULT_REQUEST_COPY.importEnv}
 									</Button>
 								</div>
 							</fieldset>
@@ -562,10 +563,10 @@ export function VaultRequestPage() {
 									</p>
 									{!preview && (
 										<>
-											<Label htmlFor="env-import">Dotenv text</Label>
+											<Label htmlFor="env-import">{VAULT_REQUEST_COPY.dotenvText}</Label>
 											<SecretInput
 												id="env-import"
-												label="Dotenv text"
+												label={VAULT_REQUEST_COPY.dotenvText}
 												value={importText}
 												disabled={importBusy}
 												onChange={setImportText}
@@ -622,7 +623,7 @@ export function VaultRequestPage() {
 												))}
 											</ul>
 											<Button type="button" onClick={applyImport}>
-												Apply import
+												{VAULT_REQUEST_COPY.applyImport}
 											</Button>
 										</>
 									)}
@@ -636,7 +637,7 @@ export function VaultRequestPage() {
 											setPreview(undefined);
 										}}
 									>
-										Cancel import
+										{VAULT_REQUEST_COPY.cancelImport}
 									</Button>
 								</div>
 							)}
@@ -662,7 +663,7 @@ export function VaultRequestPage() {
 									type="submit"
 									disabled={phase === "saving" || !selectionReady || importOpen}
 								>
-									{phase === "saving" ? "Saving…" : "Save secrets"}
+									{phase === "saving" ? VAULT_REQUEST_COPY.saving : VAULT_REQUEST_COPY.save}
 								</Button>
 							</div>
 						</form>

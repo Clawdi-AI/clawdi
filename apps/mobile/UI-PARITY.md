@@ -218,9 +218,9 @@ return <><Stack.Screen options={{ headerSearchBarOptions: search }} />
 
 **Route sheets** — `sheet-options.ts`, `sheet-layout.tsx`, `use-sheet.ts`,
 `src/components/ui/sheet-page.tsx`. Routes stay under the Web parent URL:
-`/projects/invitations`, `/projects/[id]/sharing`, `/skills/new`,
-`/skills/[key]/archive`, `/channels/whatsapp`. `/skills/archive` is the
-unkeyed archive-upload form. There are no `/native/*` routes/page duplicates.
+`/projects/[id]/sharing`, `/skills/new`, `/skills/import`,
+`/skills/[key]/send`, `/channels/whatsapp`. There are no `/native/*`
+routes/page duplicates.
 The URL-transparent `(sheets)` group sits above NativeTabs in the root Stack,
 so tabs remain beneath the modal. Its inner native Stack supplies the header.
 iOS uses a formSheet with detents; Android uses a full-height `modal`, because

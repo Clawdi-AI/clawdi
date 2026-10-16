@@ -6,6 +6,7 @@ import {
 	displayProjectName,
 	identityFor,
 	LIBRARY_COPY,
+	sendSkillResult,
 	sendSkillTitle,
 } from "@clawdi/shared/view";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -134,26 +135,15 @@ export function SendSkillDialog({
 		},
 		onSuccess: ({ sourceRemoved }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });
-			const targetLabel =
-				projectTargets.find((candidate) => candidate.value === target)?.label ?? "the destination";
-			toast.success(
-				sourceRemoved === true
-					? "Skill moved"
-					: sourceRemoved === false
-						? "Skill copied, but not removed"
-						: "Skill copied",
-				{
-					description:
-						`${skill.name} is now available in ${targetLabel}.` +
-						(sourceRemoved === false
-							? " It couldn't be removed from the source; remove it after checking the new copy."
-							: ""),
-				},
+			const result = sendSkillResult(
+				sourceRemoved,
+				skill.name,
+				projectTargets.find((candidate) => candidate.value === target)?.label,
 			);
+			toast.success(result.title, { description: result.description });
 			setOpen(false);
 		},
-		onError: (error) =>
-			toast.error("Couldn't copy or move skill", { description: normalizeApiError(error) }),
+		onError: (error) => toast.error(copy.sendFailed, { description: normalizeApiError(error) }),
 		onSettled: () => {
 			sendLockedRef.current = false;
 		},

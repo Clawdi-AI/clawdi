@@ -39,9 +39,6 @@ const billingEn = {
 } as const;
 const channelsEn = {
 	singular: "Channel",
-	pairAction: "Pair",
-	unlinkAction: "Unlink",
-	linkAction: "Link",
 	linkedAt: "Linked {time}",
 	deleteAction: "Delete channel",
 	configure: "Configure",
@@ -53,64 +50,18 @@ const channelsEn = {
 		"This bot may already have been created. Refresh and inspect inventory before submitting again. Closing this form does not undo a request already sent.",
 	reviewInventory: "Refresh inventory before another submission",
 	title: "Channels",
-	link: "Link selected Agent",
-	replace: "Replace this Agent's existing channel for this provider",
-	replaceWarning:
-		"Replacement disconnects the previous bot for this provider. Paired chats may lose access.",
-	unlink: "Unlink agent",
-	pair: "Generate chat pairing code",
-	bindings: "Paired chats",
-	noBindings: "No paired chats.",
-	unpair: "Unpair chat",
-	unpairWarning: "This chat will no longer be connected to the Agent.",
-	cleanupWarning:
-		"Chat access was revoked, but notification or provider cleanup is incomplete. Refresh to inspect the result.",
-	unpairNotConfirmed: "Unpairing was not confirmed. Refresh paired chats before trying again.",
-	done: "Action confirmed. Refresh to inspect current state.",
 	failed:
 		"The action was not confirmed. Refresh before trying again. Channel availability, capacity or runtime permissions may have changed.",
-	refresh: "Refresh channels",
 };
 const whatsappEn = {
 	repair: "Repair WhatsApp connection",
-	warning:
-		"Use a dedicated WhatsApp number you own. When linked to an Agent, replies are sent from this account. Agent linking and chat pairing remain separate steps.",
-	repairWarning:
-		"Repair replaces an invalid linked-device login. The Custom bot, Agent links, paired chats and history stay unchanged. Only repair an account you own.",
-	leaving:
-		"Switching apps hides pairing secrets and pauses checking. Return to this screen to resume. Leaving this screen does not cancel an already sent request; use Cancel connection to stop it explicitly. Unfinished sessions expire on the server.",
-	approve: "I own this WhatsApp account and approve linking this device.",
-	retryStart: "Retry last request",
-	uncertain:
-		"We couldn't confirm the last request. Retry it to continue — this won't start a second connection.",
-	unavailable:
-		"Linked-device availability or account ownership is not confirmed. Refresh to check.",
-	offline: "Offline. Checking pauses until connectivity returns.",
-	ready: "Ready to link WhatsApp",
-	expired: "Connection expired. Check status, then retry to generate a fresh code.",
-	qrLabel: whatsappOnboardingCopy.qrLabel,
-	qrWaiting: "Waiting for a current QR code. Check connection status if this persists.",
-	codeInstructions:
-		"In WhatsApp → Linked devices → Link a device, choose Link with phone number instead and enter this code. Return here to confirm completion.",
-	phone: "Country code and phone number (digits only)",
-	check: "Check connection status",
-	retry: "Retry this session",
-	cancel: "Cancel connection",
-	review: "Review custom bots",
-	failed:
-		"Connection status or the last action was not confirmed. Check status before retrying. Sensitive details are not included in this error.",
+	leaving: "Switching apps pauses checking. Return here to continue.",
 };
 const connectorsEn = {
 	availableCount: "available",
 	activeCount: "active",
 	title: "Connectors",
-	noAccounts: "No accounts connected to this app.",
-	disconnect: "Disconnect account",
-	ready: "This app needs no credentials and is ready to use.",
-	unavailable:
-		"This authentication method is unavailable. Additional server configuration may be required.",
-	oauth:
-		"Authorize in the system browser, then close it and return here. Refresh accounts to check the result; opening or closing the browser does not mean authorization succeeded.",
+	oauth: "Authorize in the browser, then return here.",
 } as const;
 const storeEn = {
 	checkPending: "Check pending purchases",
@@ -346,31 +297,6 @@ const workspaceSkillsEn = {
 	reload: "Reload",
 	error: "We couldn't confirm this change. Refresh and try again.",
 };
-const skillArchiveEn = {
-	title: "Skill packages",
-	key: "Skill key (for example: tools/research)",
-	upload: "Choose and upload new package",
-	replace: "Replace package",
-	replaceWarning:
-		"Replace this Skill's files with the selected tar.gz package? Refresh first if another device may have changed it. This upload is not automatically retried.",
-	hint: "Choose a tar.gz Skill package up to 25 MiB. The server validates its contents. New uploads never overwrite an existing Skill.",
-	download: "Download and share package",
-	moveWarning:
-		"Copy the package to the selected Project, then remove the source only if its content has not changed. If removal fails, both copies remain.",
-	uploaded: "Package uploaded.",
-	copied: "Package copied. Source retained.",
-	moved: "Package moved.",
-	partial:
-		"Package copied, but source removal was not confirmed. Refresh both Projects before making another change.",
-	failed:
-		"The action was not confirmed. Refresh the source and destination before retrying; an upload or removal may already have succeeded.",
-	cacheHint:
-		"Downloaded packages stay in this account's app cache so receiving apps can finish reading them. Sharing does not confirm delivery. Clear exports when finished.",
-	clear: "Clear cached Skill exports",
-	clearWarning:
-		"Remove this account's downloaded Skill packages from this app's cache? Wait until receiving apps have finished reading. This does not delete server Skills or copies saved elsewhere.",
-	cleared: "Cached exports cleared.",
-};
 const vaultEn = {
 	singular: "Vault",
 	from: "from",
@@ -380,7 +306,6 @@ const vaultEn = {
 	destinationsError: LIBRARY_COPY.loadDestinationsFailed,
 	existingKeysError: LIBRARY_COPY.checkExistingKeysFailed,
 	catalogError: LIBRARY_COPY.loadVaultCatalogFailed,
-	sectionLabel: "Section:",
 	splitTitle: "Split by app prefix",
 	splitSlug: "Destination slug",
 	splitComplete: "Complete",
@@ -388,49 +313,9 @@ const vaultEn = {
 	splitInspect:
 		"New Vaults are not linked to Projects automatically. Failed or interrupted operations may leave destinations behind. Inspect both source and destinations before trying again; existing Vaults are never reused automatically.",
 	splitReset: "Close report and review remaining keys",
-	supplyTitle: "Supply requested credentials",
-	supplyReceived:
-		"Request link received. Inspect it before entering credentials. Nothing has been submitted.",
-	supplyLink: "HTTPS request link",
-	supplyLoad: "Inspect request",
-	supplyName: "Field name",
-	supplyValue: "Secret value",
-	supplyAdd: "Add field",
-	supplyRemove: "Remove added field",
-	supplyImport: "Import dotenv assignments",
-	supplyReview: "Check fields and review",
-	supplySave: "Save credentials",
-	supplyWarning:
-		"Save all entered fields to this Vault? The following existing keys will be replaced:",
-	supplyNoUpdates: "No existing keys will be replaced.",
-	supplyReceipt: "Share completion receipt",
-	supplyUncertain:
-		"Save could not be confirmed. Ask the request creator to check its status before trying again. No retry was sent.",
-	supplyInvalid:
-		"Check the request link or fields. Supply every required field, use distinct valid names, and at most 32 nonempty values (65536 characters each).",
-	supplyConflict:
-		"Selected fields changed or are reserved. Remove added fields or ask for a new link; no secrets were sent.",
-	supplyReset: "Clear and start again",
-	requests: "Secret requests",
-	requestsDescription:
-		"Recent 100 requests. Pending requests refresh for two minutes while this screen is active; refresh manually to continue. The latest link can be shared again until you leave this screen or background the app. Links are never saved to device storage.",
-	requestReshare: "Share latest request again",
-	requestCreate: "Create and share request",
-	requestShare: "Supply requested credentials",
-	requestWarning:
-		"Anyone with this link can supply credentials, replace requested existing keys and add keys to this section. Share only with the intended recipient. After leaving this screen or backgrounding the app, the link cannot be recovered here. Continue?",
-	requestFields: "Key names only, separated by commas or new lines",
-	requestInvalid:
-		"Select an attached Project and enter 1–32 distinct valid key names. Do not paste secret values here.",
-	requestPending: "Awaiting input",
-	requestSupplied: "Supplied",
-	requestConflict: "Credentials changed",
-	requestExpired: "Expired",
-	requestFiveMinutes: "Expires in 5 minutes",
-	requestHour: "Expires in 1 hour",
-	requestDay: "Expires in 24 hours",
+	/** The native share sheet stands in for Web's clipboard copy. */
+	shareMessage: "Share message for agent",
 	open: "Open Vault",
-	refresh: "Refresh",
 	keys: "Keys",
 	section: "Section (empty for default)",
 	importText: "Paste dotenv or flat JSON",
@@ -440,7 +325,6 @@ const vaultEn = {
 	invalidImport:
 		"Invalid import. Check key names, duplicates, and quoting. Nothing will be imported.",
 	clear: "Clear pasted secrets",
-	failed: "The operation could not be confirmed. Refresh before trying again.",
 	saved: "Changes saved.",
 	deleteKey: "Delete key",
 	deleteTitle: "Delete {name}?",
@@ -451,8 +335,6 @@ const vaultEn = {
 		"Give this Project and its Agents access to this Vault? Existing secrets remain in the selected Vault.",
 	detachWarning:
 		"Remove this Project's access to the Vault? Its Agents may no longer receive these secrets. The Vault and keys remain.",
-	copySelected: "Copy selected keys",
-	moveSelected: "Move selected keys",
 	selectedCopyWarning:
 		"Matching destination keys will be overwritten. Copies are independent: later changes do not sync. To share one source of truth, attach this Vault to another Project instead. Values remain server-side.",
 	moveWarning:
@@ -461,7 +343,6 @@ const vaultEn = {
 	copyUnconfirmed: "Copy incomplete or unconfirmed; check both Vaults before retrying",
 	cleanupUnconfirmed: "Source deletion skipped or unconfirmed; check source keys",
 	loadTargets: "Load more destinations",
-	defaultSection: "Default section",
 } as const;
 
 import {
@@ -477,7 +358,6 @@ import {
 	settingsCopy,
 	usageCopy,
 	walletTopupCopy,
-	whatsappOnboardingCopy,
 } from "@clawdi/shared/view";
 export const en = {
 	labels: {
@@ -512,7 +392,6 @@ export const en = {
 		learnedOn: "Learned on {machine}",
 		editProvider: "Edit {name}",
 		setupProvider: "Set up {name}",
-		removeProvider: "Remove {name}?",
 		editable: "Editable",
 		readOnly: "Read-only",
 	},
@@ -600,36 +479,19 @@ export const en = {
 	},
 	agentExtensions: agentExtensionsEn,
 	workspaceSkills: workspaceSkillsEn,
-	skillArchive: skillArchiveEn,
 	agentSettings: agentSettingsEn,
 	runtime: runtimeEn,
 	channels: channelsEn,
 	whatsapp: whatsappEn,
 	providers: {
 		ready: "Ready",
-		removedPending: "Provider removed. Remote access revocation is pending.",
-		removedConfirmed: "Provider removed.",
 		setupRequired: "Setup required",
-		removed: "Provider removed",
 		removalUnavailable: "Provider removal requires a configured Hosted API.",
-		reviewRemoval: "Review provider removal",
-		reviewCurrentImpact: "Review current impact again",
-		removalUncertain:
-			"The previous removal may already have unset Agent configurations. Retry its exact confirmation to recover. Reviewing a new impact does not undo that request.",
-		retryRemoval: "Retry previous removal",
-		removalFailed:
-			"Removal was not confirmed. Retry the original request, or review current impact and explicitly approve it again if the provider changed.",
 		connectOAuth: "Connect ChatGPT",
 		reconnectOAuth: "Reconnect ChatGPT",
 		stopOAuth: "Stop waiting",
 		oauthOffline: "Offline. Checking will resume when connectivity returns.",
 		oauthReady: "Connection authorized.",
-		retrySame: "Retry the same request",
-		uncertain:
-			"A save may have reached the server. Retry the same request, or refresh the list before starting another connection. Leaving this screen clears the entered key.",
-		validate: "Validate configuration",
-		valid: "Configuration is valid. This does not test the upstream connection.",
-		invalid: "Configuration needs attention. Review this connection's settings.",
 		failed:
 			"Could not complete the action. Refresh to check the current state before trying again.",
 	},
@@ -687,7 +549,6 @@ export const en = {
 	},
 	sessionFilters: {
 		search: "Search Sessions and messages…",
-		searchInvalid: "Enter 2–500 characters, or clear the search.",
 		options: "Filters and sorting",
 		agent: "Agent type",
 		all: "All",
@@ -721,10 +582,8 @@ export const en = {
 		moreText: "Show more text",
 	},
 	sessions: {
-		clearFilter: "Show all Sessions",
 		noMessages: "No message transcript is available yet.",
 		revisionChanged: "The transcript changed. Refresh to load its current version.",
-		filterInvalid: "The Agent filter is invalid.",
 	},
 	skills: {
 		singular: "Skill",
@@ -734,20 +593,15 @@ export const en = {
 			"This Library link is read-only. Open the Skill from its Project to edit or manage that exact copy.",
 		saved: "Skill saved. You can return to the Skills list.",
 		project: "Project",
-		description: "Description",
 		discard: "Discard draft and reload",
 		discardWarning: "Your unsaved changes will be lost.",
 		readOnly:
 			"Only owned cloud Projects can be edited. Agent-synced and shared Skills are read-only.",
 		noContent: "No text content is available.",
-		import: "Import from GitHub",
-		importSubmit: "Import skill",
-		github: "owner/repository/path or an HTTPS GitHub URL",
 		conflict:
 			"This Skill changed while you were editing. Your draft is preserved. Copy your changes before discarding and reloading.",
 		failed: "The change could not be confirmed. Check the current Skill before retrying.",
 		title: "Skills",
-		empty: "No skills are available for this account.",
 	},
 	memories: {
 		learnedFromSession: LIBRARY_COPY.learnedFromSession,
@@ -778,7 +632,6 @@ export const en = {
 		all: "All projects",
 		choose: "Choose a project",
 		sharing: "Manage sharing",
-		leave: "Leave project",
 		create: "New project",
 		edit: "Edit project",
 		name: "Project name",
@@ -792,23 +645,7 @@ export const en = {
 		shared: "Shared",
 	},
 	sharing: {
-		joinLink: "Join using an invite link",
-		joinDescription:
-			"Paste an HTTPS invite link to preview it against your configured Clawdi server. Joining grants project membership but does not attach an Agent. The link is cleared when you leave or background the app.",
-		pasteLink: "Invite link",
-		invalidLink: "Enter a valid HTTPS project invite link.",
-		preview: "Preview project",
-		joined: "Joined. The project is now available in your project list.",
-		joinFailed:
-			"This link may be invalid, expired, revoked, or belong to your own project. Check your project list before retrying a join.",
 		vaults: "Vaults",
-		received: "Project invitations",
-		receivedDescription:
-			"Review projects shared with you. Accepting adds membership; it does not automatically attach any Agent.",
-		noInvitations: "No pending invitations.",
-		accept: "Accept invitation",
-		decline: "Decline invitation",
-		responseFailed: "The invitation may have changed or expired. Refresh before trying again.",
 		unavailable: "Only the owner of an active user-created project can manage sharing.",
 		email: "Existing account email",
 		label: "Link label (optional)",

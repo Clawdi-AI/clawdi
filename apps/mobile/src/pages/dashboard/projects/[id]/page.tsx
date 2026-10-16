@@ -4,12 +4,14 @@ import {
 	agentOverviewCopy,
 	displayProjectName,
 	identityFor,
+	leaveProjectTitle,
 	OVERVIEW_COPY,
 	PROJECT_LOCAL_TABS,
 	projectDetailDescription,
+	projectSharingFormCopy,
 	SHARING_COPY,
 } from "@clawdi/shared/view";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { router, useLocalSearchParams } from "expo-router";
 import ArrowRight from "lucide-react-native/icons/arrow-right";
 import Plus from "lucide-react-native/icons/plus";
@@ -31,6 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
+import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppPressable } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
 import { ProjectVaultCatalog } from "@/components/vault/project-vault-catalog";
@@ -40,6 +43,7 @@ import { useI18n } from "@/lib/i18n";
 import { projectRouteFilter, routeParam } from "@/lib/route-params";
 import { SkillRow, useCloudSkills } from "@/pages/dashboard/skills/page";
 import { accountQueryKey, useAccountRead, useAccountScope } from "@/platform/account-lifecycle";
+import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeSegments } from "@/platform/navigation/segmented-control";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 
@@ -69,6 +73,9 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 	const scope = useAccountScope();
 	const read = useAccountRead();
 	const { sharing } = useMobileApi();
+	const cache = useQueryClient();
+	const confirmationDialog = useConfirmation();
+	const leaveAction = useAuthAction(scope);
 	const query = useProject(id);
 	const project = query.data?.id === id && !query.isError ? query.data : undefined;
 	const skills = useCloudSkills(id, "", Boolean(id && tab === "skills"));
@@ -91,6 +98,31 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 			]
 		: [];
 	const identity = identityFor(project ? displayProjectName(project) : "");
+	// Web's viewer panel: a shared project is left from its detail page.
+	const leave = (shared: { id: string; name: string }) => {
+		const signal = scope.signal;
+		confirmationDialog.show(
+			leaveProjectTitle(shared.name),
+			projectSharingFormCopy.leaveDescription,
+			[
+				{ text: projectSharingFormCopy.cancel, style: "cancel" },
+				{
+					text: projectSharingFormCopy.leave,
+					style: "destructive",
+					className: projectDetailClasses.destructiveButton,
+					onPress: () => {
+						if (signal.aborted || !scope.isCurrent()) return;
+						return leaveAction.runOrThrow(async (current) => {
+							await read((s) => sharing.leaveProject(shared.id, s), signal);
+							if (!current()) return;
+							await cache.invalidateQueries({ queryKey: accountQueryKey(scope) });
+							if (current()) router.replace("/projects");
+						});
+					},
+				},
+			],
+		);
+	};
 
 	const cells: ReactElement[] = project
 		? tab === "skills"
@@ -172,7 +204,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 									? [
 											{
 												id: "sharing",
-												label: t("projects.sharing"),
+												label: SHARING_COPY.manage,
 												onPress: () =>
 													router.push({
 														pathname: "/projects/[id]/sharing",
@@ -181,9 +213,25 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 											},
 										]
 									: []),
+								...(project.is_owner === false
+									? [
+											{
+												id: "leave",
+												label: leaveAction.busy
+													? projectSharingFormCopy.leaving
+													: projectSharingFormCopy.leave,
+												disabled: leaveAction.busy,
+												destructive: true,
+												onPress: () => leave({ id: project.id, name: displayProjectName(project) }),
+											},
+										]
+									: []),
 							],
 						}}
 					/>
+					{leaveAction.error ? (
+						<ApiErrorPanel error={leaveAction.failure} title={projectSharingFormCopy.leaveFailed} />
+					) : null}
 					<NativeSegments
 						compact
 						value={tab}
@@ -372,6 +420,7 @@ function ProjectHub({ id, initialTab }: { id?: string; initialTab: string }) {
 					onLoadMore={() => void skills.fetchNextPage().catch(() => undefined)}
 				/>
 			)}
+			{confirmationDialog.dialog}
 		</SafeAreaScreen>
 	);
 }

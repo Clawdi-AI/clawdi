@@ -26,6 +26,7 @@ export const skillFormCopy = {
 	chooseProject: "Choose a project…",
 	copy: "Copy skill",
 	move: "Move skill",
+	sendFailed: "Couldn't copy or move skill",
 } as const;
 
 export function createSkillDescription(project: ProjectMetadata) {
@@ -34,6 +35,27 @@ export function createSkillDescription(project: ProjectMetadata) {
 
 export function sendSkillTitle(name: string) {
 	return `Copy or move ${name}`;
+}
+
+/** `sourceRemoved` is null for a copy and false when a move kept its source. */
+export function sendSkillResult(
+	sourceRemoved: boolean | null,
+	skillName: string,
+	targetLabel = "the destination",
+) {
+	return {
+		title:
+			sourceRemoved === true
+				? "Skill moved"
+				: sourceRemoved === false
+					? "Skill copied, but not removed"
+					: "Skill copied",
+		description:
+			`${skillName} is now available in ${targetLabel}.` +
+			(sourceRemoved === false
+				? " It couldn't be removed from the source; remove it after checking the new copy."
+				: ""),
+	};
 }
 
 export { skillRemovalDescription, skillRemovalTitle } from "./skill-transfer-dialog";

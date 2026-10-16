@@ -4,7 +4,6 @@ import {
 	type components,
 	type PublicSessionView,
 	publicSessionId,
-	publicSessionInput,
 } from "@clawdi/shared/api";
 import { detailLayoutClasses, publicSessionClasses as styles } from "@clawdi/shared/ui";
 import { formatCount, publicSessionScopeLabel, relativeTime } from "@clawdi/shared/view";
@@ -15,15 +14,12 @@ import MessageSquare from "lucide-react-native/icons/message-square";
 import { useEffect, useRef, useState } from "react";
 import { AppState, Share } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
-import { PageHeader } from "@/components/page-header";
 import { SessionTimelineRowView } from "@/components/sessions/message-list";
 import { AgentInline, DetailMeta, DetailStats, ModelBadge, Stat } from "@/components/sessions/meta";
 import { MessagesSkeleton } from "@/components/sessions/skeleton";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { NativeList } from "@/components/ui/native-list";
 import { Text } from "@/components/ui/text";
-import { AppScrollView } from "@/components/ui/view";
 import { WebText, WebView } from "@/components/ui/web-layout";
 import { useMobileApi } from "@/lib/api-provider";
 import { useMobileRuntimeConfig } from "@/lib/config/runtime";
@@ -34,42 +30,6 @@ import { useAuthAction } from "@/platform/auth/use-auth-action";
 import { NativeHeader } from "@/platform/navigation/native-header";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
-
-export function OpenShareScreen() {
-	const t = useI18n();
-	const router = useRouter();
-	const [value, setValue] = useState("");
-	const id = publicSessionInput(value);
-	return (
-		<SafeAreaScreen>
-			<AppScrollView contentContainerStyle={{ padding: 16 }}>
-				<WebView recipe={styles.page} className="px-0">
-					<PageHeader
-						title={t("sessionDetail.openShare")}
-						description={t("sessionDetail.inputHelp")}
-					/>
-					<Input
-						accessibilityLabel={t("sessionDetail.link")}
-						value={value}
-						onChangeText={setValue}
-						autoCapitalize="none"
-						autoCorrect={false}
-						maxLength={2048}
-						placeholder="clawdi://s/…"
-					/>
-					<Button
-						disabled={!id}
-						onPress={() => {
-							if (id) router.push({ pathname: "/s/[id]", params: { id: id } });
-						}}
-					>
-						<Text>{t("sessionDetail.openShare")}</Text>
-					</Button>
-				</WebView>
-			</AppScrollView>
-		</SafeAreaScreen>
-	);
-}
 
 type Page = components["schemas"]["SessionMessagesPage"];
 export function PublicSessionScreen() {

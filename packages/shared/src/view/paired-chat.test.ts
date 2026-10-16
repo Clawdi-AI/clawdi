@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
+import { pairedChatScopeLabel, pairedChatTitle } from "./paired-chat";
 
 describe("pairedChatTitle", () => {
 	test("uses only the chat name when one is available", () => {

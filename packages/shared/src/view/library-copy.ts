@@ -83,6 +83,16 @@ export const LIBRARY_COPY = {
 	noMemories: "No memories yet",
 	emptyMemories: "Create one, or your agents will create them automatically as they work.",
 	noMemoryMatches: "No matches — try a different search or category.",
+	emptyMemoriesTable:
+		"No memories yet. Create one above, or your agents will create them automatically as they work.",
+	sharedAcrossAgents: "Shared across all agents",
+	memoriesSharedAcrossAgents:
+		"Memories and provider settings belong to this account. Changes here affect all agents.",
+	memorySharedAcrossAgents: "This memory belongs to the account. Changes here affect all agents.",
+	connectorsSharedAcrossAgents:
+		"Connections belong to this account. Connecting or disconnecting here affects all agents.",
+	connectorSharedAcrossAgents:
+		"Connections and names belong to this account. Changes here affect all agents.",
 	noVaults: "No vaults yet",
 	emptyVaults: "Create a vault to group API keys for your agents.",
 	yourConnections: "Your connections",
@@ -119,6 +129,38 @@ export const LIBRARY_COPY = {
 	category: "Category",
 	projectFormDescription: "Group skills and vaults in a project.",
 } as const;
+export const SKILLS_LIST_COPY = {
+	title: "Skills",
+	searchProject: "Search this project…",
+	loadFailed: "Couldn't load skills",
+	readOnlyTitle: "Read-only project",
+	readOnlyDescription:
+		"You can view these skills. Only the project owner can add, edit, copy, move, or remove them.",
+	projectUnavailableTitle: "Project unavailable",
+	projectUnavailableDescription:
+		"Choose another project. It may have been archived or your access may have changed.",
+	emptyProjects: "Create a project to bundle skills and vault access for agents.",
+	importLabel: "Repository or skill path",
+	importPlaceholder: "owner/repository/path-to-skill",
+	importSubmit: "Import skill",
+	importing: "Importing…",
+	imported: "Skill imported",
+	importFailed: "Couldn't import skill",
+} as const;
+export function skillsEmptyMessage({ search, writable }: { search: string; writable: boolean }) {
+	if (search) return "No skills in this project match that search.";
+	return writable
+		? "No skills yet. Add one with instructions or import one from GitHub."
+		: "No skills are in this project yet.";
+}
+export function importSkillDescription(project: ProjectMetadata) {
+	return `Copy a GitHub skill into ${displayProjectName(project)}. This project owns the imported copy.`;
+}
+export function projectsEmptyDescription(search: string) {
+	return search
+		? `Nothing matches “${search}”. Try a different search.`
+		: LIBRARY_COPY.emptyProjects;
+}
 export const PROJECT_LOCAL_TABS = [
 	{ id: "overview", label: "Overview" },
 	{ id: "skills", label: "Skills" },
@@ -136,6 +178,7 @@ export const SHARING_COPY = {
 	createLink: "Create invite link",
 	linkDescription: "Anyone with the link can preview and join this project.",
 	manage: "Manage sharing",
+	shareProject: "Share project",
 	stop: "Stop all sharing",
 	email: "Enter email address",
 	invite: "Invite",
@@ -149,7 +192,60 @@ export const VAULT_REQUEST_COPY = {
 	privacy: "Only these fields will be saved. Anyone with vault access can use them.",
 	done: "Your secrets are saved. Send this message to your agent to continue.",
 	multiline: "Multiline value hidden",
+	brand: "Clawdi",
+	loading: "Loading request…",
+	loadFailed: "Couldn't load this request. Try again.",
+	offline: "Couldn't connect. Try again.",
+	tryAgain: "Try again",
+	updateNote: "Fields marked Update replace existing values when you save.",
+	update: "Update",
+	fieldName: "Field name",
+	remove: "Remove",
+	addField: "Add field",
+	importEnv: "Import .env",
+	dotenvText: "Dotenv text",
+	applyImport: "Apply import",
+	cancelImport: "Cancel import",
+	invalidNames:
+		"Use valid, distinct field names (letters, numbers, dots, underscores, and hyphens).",
+	fieldsLimit: "Use valid, distinct field names and at most 32 fields total.",
+	selectionConflict:
+		"Selected fields changed or are reserved. Remove added fields or ask your agent for a new link.",
+	saveFailed: "Couldn't save. Supply every requested field and try again.",
+	saveUncertain:
+		"Save couldn't be confirmed. Ask your agent to check the request status before trying again.",
+	save: "Save secrets",
+	saving: "Saving…",
+	copyMessage: "Copy message for agent",
+	copying: "Copying…",
+	copied: "Copied",
+	copyFailed: "Couldn't copy. Select and copy the message above manually.",
 } as const;
+export function vaultRequestSection(section: string) {
+	return `Section: ${section}`;
+}
+export function vaultRequestExpires(iso: string) {
+	return `Expires ${new Date(iso).toLocaleString()}`;
+}
+export const VAULT_SECRET_REQUESTS_COPY = {
+	title: "Recent secret requests",
+	label: "Secret requests",
+	loadFailed: "Couldn't load secret requests.",
+	retry: "Retry",
+	noSection: "No section",
+	status: {
+		pending: "Awaiting input",
+		supplied: "Supplied",
+		expired: "Expired",
+		conflict: "Credentials changed",
+	},
+} as const;
+export function vaultSecretRequestMeta(
+	row: { section?: string | null; project_name: string; expires_at: string },
+	formatDate: (iso: string) => string = (iso) => new Date(iso).toLocaleString(),
+) {
+	return `${row.section || VAULT_SECRET_REQUESTS_COPY.noSection} · ${row.project_name} · Expires ${formatDate(row.expires_at)}`;
+}
 export function buildVaultSupplyAgentMessage(requestId: string) {
 	return `I've saved the requested credentials. Please check Vault request ${requestId}; once its status is supplied, continue our previous task using existing authorized capabilities. Do not include secret values in chat.`;
 }

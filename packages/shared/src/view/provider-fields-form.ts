@@ -28,7 +28,23 @@ export const providerRemovalCopy = {
 	remove: "Remove provider",
 	checking: "Checking affected agents…",
 	cancel: "Cancel",
+	removed: "Provider removed",
+	removedPending:
+		"Local access is removed immediately. Upstream ChatGPT revocation will finish asynchronously.",
+	removedConfirmed: "Local access is removed immediately.",
+	removeFailed: "Couldn't remove provider",
 };
+export const providerSaveCopy = {
+	saveFailed: "Couldn't save provider",
+	updateFailed: "Couldn't update provider",
+} as const;
+export function providerRemovalTitle(label: string) {
+	return `Remove ${label}?`;
+}
+/** ChatGPT-backed providers revoke their upstream grant on removal. */
+export function providerRemovalRevokesChatGpt(auth: { type: string; tool?: string | null }) {
+	return (auth.type === "agent_profile" && auth.tool === "codex") || auth.type === "oauth_profile";
+}
 export const providerOAuthCopy = {
 	code: "One-time code",
 	open: "Open ChatGPT and enter code",

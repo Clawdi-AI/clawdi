@@ -21,7 +21,9 @@ import {
 	vaultKeyFormCopy as formCopy,
 	identityFor,
 	splitVaultTitle,
+	transferVaultKeysFailed,
 	transferVaultKeysLabel,
+	transferVaultKeysResult,
 	transferVaultKeysTitle,
 	vaultImportActionLabel,
 	vaultImportConflictHint,
@@ -62,7 +64,7 @@ import { Text } from "@/components/ui/text";
 import { useConfirmation } from "@/components/ui/use-confirmation";
 import { AppView } from "@/components/ui/view";
 import { WebText, WebView, webBoth, webView } from "@/components/ui/web-layout";
-import { VaultRequests } from "@/components/vault/secret-requests";
+import { VaultSecretRequests } from "@/components/vault/secret-requests";
 import { VaultSplit } from "@/components/vault/split-vault-dialog";
 import { useVaultCatalog } from "@/components/vault/vaults-surface";
 import { useMobileApi } from "@/lib/api-provider";
@@ -75,7 +77,7 @@ import { useSheet } from "@/platform/navigation/use-sheet";
 import { SafeAreaScreen } from "@/platform/safe-area-screen";
 import { useForegroundLease } from "@/platform/use-foreground-lease";
 
-type VaultForm = "add-keys" | "transfer" | "split" | "requests";
+type VaultForm = "add-keys" | "transfer" | "split";
 export function VaultDetailScreen({
 	projectId: scopedProject,
 	form,
@@ -196,9 +198,7 @@ function VaultDetail({
 						? "/vault/[slug]/add-keys"
 						: next === "split"
 							? "/vault/[slug]/split"
-							: next === "requests"
-								? "/vault/[slug]/requests"
-								: "/vault/[slug]/transfer",
+							: "/vault/[slug]/transfer",
 				params: {
 					slug: identity.slug,
 					vaultId: identity.id,
@@ -218,8 +218,9 @@ function VaultDetail({
 	const [saved, setSaved] = useState(false);
 	const [selected, setSelected] = useState<VaultKeySelection[]>(selection);
 	const [splitResult, setSplitResult] = useState<VaultSplitResult>();
-	const [transferResult, setTransferResult] =
-		useState<Awaited<ReturnType<typeof transferVaultKeys>>>();
+	const [transferResult, setTransferResult] = useState<
+		Awaited<ReturnType<typeof transferVaultKeys>> & { mode: "copy" | "move"; targetSlug: string }
+	>();
 	const capture = useForegroundLease();
 	useFocusEffect(
 		useCallback(() => {
@@ -307,6 +308,17 @@ function VaultDetail({
 			sections.refetch(),
 		]);
 	};
+	const execute = (
+		visible: () => boolean,
+		perform: (isCurrent: () => boolean) => Promise<void>,
+		reportSuccess: boolean,
+	) =>
+		action.runOrThrow(async (isCurrent) => {
+			setSaved(false);
+			setTransferResult(undefined);
+			await perform(() => isCurrent() && visible());
+			if (isCurrent() && visible() && reportSuccess) setSaved(true);
+		});
 	const confirm = (
 		title: string,
 		warning: string,
@@ -325,12 +337,7 @@ function VaultDetail({
 				style: destructive ? "destructive" : "default",
 				onPress: () => {
 					if (signal.aborted || !scope.isCurrent() || !visible()) return;
-					return action.runOrThrow(async (isCurrent) => {
-						setSaved(false);
-						setTransferResult(undefined);
-						await perform(() => isCurrent() && visible());
-						if (isCurrent() && visible() && reportSuccess) setSaved(true);
-					});
+					return execute(visible, perform, reportSuccess);
 				},
 			},
 		]);
@@ -376,10 +383,11 @@ function VaultDetail({
 		const targetName = creatingDestination ? newVaultName.trim() : target?.name;
 		const targetSlug = newVaultSlug;
 		const keys = selected.filter((key) => sections.data?.[key.section]?.includes(key.name));
-		if (keys.length !== selected.length) return;
-		confirm(
-			t(mode === "move" ? "vault.moveSelected" : "vault.copySelected"),
-			`${keys.length} → ${targetName}\n\n${t(mode === "move" ? "vault.moveWarning" : "vault.selectedCopyWarning")}`,
+		const visible = capture();
+		if (keys.length !== selected.length || !writable || action.busy || !visible()) return;
+		// Like Web's copy/move dialog, the submit button is the confirmation.
+		void execute(
+			visible,
 			async (isCurrent) => {
 				const resolvedTarget =
 					target ??
@@ -397,7 +405,7 @@ function VaultDetail({
 					isCurrent,
 				});
 				if (!isCurrent()) return;
-				setTransferResult(result);
+				setTransferResult({ ...result, mode, targetSlug: resolvedTarget.slug });
 
 				setNewVaultName("");
 				setSelected([]);
@@ -408,9 +416,8 @@ function VaultDetail({
 					}),
 				]);
 			},
-			mode === "move",
 			false,
-		);
+		).catch(() => undefined);
 	};
 	const split = (groups: VaultPrefixGroup[], removeOriginals: boolean) => {
 		if (!identity || !validVaultSplit(identity, groups)) return;
@@ -452,7 +459,6 @@ function VaultDetail({
 		onChange: setKeySearch,
 		placeholder: t("libraryPort.searchKeys"),
 	});
-	if (form === "requests" && current) return <VaultRequests current={current} />;
 	if (form)
 		return (
 			<SheetPage
@@ -461,9 +467,7 @@ function VaultDetail({
 						? formCopy.addTitle
 						: form === "transfer"
 							? transferVaultKeysTitle(transferMode, selected.length)
-							: form === "split"
-								? splitVaultTitle(current?.name ?? "")
-								: t("vault.requestCreate")
+							: splitVaultTitle(current?.name ?? "")
 				}
 				description={
 					form === "add-keys"
@@ -608,9 +612,6 @@ function VaultDetail({
 								</Text>
 							</Button>
 						</WebView>
-						<Button variant="outline" onPress={() => openForm("requests")}>
-							<Text>{t("vault.requestCreate")}</Text>
-						</Button>
 					</WebView>
 				) : form === "transfer" ? (
 					<WebView recipe={copyKeysDialogClasses.body}>
@@ -696,18 +697,21 @@ function VaultDetail({
 						onReset={() => setSplitResult(undefined)}
 					/>
 				) : null}
-				{action.error || closeError ? <ApiErrorPanel error={action.error ?? closeError} /> : null}
+				{action.error || closeError ? (
+					<ApiErrorPanel
+						error={action.error ? action.failure : closeError}
+						title={
+							action.error && form === "transfer"
+								? transferVaultKeysFailed(transferMode)
+								: undefined
+						}
+					/>
+				) : null}
 				{saved ? <Text>{t("vault.saved")}</Text> : null}
 				{transferResult ? (
-					<Text>
-						{t("vault.copiedCount")}: {transferResult.copied}
-						{transferResult.failed.length
-							? ` · ${t("vault.copyUnconfirmed")}: ${transferResult.failed.join(", ")}`
-							: ""}
-						{transferResult.sourceRemoveFailed.length
-							? ` · ${t("vault.cleanupUnconfirmed")}: ${transferResult.sourceRemoveFailed.join(", ")}`
-							: ""}
-					</Text>
+					<Alert title={transferVaultKeysResult(transferResult).title}>
+						{transferVaultKeysResult(transferResult).description}
+					</Alert>
 				) : null}
 				{confirmationDialog.dialog}
 			</SheetPage>
@@ -927,6 +931,7 @@ function VaultDetail({
 											: undefined
 									}
 								/>
+								{current.is_owner ? <VaultSecretRequests current={current} /> : null}
 								<WebView recipe={vaultDetailClasses.section}>
 									<WebView recipe={vaultDetailClasses.sectionHeading}>
 										<WebView recipe={vaultDetailClasses.headingRow}>
@@ -994,15 +999,9 @@ function VaultDetail({
 						{action.error ? <ApiErrorPanel error={action.failure} /> : null}
 						{saved ? <Text>{t("vault.saved")}</Text> : null}
 						{transferResult ? (
-							<Text>
-								{t("vault.copiedCount")}: {transferResult.copied}
-								{transferResult.failed.length
-									? ` · ${t("vault.copyUnconfirmed")}: ${transferResult.failed.join(", ")}`
-									: ""}
-								{transferResult.sourceRemoveFailed.length
-									? ` · ${t("vault.cleanupUnconfirmed")}: ${transferResult.sourceRemoveFailed.join(", ")}`
-									: ""}
-							</Text>
+							<Alert title={transferVaultKeysResult(transferResult).title}>
+								{transferVaultKeysResult(transferResult).description}
+							</Alert>
 						) : null}
 						{writable ? (
 							<Button variant="outline" size="sm" onPress={() => openForm("split")}>
@@ -1024,7 +1023,4 @@ export function VaultTransferPage() {
 }
 export function VaultSplitPage() {
 	return <VaultDetailScreen form="split" />;
-}
-export function VaultRequestsPage() {
-	return <VaultDetailScreen form="requests" />;
 }

@@ -72,8 +72,7 @@ export const vaultKeyFormCopy = {
 	chooseVault: "Choose a vault…",
 	copyDescription:
 		"Each key becomes an independent copy — changing a value later updates only one vault, not both.",
-	moveDescription:
-		"Values stay server-side. Move is a non-atomic copy followed by deletion; partial results are possible. Avoid editing these keys concurrently.",
+	moveDescription: "Values stay server-side; the originals are removed from this vault.",
 	referenceBefore: "Just want these keys available in another Project? Use ",
 	referenceAction: "Link vault",
 	referenceAfter: " on this vault instead — one source of truth, changes apply everywhere.",
@@ -84,6 +83,32 @@ export function transferVaultKeysTitle(mode: "copy" | "move", count: number) {
 }
 export function transferVaultKeysLabel(mode: "copy" | "move", count: number) {
 	return `${mode === "move" ? "Move" : "Copy"} ${count} ${count === 1 ? "key" : "keys"}`;
+}
+
+export function transferVaultKeysResult({
+	mode,
+	copied,
+	failed,
+	sourceRemoveFailed,
+	targetSlug,
+}: {
+	mode: "copy" | "move";
+	copied: number;
+	failed: readonly string[];
+	sourceRemoveFailed: readonly string[];
+	targetSlug: string;
+}) {
+	const cleanupFailed = sourceRemoveFailed.length > 0;
+	return {
+		title: `${copied} ${copied === 1 ? "key" : "keys"} ${mode === "move" && !cleanupFailed ? "moved" : "copied"}`,
+		description:
+			`Now in vault://${targetSlug}.` +
+			(cleanupFailed ? ` Source not removed: ${sourceRemoveFailed.join(", ")}.` : "") +
+			(failed.length > 0 ? ` Failed: ${failed.join(", ")}.` : ""),
+	};
+}
+export function transferVaultKeysFailed(mode: "copy" | "move") {
+	return `Couldn't ${mode} keys`;
 }
 
 export function vaultMoveWarning(name: string, count: number) {

@@ -36,7 +36,6 @@
 		"expo-network": "57.0.2",
 		"expo-router": "catalog:expo57",
 		"expo-secure-store": "57.0.4",
-		"expo-sharing": "catalog:expo57",
 		"expo-splash-screen": "57.0.10",
 		"expo-status-bar": "57.0.1",
 		"expo-system-ui": "catalog:expo57",

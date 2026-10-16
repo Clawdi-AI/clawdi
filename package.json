@@ -53,7 +53,6 @@
 				"expo": "57.0.30",
 				"expo-file-system": "57.0.7",
 				"expo-router": "57.0.28",
-				"expo-sharing": "57.0.23",
 				"expo-system-ui": "57.0.4",
 				"react": "19.2.3",
 				"react-dom": "19.2.3",

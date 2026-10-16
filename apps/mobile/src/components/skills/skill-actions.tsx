@@ -21,7 +21,7 @@ import { useForegroundLease } from "@/platform/use-foreground-lease";
 
 type Skill = components["schemas"]["SkillSummaryResponse"];
 
-/** Card-level entry points retain fresh capability/revision checks and safe archive transfer. */
+/** Card-level entry points retain fresh capability/revision checks and safe copy/move. */
 export function SkillCardActions({ skill, project }: { skill: Skill; project: Project }) {
 	const t = useI18n(),
 		scope = useAccountScope(),
@@ -56,7 +56,7 @@ export function SkillCardActions({ skill, project }: { skill: Skill; project: Pr
 							label={LIBRARY_COPY.copyOrMove}
 							onSelect={() => {
 								router.push({
-									pathname: "/skills/[key]/archive",
+									pathname: "/skills/[key]/send",
 									params: { key: skill.skill_key, projectId: project.id },
 								});
 							}}

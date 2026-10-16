@@ -1,5 +1,6 @@
 "use client";
 
+import { providerLinkReplacementCopy } from "@clawdi/shared/view";
 import type { ReactElement } from "react";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -18,17 +19,16 @@ export function ProviderLinkReplacementConfirm({
 	children: ReactElement;
 }) {
 	const providerLabel = providerMeta(provider).label;
+	const replacement = providerLinkReplacementCopy(providerLabel);
 	return (
 		<div data-hosted="true" data-v2="true" className="contents">
 			<ConfirmAction
 				title={
-					onAddWithoutLinking
-						? `How should this ${providerLabel} bot be added?`
-						: `Replace this agent's ${providerLabel} link?`
+					onAddWithoutLinking ? `How should this ${providerLabel} bot be added?` : replacement.title
 				}
 				description={
 					<>
-						This agent can link only one {providerLabel} bot.{" "}
+						{replacement.limit}{" "}
 						{onAddWithoutLinking ? (
 							<>
 								Add{" "}
@@ -39,16 +39,16 @@ export function ProviderLinkReplacementConfirm({
 							</>
 						) : (
 							<>
-								Linking{" "}
+								{replacement.linkingBefore}
 								<span className="font-medium text-foreground [overflow-wrap:anywhere]">
 									{targetName}
-								</span>{" "}
-								will replace the current bot and remove its paired chats.
+								</span>
+								{replacement.linkingAfter}
 							</>
 						)}
 					</>
 				}
-				confirmLabel={`Replace ${providerLabel} link`}
+				confirmLabel={replacement.confirm}
 				secondaryAction={
 					onAddWithoutLinking
 						? { label: "Add without linking", onAction: onAddWithoutLinking }

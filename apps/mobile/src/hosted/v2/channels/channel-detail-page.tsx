@@ -16,20 +16,33 @@ import {
 } from "@clawdi/shared/ui";
 import {
 	agentDisplayName,
+	agentSectionHref,
 	agentSurfaceCopy,
 	channelFormCopy,
 	channelRemovalCopy,
 	channelRemovalTitle,
 	channelDetailCopy as copy,
+	pairedChatKindLabel,
+	pairedChatScopeLabel,
+	pairedChatsCopy,
+	pairedChatsDescription,
+	pairedChatsLoadFailed,
+	pairedChatTitle,
 	pairingCommandsDescription,
+	providerLinkReplacementCopy,
 	providerMeta,
 	publishedCommandsLabel,
 	relativeTime,
 	supportsPairingCommands,
+	unpairChatTitle,
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import ArrowUpRight from "lucide-react-native/icons/arrow-up-right";
 import KeyRound from "lucide-react-native/icons/key-round";
+import Link2Off from "lucide-react-native/icons/link-2-off";
+import MessageCircle from "lucide-react-native/icons/message-circle";
+import MessagesSquare from "lucide-react-native/icons/messages-square";
 import RefreshCw from "lucide-react-native/icons/refresh-cw";
 import TriangleAlert from "lucide-react-native/icons/triangle-alert";
 import Unplug from "lucide-react-native/icons/unplug";
@@ -37,17 +50,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, Linking } from "react-native";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
-import {
-	ActionButton,
-	ChoiceSelect as NativePicker,
-	NativeSwitch,
-} from "@/components/dashboard/controls";
+import { ActionButton, ChoiceSelect as NativePicker } from "@/components/dashboard/controls";
 import { EmptyState } from "@/components/empty-state";
 import { EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { SectionLabel } from "@/components/section-label";
+import { Alert } from "@/components/ui/alert";
 import { Icon } from "@/components/ui/icon";
 import { Label } from "@/components/ui/input";
 import { NativeList } from "@/components/ui/native-list";
@@ -123,15 +133,14 @@ function ChannelDetail({
 		busy: action.busy,
 	});
 	const [agentId, setAgentId] = useState(initialAgentId ?? "");
-	const [replace, setReplace] = useState(false);
 	const [tab, setTab] = useState("activity");
 	const [commands, setCommands] = useState<
 		components["schemas"]["ChannelCommandSyncResponse"] | null
 	>(null);
 	const [pairing, setPairing] = useState<ChannelPairing | null>(null);
-	const [notice, setNotice] = useState<"done" | "cleanupWarning" | "unpairNotConfirmed" | null>(
-		null,
-	);
+	// Web reports results with toasts; mobile keeps the failed action's title and any unpair warning.
+	const [failureTitle, setFailureTitle] = useState<string>();
+	const [unpairWarning, setUnpairWarning] = useState<string | null>(null);
 	const pool = useChannelQuery(["pool"], (api, signal) => api.pool(signal));
 	const owned = useChannelQuery(["owned"], (api, signal) => api.list(signal));
 	const ownedBot = owned.isError ? undefined : owned.data?.find((item) => item.id === id);
@@ -188,12 +197,7 @@ function ChannelDetail({
 	);
 	const disabled = !ready || action.busy;
 	const linkDisabled =
-		disabled ||
-		ownership.isFetching ||
-		ownership.isError ||
-		!selected ||
-		unknown ||
-		(replacement && !replace);
+		disabled || ownership.isFetching || ownership.isError || !selected || unknown;
 	const clearPairing = useCallback(() => setPairing(null), []);
 	useFocusEffect(useCallback(() => clearPairing, [clearPairing]));
 	useEffect(() => {
@@ -216,16 +220,17 @@ function ChannelDetail({
 		await cache.invalidateQueries({ queryKey: accountQueryKey(scope, "channels") });
 	};
 	const perform = (
+		title: string,
 		operation: (signal: AbortSignal) => Promise<unknown>,
 		after?: () => void | Promise<void>,
 	) =>
 		action.runOrThrow(async (current) => {
 			const visible = capture();
 			if (!ready || !visible()) return;
-			setNotice(null);
+			setFailureTitle(title);
+			setUnpairWarning(null);
 			await read(operation);
 			if (!current() || !visible()) return;
-			setNotice("done");
 			setPairing(null);
 			await refresh();
 			if (current() && visible()) await after?.();
@@ -259,6 +264,7 @@ function ChannelDetail({
 				: channelRemovalCopy.description,
 			() =>
 				perform(
+					channelRemovalCopy.removeFailed,
 					(signal) => channels.remove(id ?? "", signal),
 					() => router.replace("/channels"),
 				),
@@ -308,6 +314,7 @@ function ChannelDetail({
 		action.run(async (current) => {
 			const visible = capture();
 			if (!ready || !visible() || !linkId || !pairLink || !bot?.capabilities.pair_chat) return;
+			setFailureTitle(copy.pairFailed);
 			setPairing(null);
 			const code = await read((signal) => channels.pair(id ?? "", linkId, signal));
 			if (
@@ -356,23 +363,9 @@ function ChannelDetail({
 									})),
 								]}
 								disabled={disabled || agents.isError || ownership.isFetching || ownership.isError}
-								onValueChange={(value) => {
-									setAgentId(value);
-									setReplace(false);
-								}}
+								onValueChange={setAgentId}
 							/>
 						</WebView>
-						{replacement ? (
-							<>
-								<AppText>{t("channels.replaceWarning")}</AppText>
-								<NativeSwitch
-									label={t("channels.replace")}
-									value={replace}
-									onValueChange={setReplace}
-									disabled={disabled}
-								/>
-							</>
-						) : null}
 						<WebView recipe={channelFormClasses.field}>
 							<ActionButton
 								label={t("account.cancel")}
@@ -384,30 +377,43 @@ function ChannelDetail({
 								}
 							/>
 							<ActionButton
-								label={t("channels.link")}
+								label={action.busy ? copy.linking : channelFormCopy.linkTitle}
 								disabled={linkDisabled}
 								onPress={() => {
 									if (linkDisabled) return;
-									void perform(
-										(signal) => channels.link(id ?? "", agentId, replacement && replace, signal),
-										async () => {
-											setReplace(false);
-											await sheet.close(true);
-										},
-									).catch(() => undefined);
+									const link = () =>
+										perform(
+											copy.linkFailed,
+											(signal) => channels.link(id ?? "", agentId, replacement, signal),
+											() => sheet.close(true),
+										).catch(() => undefined);
+									if (!replacement) return void link();
+									// Web's ProviderLinkReplacementConfirm.
+									const replace = providerLinkReplacementCopy(providerMeta(bot.provider).label);
+									confirm(
+										replace.title,
+										`${replace.limit} ${replace.linkingBefore}${bot.name}${replace.linkingAfter}`,
+										link,
+										replace.confirm,
+									);
 								}}
 							/>
 						</WebView>
 						{ownership.isError ? (
 							<ApiErrorPanel error={ownership.error} onRetry={() => void ownership.refetch()} />
 						) : null}
-						{action.error ? <ApiErrorPanel error={t("channels.failed")} /> : null}
+						{action.error ? <ApiErrorPanel error={action.failure} title={failureTitle} /> : null}
 					</>
 				) : pool.isPending || owned.isPending ? (
 					<Skeleton className={webView(styles.activitySkeleton)} />
 				) : (
-					<ApiErrorPanel error={t("channels.failed")} onRetry={() => void pool.refetch()} />
+					<ApiErrorPanel
+						error={pool.error ?? owned.error}
+						title={agentSurfaceCopy.couldnTLoadChannels}
+						onRetry={() => void pool.refetch()}
+					/>
 				)}
+				{confirmationDialog.dialog}
 			</SheetPage>
 		);
 	if (mode === "pair") {
@@ -431,11 +437,11 @@ function ChannelDetail({
 						/>
 					) : null}
 					<ActionButton
-						label={t("channels.pair")}
+						label={copy.pairChat}
 						disabled={disabled || !pairLink || !bot?.capabilities.pair_chat}
 						onPress={() => void generate()}
 					/>
-					{action.error ? <ApiErrorPanel error={t("channels.failed")} /> : null}
+					{action.error ? <ApiErrorPanel error={action.failure} title={failureTitle} /> : null}
 				</WebView>
 			</SheetPage>
 		);
@@ -459,19 +465,9 @@ function ChannelDetail({
 							title={linkedAgent ? agentDisplayName(linkedAgent) : t("agents.unavailable")}
 							meta={[t("channels.linkedAt", { time: relativeTime(link.created_at) })]}
 						/>
-						<ActionButton
-							label={t("channels.bindings")}
-							disabled={disabled}
-							onPress={() =>
-								router.push({
-									pathname: "/channels/[id]/chats",
-									params: { id: id ?? "", linkId: link.id },
-								})
-							}
-						/>
 						{bot?.capabilities.pair_chat ? (
 							<ActionButton
-								label={t("channels.pair")}
+								label={copy.pairChat}
 								disabled={disabled}
 								onPress={() =>
 									router.push({
@@ -482,7 +478,13 @@ function ChannelDetail({
 							/>
 						) : null}
 						<ActionButton
-							label={t("channels.unlink")}
+							label={copy.openAgentChannels}
+							icon={<Icon as={ArrowUpRight} />}
+							variant="ghost"
+							onPress={() => router.push(agentSectionHref(link.agent_id, "channels"))}
+						/>
+						<ActionButton
+							label={copy.unlink}
 							icon={<Icon as={Unplug} />}
 							variant="ghost"
 							disabled={disabled}
@@ -490,7 +492,10 @@ function ChannelDetail({
 								confirm(
 									copy.unlinkTitle,
 									copy.unlinkDescription,
-									() => perform((signal) => channels.unlink(id ?? "", link.id, signal)),
+									() =>
+										perform(copy.unlinkFailed, (signal) =>
+											channels.unlink(id ?? "", link.id, signal),
+										),
 									copy.unlink,
 								)
 							}
@@ -498,46 +503,66 @@ function ChannelDetail({
 					</AppView>
 				);
 			}) ?? [];
-	const bindingCards =
-		bindings.data
-			?.filter((binding) => binding.agent_link_id === linkId)
-			.map((binding) => (
-				<AppView key={binding.id} className={webView(ENTITY_CARD_BASE)}>
-					<AppText selectable>
-						{binding.external_chat_name ?? binding.external_chat_id} · {binding.status}
-					</AppText>
-					<ActionButton
-						label={t("channels.unpair")}
-						disabled={disabled}
-						onPress={() =>
-							confirm(t("channels.unpair"), t("channels.unpairWarning"), () =>
+	const pairedChats =
+		bindings.data?.filter(
+			(binding) => binding.agent_link_id === linkId && binding.status.toLowerCase() === "active",
+		) ?? [];
+	const bindingCards = pairedChats.map((binding) => {
+		const chatName = pairedChatTitle(binding, provider);
+		const privateChat =
+			binding.external_chat_type?.toLowerCase() === "private" ||
+			pairedChatScopeLabel(provider, binding) === "direct message";
+		return (
+			<AppView key={binding.id} className={webView(ENTITY_CARD_BASE)}>
+				<EntityHeader
+					align="start"
+					icon={
+						<IconChip size="sm">
+							<Icon as={privateChat ? MessageCircle : MessagesSquare} />
+						</IconChip>
+					}
+					title={binding.external_chat_name?.trim() || binding.external_chat_id}
+					meta={[
+						pairedChatKindLabel(provider, binding),
+						binding.last_message_at
+							? `Last activity ${relativeTime(binding.last_message_at)}`
+							: null,
+					]}
+				/>
+				<ActionButton
+					label={pairedChatsCopy.unpair}
+					icon={<Icon as={Link2Off} />}
+					variant="ghost"
+					disabled={disabled}
+					onPress={() =>
+						confirm(
+							unpairChatTitle(chatName),
+							pairedChatsCopy.unpairDescription,
+							() =>
 								action.runOrThrow(async (current) => {
 									const visible = capture();
 									if (!ready || !visible()) return;
+									setFailureTitle(pairedChatsCopy.unpairFailed);
+									setUnpairWarning(null);
 									const result = await read((signal) =>
 										channels.unpair(id ?? "", binding.id, signal),
 									);
 									if (!current() || !visible()) return;
-									setNotice(
-										!result.unpaired
-											? "unpairNotConfirmed"
-											: result.warning ||
-													result.notification_status === "failed" ||
-													result.provider_cleanup_status === "failed"
-												? "cleanupWarning"
-												: "done",
-									);
+									if (!result.unpaired) throw new Error("Chat not unpaired");
+									setUnpairWarning(result.warning ?? null);
 									await refresh();
 								}),
-							)
-						}
-					/>
-				</AppView>
-			)) ?? [];
+							pairedChatsCopy.unpairConfirm,
+						)
+					}
+				/>
+			</AppView>
+		);
+	});
 	if (mode === "chats")
 		return (
 			<SheetPage
-				title={t("channels.bindings")}
+				title={pairedChatsCopy.title}
 				fallback={id ? `/channels/${encodeURIComponent(id)}` : "/channels"}
 				busy={action.busy}
 				sheet={sheet}
@@ -551,20 +576,27 @@ function ChannelDetail({
 					onRefresh={() => void bindings.refetch()}
 					header={
 						<>
-							<AppText>{bot?.name ?? ownedBot?.name}</AppText>
-							{notice ? (
-								<AppText accessibilityRole="alert">{t(`channels.${notice}`)}</AppText>
+							<AppText className="font-medium">{bot?.name ?? ownedBot?.name}</AppText>
+							<AppText className="text-muted-foreground">
+								{pairedChatsDescription(pairedChats.length)}
+							</AppText>
+							{unpairWarning ? (
+								<Alert title={pairedChatsCopy.unpaired}>{unpairWarning}</Alert>
 							) : null}
-							{action.error ? <ApiErrorPanel error={t("channels.failed")} /> : null}
+							{action.error ? <ApiErrorPanel error={action.failure} title={failureTitle} /> : null}
 						</>
 					}
 					empty={
 						bindings.isPending ? (
 							<Skeleton className={webView(styles.activitySkeleton)} />
 						) : bindings.isError ? (
-							<ApiErrorPanel error={bindings.error} onRetry={() => void bindings.refetch()} />
+							<ApiErrorPanel
+								error={bindings.error}
+								title={pairedChatsLoadFailed(provider)}
+								onRetry={() => void bindings.refetch()}
+							/>
 						) : (
-							<EmptyState title={t("channels.noBindings")} />
+							<EmptyState variant="inset" description={pairedChatsCopy.empty} />
 						)
 					}
 				/>
@@ -658,25 +690,24 @@ function ChannelDetail({
 								issue={ownedBot?.connection_issue ?? bot?.connection_issue}
 							/>
 						) : null}
-						{action.error ||
-						links.isError ||
-						activity.isError ||
-						pool.isError ||
-						agents.isError ||
-						agentLinks.isError ? (
+						{action.error ? (
+							<ApiErrorPanel error={action.failure} title={failureTitle} />
+						) : links.isError ? (
 							<ApiErrorPanel
-								error={
-									action.error ??
-									links.error ??
-									activity.error ??
-									pool.error ??
-									agents.error ??
-									agentLinks.error
-								}
-								title={t("channels.failed")}
+								error={links.error}
+								title={copy.loadLinkedAgentsFailed}
+								onRetry={() => void links.refetch()}
+							/>
+						) : activity.isError || pool.isError || agents.isError ? (
+							<ApiErrorPanel
+								error={activity.error ?? pool.error ?? agents.error}
+								onRetry={() => {
+									void activity.refetch();
+									void pool.refetch();
+									void agents.refetch();
+								}}
 							/>
 						) : null}
-						{notice ? <AppText accessibilityRole="alert">{t(`channels.${notice}`)}</AppText> : null}
 						{(bot?.provider ?? ownedBot?.provider) === "discord" ? (
 							<WebView recipe={styles.notice}>
 								<WebView recipe={styles.noticeHeader} className="flex-row">
@@ -756,6 +787,7 @@ function ChannelDetail({
 												let published: components["schemas"]["ChannelCommandSyncResponse"] | null =
 													null;
 												void perform(
+													copy.syncFailed,
 													async (signal) => {
 														published = await channels.syncCommands(id ?? "", signal);
 														return published;

@@ -53,12 +53,9 @@ test("provider metadata changes preserve identity, auth and label-only PATCH; fa
 		async fetch(request) {
 			expect(request.headers.get("authorization")).toBe("Bearer fixture");
 			const path = new URL(request.url).pathname;
-			requests.push({
-				method: request.method,
-				path,
-				body: request.method === "PATCH" ? await request.json() : null,
-			});
-			if (path.endsWith("/validate"))
+			const body = request.method === "PATCH" ? await request.json() : null;
+			requests.push({ method: request.method, path, body });
+			if (body?.label === "Conflict")
 				return Response.json({ detail: "private server diagnostic" }, { status: 409 });
 			return Response.json({ providers: [] });
 		},
@@ -71,11 +68,13 @@ test("provider metadata changes preserve identity, auth and label-only PATCH; fa
 		});
 		await client.list();
 		await client.update("connection/a?b", { label: "Work" });
-		await expect(client.validate("connection/a?b")).rejects.toMatchObject({ status: 409 });
+		await expect(client.update("connection/a?b", { label: "Conflict" })).rejects.toMatchObject({
+			status: 409,
+		});
 		expect(requests).toEqual([
 			{ method: "GET", path: "/v1/ai-providers", body: null },
 			{ method: "PATCH", path: "/v1/ai-providers/connection%2Fa%3Fb", body: { label: "Work" } },
-			{ method: "POST", path: "/v1/ai-providers/connection%2Fa%3Fb/validate", body: null },
+			{ method: "PATCH", path: "/v1/ai-providers/connection%2Fa%3Fb", body: { label: "Conflict" } },
 		]);
 	} finally {
 		server.stop(true);

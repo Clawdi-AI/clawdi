@@ -6,9 +6,12 @@ import {
 	displayProjectName,
 	formatResourceCount,
 	getProjectResourceDefinition,
+	importSkillDescription,
 	isCustomProject,
 	isProjectOwner,
 	LIBRARY_COPY,
+	SKILLS_LIST_COPY,
+	skillsEmptyMessage,
 	skillsPageDescription,
 } from "@clawdi/shared/view";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -88,7 +91,10 @@ function SkillsPageSkeleton() {
 				</>
 			) : (
 				<>
-					<PageHeader title="Skills" description={SKILLS_RESOURCE.managementDescription} />
+					<PageHeader
+						title={SKILLS_LIST_COPY.title}
+						description={SKILLS_RESOURCE.managementDescription}
+					/>
 					<div className={HERO_GRID_CLASS}>
 						{Array.from({ length: 3 }).map((_, index) => (
 							<ProjectResourceCardSkeleton key={index} />
@@ -236,7 +242,7 @@ function SkillsPageInner() {
 				<PageHeaderSkeleton actions />
 			) : (
 				<PageHeader
-					title="Skills"
+					title={SKILLS_LIST_COPY.title}
 					description={skillsPageDescription(selectedProject ?? undefined)}
 					actions={
 						selectedProject ? (
@@ -252,11 +258,11 @@ function SkillsPageInner() {
 									<>
 										<Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
 											<ImportIcon />
-											Import from GitHub
+											{LIBRARY_COPY.importSkill}
 										</Button>
 										<Button size="sm" onClick={() => setCreateOpen(true)}>
 											<Plus />
-											Add skill
+											{LIBRARY_COPY.addSkill}
 										</Button>
 									</>
 								) : null}
@@ -296,10 +302,8 @@ function SkillsPageInner() {
 
 			{staleProject ? (
 				<Alert>
-					<AlertTitle>Project unavailable</AlertTitle>
-					<AlertDescription>
-						Choose another project. It may have been archived or your access may have changed.
-					</AlertDescription>
+					<AlertTitle>{SKILLS_LIST_COPY.projectUnavailableTitle}</AlertTitle>
+					<AlertDescription>{SKILLS_LIST_COPY.projectUnavailableDescription}</AlertDescription>
 				</Alert>
 			) : null}
 
@@ -327,7 +331,7 @@ function SkillsPageInner() {
 									void setSearch(v);
 									void setPage(1);
 								}}
-								placeholder="Search this project…"
+								placeholder={SKILLS_LIST_COPY.searchProject}
 							/>
 						}
 						filters={
@@ -344,11 +348,8 @@ function SkillsPageInner() {
 
 					{!writable ? (
 						<Alert>
-							<AlertTitle>Read-only project</AlertTitle>
-							<AlertDescription>
-								You can view these skills. Only the project owner can add, edit, copy, move, or
-								remove them.
-							</AlertDescription>
+							<AlertTitle>{SKILLS_LIST_COPY.readOnlyTitle}</AlertTitle>
+							<AlertDescription>{SKILLS_LIST_COPY.readOnlyDescription}</AlertDescription>
 						</Alert>
 					) : null}
 
@@ -356,20 +357,14 @@ function SkillsPageInner() {
 						<ApiErrorPanel
 							error={skillsError}
 							onRetry={() => void skillsQuery.refetch()}
-							title="Couldn't load skills"
+							title={SKILLS_LIST_COPY.loadFailed}
 						/>
 					) : null}
 
 					<SkillCardGrid
 						skills={skills}
 						isLoading={skillsQuery.isLoading}
-						emptyMessage={
-							search.trim()
-								? "No skills in this project match that search."
-								: writable
-									? "No skills yet. Add one with instructions or import one from GitHub."
-									: "No skills are in this project yet."
-						}
+						emptyMessage={skillsEmptyMessage({ search: search.trim(), writable })}
 						capabilitiesFor={(skill) => skillCapabilities(skill, selectedProject)}
 						actionsFor={(skill) =>
 							LibrarySkillInstallAction && skill.authority === "cloud" ? (
@@ -451,12 +446,12 @@ function ProjectSelection({
 		return (
 			<EmptyState
 				icon={FolderKanban}
-				description="Create a project to bundle skills and vault access for agents."
+				description={SKILLS_LIST_COPY.emptyProjects}
 				action={
 					<CreateProjectDialog onCreated={onProjectCreated}>
 						<Button>
 							<Plus />
-							Create project
+							{LIBRARY_COPY.createProject}
 						</Button>
 					</CreateProjectDialog>
 				}
@@ -465,7 +460,7 @@ function ProjectSelection({
 	}
 	return (
 		<section className={skillsPageClasses.projectChooser}>
-			<h2 className={skillsPageClasses.projectChooserHeading}>Choose a project</h2>
+			<h2 className={skillsPageClasses.projectChooserHeading}>{LIBRARY_COPY.chooseProject}</h2>
 			<div className={HERO_GRID_CLASS}>
 				{projects.map((project) => (
 					<ProjectResourceCard
@@ -520,10 +515,10 @@ function ImportSkillDialog({
 			void queryClient.invalidateQueries({ queryKey: ["skills", "project", project.id] });
 			void queryClient.invalidateQueries({ queryKey: ["get", "/v1/projects"] });
 			onOpenChange(false);
-			toast.success("Skill imported");
+			toast.success(SKILLS_LIST_COPY.imported);
 		},
 		onError: (error) =>
-			toast.error("Couldn't import skill", { description: normalizeApiError(error) }),
+			toast.error(SKILLS_LIST_COPY.importFailed, { description: normalizeApiError(error) }),
 	});
 	return (
 		<Dialog
@@ -538,11 +533,8 @@ function ImportSkillDialog({
 		>
 			<DialogContent>
 				<DialogHeader>
-					<DialogTitle>Import from GitHub</DialogTitle>
-					<DialogDescription>
-						Copy a GitHub skill into {displayProjectName(project)}. This project owns the imported
-						copy.
-					</DialogDescription>
+					<DialogTitle>{LIBRARY_COPY.importSkill}</DialogTitle>
+					<DialogDescription>{importSkillDescription(project)}</DialogDescription>
 				</DialogHeader>
 				<form
 					className="space-y-4"
@@ -552,24 +544,24 @@ function ImportSkillDialog({
 					}}
 				>
 					<div className="space-y-1.5">
-						<Label htmlFor="github-skill-source">Repository or skill path</Label>
+						<Label htmlFor="github-skill-source">{SKILLS_LIST_COPY.importLabel}</Label>
 						<Input
 							id="github-skill-source"
 							value={source}
 							autoFocus
 							onChange={(event) => setSource(event.target.value)}
-							placeholder="owner/repository/path-to-skill"
+							placeholder={SKILLS_LIST_COPY.importPlaceholder}
 							autoComplete="off"
 							spellCheck={false}
 						/>
 					</div>
 					<DialogFooter>
 						<Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-							Cancel
+							{LIBRARY_COPY.cancel}
 						</Button>
 						<Button type="submit" disabled={!source.trim() || importSkill.isPending}>
 							{importSkill.isPending ? <Spinner /> : <ImportIcon />}
-							{importSkill.isPending ? "Importing…" : "Import skill"}
+							{importSkill.isPending ? SKILLS_LIST_COPY.importing : SKILLS_LIST_COPY.importSubmit}
 						</Button>
 					</DialogFooter>
 				</form>

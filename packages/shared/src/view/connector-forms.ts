@@ -22,3 +22,31 @@ export function connectorConnectTitle(name: string) {
 export function connectorDisconnectTitle(name: string) {
 	return `Disconnect ${name}?`;
 }
+
+export const connectorDetailCopy = {
+	ready: "Ready",
+	connected: "Connected",
+	noAccountRequired: "No account required",
+	checkingAccounts: "Checking accounts",
+	noAuthDescription: "This connector does not require an account connection.",
+	noAuthEmpty: "No account connection is required.",
+	loadConnectionsFailed: "Couldn't load connections",
+	unsupportedTitle: "Connection unavailable",
+	unsupported: "This connector uses an authentication method Clawdi does not support.",
+	setupBlockedTitle: "Connector unavailable",
+	setupBlocked: "Additional configuration is required. Contact support to continue.",
+	noAccounts: "No connected accounts yet.",
+} as const;
+
+export function connectedAccountsLabel(count: number) {
+	return `${count} connected`;
+}
+
+export function connectorsEmptyCopy(query: string) {
+	return query
+		? { title: "No matches", description: `Nothing matches "${query}".` }
+		: {
+				title: "No connectors available",
+				description: "Connectors aren't available for this account yet.",
+			};
+}

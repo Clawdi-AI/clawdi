@@ -1,4 +1,9 @@
 import type { SessionListItem } from "../api";
+import {
+	SEARCH_QUERY_MAX_LENGTH,
+	SEARCH_QUERY_MIN_LENGTH,
+	searchQueryLength,
+} from "../consts/search-query";
 import { formatSessionSummary, recencyBucketFor } from "./utils";
 
 export function groupSessionsByRecency(
@@ -49,6 +54,15 @@ export const SESSION_LIST_COPY = {
 	empty: "No sessions yet. Once your agent has a conversation, it'll show up here.",
 	filteredEmpty: "No sessions match your filters.",
 } as const;
+
+/** Web's inline hint while the typed search is too short or too long to run. */
+export function sessionSearchQueryError(query: string): string | null {
+	const length = searchQueryLength(query.trim());
+	if (length > 0 && length < SEARCH_QUERY_MIN_LENGTH)
+		return `Type at least ${SEARCH_QUERY_MIN_LENGTH} characters`;
+	if (length > SEARCH_QUERY_MAX_LENGTH) return `Type at most ${SEARCH_QUERY_MAX_LENGTH} characters`;
+	return null;
+}
 
 export function sessionListEmptyMessage(query: string, filtered: boolean, displayQuery = query) {
 	return query
