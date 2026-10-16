@@ -108,7 +108,7 @@ def test_installed_sdk_outgoing_capture_has_only_clerk_identity_and_no_system_da
 
     import posthog as sdk
 
-    assert version("posthog") == "7.39.2"
+    assert version("posthog") == "7.67.0"
     outgoing = []
     enriched_keys = set()
     real_client = sdk.Posthog
@@ -139,7 +139,7 @@ def test_installed_sdk_outgoing_capture_has_only_clerk_identity_and_no_system_da
             event_key="agent",
             timestamp=timestamp,
         )
-        # v7.39.2 enriches captures with Python/OS context, but does not add $ip.
+        # v7.67.0 enriches captures with Python/OS context, but does not add $ip.
         assert {"$python_runtime", "$python_version", "$os", "$os_version"} <= enriched_keys
         assert "$ip" not in enriched_keys
         assert len(outgoing) == 1
@@ -153,7 +153,7 @@ def test_installed_sdk_outgoing_capture_has_only_clerk_identity_and_no_system_da
                 posthog.event_insert_id("agent_connected", "user_clerk_fixture", "agent")
             ),
             "$lib": "posthog-python",
-            "$lib_version": "7.39.2",
+            "$lib_version": "7.67.0",
             "$geoip_disable": True,
             "$is_server": True,
         }
