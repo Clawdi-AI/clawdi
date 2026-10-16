@@ -13,6 +13,7 @@
 		"icons": "bun scripts/app-icons.ts"
 	},
 	"dependencies": {
+		"@babel/runtime": "catalog:expo57",
 		"@clawdi/shared": "workspace:*",
 		"@clerk/expo": "4.10.0",
 		"@expo-google-fonts/geist": "0.4.2",

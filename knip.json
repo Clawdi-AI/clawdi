@@ -56,7 +56,11 @@
 		"apps/mobile": {
 			"entry": ["src/app/**/*.{ts,tsx}", "scripts/**/*.ts", "src/**/*.test.{ts,tsx}"],
 			"project": ["src/**/*.{ts,tsx}", "scripts/**/*.ts"],
-			"ignoreDependencies": ["@expo-google-fonts/geist", "@expo-google-fonts/geist-mono"]
+			"ignoreDependencies": [
+				"@babel/runtime",
+				"@expo-google-fonts/geist",
+				"@expo-google-fonts/geist-mono"
+			]
 		},
 		"packages/cli": {
 			"entry": [

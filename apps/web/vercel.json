@@ -1,6 +1,6 @@
 {
 	"framework": "tanstack-start",
-	"installCommand": "bun install --frozen-lockfile",
+	"installCommand": "bunx bun@1.4.2 install --frozen-lockfile",
 	"rewrites": [
 		{
 			"source": "/_cdi/px/static/:path*",
