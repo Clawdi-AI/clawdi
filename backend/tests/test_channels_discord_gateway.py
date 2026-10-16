@@ -1474,8 +1474,17 @@ def test_discord_gateway_terminal_alias_failure_does_not_block_later_event(monke
     )
     calls: list[str] = []
     missing_calls = 0
-    rate_limited = threading.Event()
+    retry_scheduled = threading.Event()
+    original_dequeue = discord_router.dequeue_discord_gateway_events
     now = 0.0
+
+    async def observe_retry_scheduled(*args, **kwargs):
+        # The next inbox query happens after the Gateway records the retry
+        # deadline. Signalling in the provider races that deadline calculation
+        # with the test thread advancing the clock.
+        if missing_calls == 2:
+            retry_scheduled.set()
+        return await original_dequeue(*args, **kwargs)
 
     async def provider_request(*, account, method: str, path: str, **kwargs):
         nonlocal missing_calls
@@ -1484,7 +1493,6 @@ def test_discord_gateway_terminal_alias_failure_does_not_block_later_event(monke
         if channel_id == "missing-channel":
             missing_calls += 1
             if missing_calls == 2:
-                rate_limited.set()
                 raise HTTPException(
                     status_code=429,
                     detail="provider detail must stay private",
@@ -1505,13 +1513,14 @@ def test_discord_gateway_terminal_alias_failure_does_not_block_later_event(monke
 
     monkeypatch.setattr(discord_router, "request_discord_provider", provider_request)
     monkeypatch.setattr(discord_router, "monotonic", lambda: now)
+    monkeypatch.setattr(discord_router, "dequeue_discord_gateway_events", observe_retry_scheduled)
 
     with TestClient(app) as sync_client:
         with sync_client.websocket_connect("/v1/channels/discord/gateway") as websocket:
             websocket.receive_json()
             websocket.send_json({"op": 2, "d": {"token": "valid-discord-token", "intents": 0}})
             frames = [websocket.receive_json() for _ in range(3)]
-            assert rate_limited.wait(1)
+            assert retry_scheduled.wait(1)
             now = 7200.4
             websocket.send_json({"op": 1, "d": frames[-1]["s"]})
             assert websocket.receive_json() == {"op": 11, "d": None}

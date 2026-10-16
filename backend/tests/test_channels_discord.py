@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -406,6 +407,63 @@ async def test_discord_account_config_url_error_does_not_leak_validator_detail(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "url", "scheme"),
+    [
+        ("api_base_url", "https://empty..invalid", "https"),
+        ("gateway_url", f"wss://{'a' * 64}.invalid", "wss"),
+    ],
+)
+async def test_discord_account_config_rejects_invalid_dns_labels(
+    client: httpx.AsyncClient,
+    key: str,
+    url: str,
+    scheme: str,
+):
+    response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-config-invalid-host",
+            "provider_token": "discord-token",
+            "config": {**_discord_ready_config(), key: url},
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": f"discord {key} must be a public {scheme} URL"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["api_base_url", "gateway_url"])
+@pytest.mark.parametrize("error", [TimeoutError, socket.gaierror])
+async def test_discord_account_config_url_dns_failure_is_retryable(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+    error: type[OSError],
+):
+    def failed_dns(*_args: object) -> None:
+        raise error("internal-resolver-detail-must-not-escape")
+
+    monkeypatch.setattr(socket, "getaddrinfo", failed_dns)
+    url = "wss://gateway.example" if key == "gateway_url" else "https://discord-provider.example"
+    response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": "discord",
+            "name": "discord-config-dns-failure",
+            "provider_token": "discord-token",
+            "config": {**_discord_ready_config(), key: url},
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    assert "internal-resolver-detail-must-not-escape" not in response.text
+
+
+@pytest.mark.asyncio
 async def test_discord_proxy_url_error_does_not_leak_validator_detail(
     client: httpx.AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -418,11 +476,11 @@ async def test_discord_proxy_url_error_does_not_leak_validator_detail(
     )
     marker = "127.0.0.1 signed_url=https://internal.invalid/?signature=secret"
 
-    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+    def reject_sensitive_url(_url: str, *, label: str) -> None:
         assert label == "discord api base url"
         raise UnsafeOutboundUrlError(marker)
 
-    monkeypatch.setattr(shared_router, "validate_channel_http_url", reject_sensitive_url)
+    monkeypatch.setattr(shared_router, "validate_channel_provider_base_url", reject_sensitive_url)
 
     response = await client.get(
         "/v1/channels/discord/v10/guilds/discord-sensitive-guild",

@@ -8,6 +8,7 @@ from app.services.safe_public_http import (
     SafePublicHttpDnsError,
     SafePublicHttpDnsTimeout,
     UnsafePublicHttpUrlError,
+    parse_public_http_url,
     resolve_public_http_target,
 )
 
@@ -16,6 +17,10 @@ _CHANNEL_WEBSOCKET_SCHEMES = frozenset({"wss"})
 
 
 class UnsafeOutboundUrlError(ValueError):
+    pass
+
+
+class OutboundUrlResolutionError(Exception):
     pass
 
 
@@ -65,6 +70,22 @@ async def validate_channel_http_url(url: str, *, label: str) -> None:
     )
 
 
+def validate_channel_provider_base_url(url: str, *, label: str) -> None:
+    """Validate operator configuration without a redundant DNS lookup before HTTPX connects."""
+    try:
+        parse_public_http_url(url, allowed_schemes=_CHANNEL_HTTP_SCHEMES)
+    except UnsafePublicHttpUrlError:
+        raise UnsafeOutboundUrlError(f"{label} must be a public https URL") from None
+
+
+def validate_channel_provider_gateway_url(url: str, *, label: str) -> None:
+    """Validate operator configuration before the WebSocket transport resolves DNS."""
+    try:
+        parse_public_http_url(url, allowed_schemes=_CHANNEL_WEBSOCKET_SCHEMES)
+    except UnsafePublicHttpUrlError:
+        raise UnsafeOutboundUrlError(f"{label} must be a public wss URL") from None
+
+
 async def validate_channel_websocket_url(url: str, *, label: str) -> None:
     await validate_outbound_url(
         url,
@@ -91,7 +112,7 @@ async def validate_outbound_url(
             message = f"{label} must use {_scheme_list(schemes)}"
         raise UnsafeOutboundUrlError(message) from None
     except (SafePublicHttpDnsError, SafePublicHttpDnsTimeout):
-        raise UnsafeOutboundUrlError(f"{label} could not resolve to a public host") from None
+        raise OutboundUrlResolutionError(f"{label} could not resolve to a public host") from None
 
 
 def _scheme_list(schemes: set[str]) -> str:

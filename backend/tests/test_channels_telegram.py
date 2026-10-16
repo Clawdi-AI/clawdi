@@ -1109,6 +1109,37 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("error", [TimeoutError, socket.gaierror])
+async def test_telegram_set_webhook_dns_failure_is_retryable(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[OSError],
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "telegram-webhook-dns-failure"},
+        )
+    ).json()
+
+    def failed_dns(*_args: object) -> None:
+        raise error("internal-resolver-detail-must-not-escape")
+
+    monkeypatch.setattr(socket, "getaddrinfo", failed_dns)
+    response = await client.post(
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
+        json={"url": "https://agent-hook.example/hook"},
+    )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "1"
+    assert "internal-resolver-detail-must-not-escape" not in response.text
+    assert response.json()["ok"] is False
+    assert response.json()["error_code"] == 503
+
+
+@pytest.mark.asyncio
 async def test_telegram_command_sync_rejects_malformed_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1120,11 +1151,7 @@ async def test_telegram_command_sync_rejects_malformed_success(
     def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
         return real_client(transport=httpx.MockTransport(provider_handler))
 
-    async def allow_test_url(_url: str, *, label: str) -> None:
-        assert label == "telegram api base url"
-
     monkeypatch.setattr(channel_service.httpx, "AsyncClient", client_factory)
-    monkeypatch.setattr(channel_service, "validate_channel_http_url", allow_test_url)
     ciphertext, nonce = encrypt_optional_token("telegram-token")
     account = ChannelAccount(
         provider="telegram",
@@ -1182,11 +1209,11 @@ async def test_telegram_proxy_url_error_does_not_leak_validator_detail(
     await db_session.commit()
     marker = "169.254.169.254 Authorization: Bot proxy-secret"
 
-    async def reject_sensitive_url(_url: str, *, label: str) -> None:
+    def reject_sensitive_url(_url: str, *, label: str) -> None:
         assert label == "telegram api base url"
         raise UnsafeOutboundUrlError(marker)
 
-    monkeypatch.setattr(telegram_router, "validate_channel_http_url", reject_sensitive_url)
+    monkeypatch.setattr(telegram_router, "validate_channel_provider_base_url", reject_sensitive_url)
 
     response = await client.post(
         _telegram_bot_path(created, "getMe"),
@@ -2392,11 +2419,7 @@ async def test_telegram_legacy_oversized_shadow_does_not_block_cleanup_or_pair_r
     def client_factory(*_args: object, **_kwargs: object) -> httpx.AsyncClient:
         return real_client(transport=transport)
 
-    async def allow_test_url(_url: str, *, label: str) -> None:
-        assert label == "telegram api base url"
-
     monkeypatch.setattr(telegram_router.httpx, "AsyncClient", client_factory)
-    monkeypatch.setattr(telegram_router, "validate_channel_http_url", allow_test_url)
     db = AsyncMock(spec=AsyncSession)
     db.get.return_value = link
 
@@ -6930,11 +6953,7 @@ async def test_telegram_provider_429_preserves_official_retry_after(
                 },
             )
 
-    async def allow_test_url(*_args, **_kwargs):
-        return None
-
     monkeypatch.setattr(channel_service.httpx, "AsyncClient", RateLimitedTelegramClient)
-    monkeypatch.setattr(channel_service, "validate_channel_http_url", allow_test_url)
 
     with pytest.raises(HTTPException) as caught:
         await channel_service._post_provider_json(

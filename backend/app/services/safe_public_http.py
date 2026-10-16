@@ -101,6 +101,10 @@ def parse_public_http_url(
     schemes = frozenset(scheme.lower() for scheme in allowed_schemes)
     try:
         candidate = url if isinstance(url, httpx.URL) else httpx.URL(url.strip())
+        hostname = candidate.raw_host.decode("ascii")
+        # Match the resolver's IDNA validation, including empty/oversized
+        # ASCII labels that HTTPX accepts without encoding.
+        hostname.encode("idna")
     except (TypeError, ValueError, httpx.InvalidURL):
         raise UnsafePublicHttpUrlError("invalid") from None
     port = candidate.port
@@ -111,7 +115,7 @@ def parse_public_http_url(
         or (port is not None and not 1 <= port <= 65535)
     ):
         raise UnsafePublicHttpUrlError("invalid")
-    if is_private_hostname(candidate.raw_host.decode("ascii")):
+    if is_private_hostname(hostname):
         raise UnsafePublicHttpUrlError("private_host")
     return candidate
 
@@ -146,12 +150,13 @@ async def _resolve_public_addresses(
     except ValueError:
         try:
             infos = await asyncio.wait_for(
-                asyncio.to_thread(
-                    socket.getaddrinfo,
+                # Let the event loop use its native resolver. In uvloop this
+                # avoids queueing DNS behind application to_thread work.
+                asyncio.get_running_loop().getaddrinfo(
                     hostname,
                     port,
-                    socket.AF_UNSPEC,
-                    socket.SOCK_STREAM,
+                    family=socket.AF_UNSPEC,
+                    type=socket.SOCK_STREAM,
                 ),
                 timeout=timeout_seconds,
             )

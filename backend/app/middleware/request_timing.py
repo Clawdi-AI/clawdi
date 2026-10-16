@@ -30,6 +30,8 @@ _CONTENT_EVENTS_STREAM_STATE = "_request_content_events_stream"
 # breakdown. Connector route fetch includes SDK/cache waits and normalization,
 # not only vendor HTTP. Response building excludes FastAPI wire serialization.
 # Telegram provider time includes pool waits, TCP/TLS and RTT.
+# Telegram URL validation measures synchronous URL parsing and public-host
+# checks; it excludes DNS, which belongs to the provider transport stage.
 # MCP body read includes JSON parsing; dispatch spans the entire sequential
 # batch, including tool work and upstream waits, not just bridge overhead.
 # Classification and FastAPI response serialization are outside dispatch.

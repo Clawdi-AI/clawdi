@@ -300,9 +300,12 @@ async def test_telegram_route_stage_timings(
             raise HTTPException(500, "test auth failure")
         return SimpleNamespace(account=account, link=SimpleNamespace(id=uuid4())), "token"
 
-    async def validate(_url):
+    validate_provider_base_url = telegram._validate_telegram_provider_base_url
+
+    def validate(url):
         nonlocal elapsed
         elapsed += 0.023
+        validate_provider_base_url(url)
         if outcome == "validation_failure":
             raise RuntimeError("test validation failure")
 
