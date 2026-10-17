@@ -1,5 +1,5 @@
 import type { onlineManager } from "@tanstack/react-query";
-import type { AppState } from "react-native";
+import type { AppStateStatus } from "react-native";
 import type { PurchaseFlow, PurchaseOutcome } from "./purchase-flow";
 
 export type StoreRefreshOptions = Readonly<{ recover: boolean }>;
@@ -24,7 +24,9 @@ export function subscribeStoreRefresh({
 	abort,
 }: {
 	refresh: (options: StoreRefreshOptions) => Promise<void>;
-	appState: Pick<typeof AppState, "addEventListener">;
+	appState: {
+		addEventListener(type: "change", listener: (state: AppStateStatus) => void): { remove(): void };
+	};
 	online: Pick<typeof onlineManager, "subscribe">;
 	abort: () => void;
 }): () => void {
