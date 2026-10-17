@@ -834,8 +834,10 @@ exec /usr/bin/systemctl "$@"
 					runUserSystemctl("show", unitName, "--property=MainPID", "--value").stdout,
 				);
 				expect(pid).toBeGreaterThan(1);
-				expect(pid).not.toBe(firstPids.get(unitName));
-				expect(readFileSync(`/proc/${pid}/environ`, "utf8").split("\0")).toContain(
+				// Native official base refreshes are reload-only; Clawdi must not restart
+				// an active gateway just because the installer changed base-unit bytes.
+				expect(pid).toBe(firstPids.get(unitName));
+				expect(readFileSync(`/proc/${pid}/environ`, "utf8").split("\0")).not.toContain(
 					"CLAWDI_TEST_NATIVE_REFRESH=1",
 				);
 				expect(runUserSystemctl("show", unitName, "--property=NeedDaemonReload").stdout).toContain(
@@ -2360,8 +2362,9 @@ WantedBy=default.target
 			10,
 		);
 		expect(repairedPid).toBeGreaterThan(1);
-		// Native unit adoption does not bypass proof that changed content was activated.
-		expect(repairedPid).not.toBe(tamperedPid);
+		// Tenant edits to an official base unit are native-owned and do not require
+		// a Clawdi restart when the Clawdi drop-in and environment are unchanged.
+		expect(repairedPid).toBe(tamperedPid);
 		expect((await converge()).installErrors).toEqual([]);
 		expect(runUserSystemctl("show", unitName, "--property=MainPID").stdout.trim()).toBe(
 			`MainPID=${repairedPid}`,
