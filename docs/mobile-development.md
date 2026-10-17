@@ -954,6 +954,10 @@ See the [SDK 58 changelog](https://expo.dev/changelog/sdk-58).
   not start; errors are still reported. Its optional Expo Router store import
   logs a Metro warning
   ([getsentry/sentry-react-native#6901](https://github.com/getsentry/sentry-react-native/issues/6901)).
+  In development builds, `@expo/log-box` inside the Terminal DOM component
+  imports `react-dom` without declaring it. Bun's isolated linker then resolves
+  Web's hoisted `react-dom`, so its error toasts fail with "Invalid hook call".
+  The terminal is unaffected, and production DOM bundles contain one React.
 
 ### Release configuration
 
