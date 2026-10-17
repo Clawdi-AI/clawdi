@@ -1,0 +1,42 @@
+#!/bin/sh
+# Metadata only. Run as postgres in the backup accessory, never the DB server.
+set -eu
+
+case "${PGBACKREST_STANZA:-}" in
+    ''|*[!a-zA-Z0-9_-]*) echo 'Invalid PGBACKREST_STANZA' >&2; exit 1 ;;
+esac
+dir=${PGBACKREST_STATUS_DIR:-/var/run/clawdi-db-status}
+# The host directory must already be writable by the image's postgres UID.
+umask 077
+tmp=$(mktemp "$dir/.$PGBACKREST_STANZA.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+
+# Record repository unavailability without copying command diagnostics into JSON.
+# This writer setting is not a pgBackRest option; its environment parser would
+# otherwise prepend a warning to stdout before applying log-level-console.
+info=$(unset PGBACKREST_STATUS_DIR; pgbackrest --log-level-console=off info --output=json) || info=null
+# psql variables are SQL-quoted using :'name'; interpolation requires stdin,
+# rather than -c. Timeouts and read-only mode apply to every SQL statement.
+PGCONNECT_TIMEOUT=10 \
+PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=10000' \
+psql -XAtq -v ON_ERROR_STOP=1 -v info="$info" -v stanza="$PGBACKREST_STANZA" \
+    -h "${PGBACKREST_PG1_SOCKET_PATH:-/var/run/postgresql}" \
+    -U "${PGBACKREST_PG1_USER:-postgres}" -d postgres > "$tmp" <<'SQL'
+SELECT json_build_object(
+    'schema', 1, 'stanza', :'stanza', 'generated_at', clock_timestamp(),
+    'pgbackrest', :'info'::json,
+    'databases', (SELECT json_agg(json_build_object(
+        'datid', datid, 'datname', datname,
+        'checksum_failures', checksum_failures,
+        'checksum_last_failure', checksum_last_failure
+    ) ORDER BY datid) FROM pg_stat_database),
+    'archiver', (SELECT json_build_object(
+        'failed_count', failed_count, 'last_failed_wal', last_failed_wal,
+        'last_failed_time', last_failed_time, 'last_archived_time', last_archived_time
+    ) FROM pg_stat_archiver)
+);
+SQL
+test -s "$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" "$dir/$PGBACKREST_STANZA.json"
