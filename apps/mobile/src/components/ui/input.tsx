@@ -1,7 +1,7 @@
 import { inputClassName, labelClassName, textareaClassName } from "@clawdi/shared/ui";
 import { cn } from "cn";
 import { forwardRef, useState } from "react";
-import type { TextInput, TextInputProps } from "react-native";
+import type { TextInputInstance, TextInputProps } from "react-native";
 import { useCSSVariable } from "uniwind";
 import { Text } from "@/components/ui/text";
 import { AppTextInput, AppView } from "@/components/ui/view";
@@ -22,7 +22,7 @@ const FOCUS = /^(dark:)?focus:/;
  * therefore keeps a constant transparent background and owns only the padding
  * and text styles.
  */
-export const Input = forwardRef<TextInput, InputProps>(function Input(
+export const Input = forwardRef<TextInputInstance, InputProps>(function Input(
 	{ className, onFocus, onBlur, ...props },
 	ref,
 ) {

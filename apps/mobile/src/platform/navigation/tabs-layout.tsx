@@ -71,4 +71,4 @@ function AppTabs() {
 	);
 }
 
-export const unstable_settings = { initialRouteName: "(overview)" };
+export const unstable_settings = { anchor: "(overview)" };

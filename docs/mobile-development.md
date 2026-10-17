@@ -29,25 +29,21 @@ is historical V0 evidence, not a native-build or real-device acceptance claim.
 
 ## Foundation toolchain
 
-The root workspace uses Bun `1.4.2` and a named `expo57` catalog for the
-approved SDK 57 runtime exception. A bounded Bun 1.4.2 install generated the
-root lock and a frozen reinstall passed. Mobile and Shared TypeScript 7 strict
-checks, Biome, and iOS/Android Expo exports passed. TypeScript 7 remains an
+The root workspace uses Bun `1.4.2` and a named `expo58` catalog holding the
+exact versions Expo SDK 58 pins (`bunx expo install --check`). Mobile and Shared
+TypeScript 7 strict checks, Biome, and iOS/Android Expo exports pass. TypeScript 7 remains an
 explicit project decision; `apps/mobile/package.json` records it in
 `expo.install.exclude` so Expo's dependency checker validates the SDK packages
 without requiring its expected TypeScript `~6.0.3`. Expo export is
 Metro bundling evidence, not native compilation or store-readiness evidence.
 
-The product uses SDK 57 / RN 0.86.3's default TypeScript declarations with
-TypeScript 7 and `strict: true`. It does not opt into RN 0.86's alternative
-`react-native-strict-api` export condition: the full product surface exposed
-five incompatibilities in Gesture Handler, Router Link and FlatList props.
-Removing only that condition passed the full Mobile typecheck; compiler
-strictness and runtime versions were unchanged. RN 0.86.3's published package
-maps `types` to `types/index.d.ts` and the opt-in condition to
-`types_generated/index.d.ts`. The [RN migration guide](https://reactnative.dev/docs/strict-typescript-api)
-describes the opt-in on pre-0.87 releases. The V0 strict-API probe below remains
-historical evidence; it is not a claim that the product passes that opt-in gate.
+The product uses SDK 58 / RN 0.88.0's default TypeScript declarations with
+TypeScript 7 and `strict: true`. Since RN 0.87 the default `types` entry is the
+[Strict TypeScript API](https://reactnative.dev/docs/strict-typescript-api)
+(`types_generated/index.d.ts`); the product passes it without the
+`react-native-legacy-deep-imports` opt-out. Refs use the exported instance types
+(for example `TextInputInstance`), and deep `react-native/Libraries/*` imports
+are type errors. The V0 strict-API probe below remains historical evidence.
 
 Native application types and Bun test types use separate strict TypeScript
 programs. `apps/mobile` typecheck runs both `tsconfig.json` and
@@ -65,10 +61,13 @@ Project/key navigation passes. The temporary negative fixture is not shipped.
 
 Use the root `packageManager` (`bun@1.4.2`) and committed root lock. Common
 versions belong in the root Bun catalog; SDK-constrained native packages use
-`catalog:expo57`. Do not flatten the Web/Desktop and native React versions or
+`catalog:expo58`. Do not flatten the Web/Desktop and native React versions or
 install an independent mobile lockfile.
-Mobile React and React DOM types also use `expo57` to stay on SDK 57's
-19.2 line while Web uses the default catalog.
+Mobile React, React DOM and their types also use `expo58` to stay on SDK 58's
+pins (React 19.3.0) while Web uses the default catalog.
+Edit the `expo58` catalog by hand with exact pins and verify with
+`bunx expo install --check`: `expo install --fix` replaces `catalog:` references
+with ranges.
 
 Import Lucide runtime icons from the official per-icon entries, for example
 `import Camera from "lucide-react-native/icons/camera"`, to keep Metro from
@@ -154,7 +153,7 @@ plan are required; the first cloud run remains the acceptance check.
 `/dev/ui` and `/dev/account` load their implementation with a literal
 `__DEV__` conditional `require`. Expo's documented
 [development-code removal](https://docs.expo.dev/guides/tree-shaking/#remove-development-only-code)
-folds that condition before collecting dependencies in SDK 57. Production keeps
+folds that condition before collecting dependencies in SDK 58. Production keeps
 only redirect route stubs; `src/pages/dev/` and its gallery-only imports are
 absent from the bundle graph. A layout or page redirect alone does not exclude
 imports.
@@ -228,21 +227,26 @@ from `@clerk/expo/native-components` (clerk-ios / clerk-android), matching Web's
   On Android, clerk-android 1.1.11 crashed right after a successful
   built-in delete (`NavDisplay backstack cannot be empty`); the fix
   (clerk/clerk-android #1010) was not included in `@clerk/expo` 4.10.0.
-  The upgrade to `@clerk/expo-native-components` 0.1.1 pins clerk-android
+  `@clerk/expo-native-components` 0.1.1 and later pin clerk-android
   1.2.1; the Android store gate still requires an owner-run deletion check.
   The custom page counts as an alternative only after an owner-run check: on a
   real device, with self-delete disabled, a real deletion against a dev hosted
   environment returns to sign-in. That check has not happened yet.
 
-The Beta native views require `@clerk/expo-native-components` 0.1.1 with
-`@clerk/expo` 4.12.0. The native package pins clerk-ios 1.6.1 and clerk-android
-1.2.1 and needs a development build (not Expo Go). Install it before using the
+The Beta native views require `@clerk/expo-native-components` 0.2.0 with
+`@clerk/expo` 4.13.0, the first releases that support Expo SDK 58
+([changelog](https://github.com/clerk/javascript/blob/main/packages/expo/CHANGELOG.md#4130)).
+The native package pins clerk-ios 1.6.1 and clerk-android 1.2.1 and needs a
+development build (not Expo Go). On iOS it receives URLs through an
+`ExpoAppDelegateSubscriber`, which SDK 58 keeps forwarding under the scene
+life cycle. Install it before using the
 `@clerk/expo/native-components` imports and rebuild native clients; this
 migration requires a new binary and must not ship as an OTA update. See
 [Clerk's migration notes](https://github.com/clerk/javascript/blob/main/packages/expo/CHANGELOG.md#4110).
 Mobile's direct `@clerk/shared` dependency is aligned to `^4.40.0` with the
-`@clerk/expo`'s dependency; verify frozen installs with both the repository's Bun
-1.4.2 and Vercel's Bun 1.3.14 when updating the root lock.
+`@clerk/expo`'s dependency; verify frozen installs with the repository's Bun
+1.4.2 and Vercel's pinned `bunx bun@1.4.2 install --frozen-lockfile` when
+updating the root lock.
 Clerk 4.9 deprecated `useLocalCredentials()`; the app does not use it. Clerk's
 [migration guidance](https://github.com/clerk/javascript/blob/main/packages/expo/CHANGELOG.md#490)
 uses `expo-secure-store` with `requireAuthentication` and a sign-in with the
@@ -554,7 +558,7 @@ foreground lease so a background/foreground cycle cannot revive a late key.
 
 The Cloud connector contract accepts HTTP(S) allowlisted callbacks, not an app
 scheme (`backend/app/schemas/connector.py`). Native deliberately omits the
-callback and uses the provider-managed completion page. Expo WebBrowser 57.0.3
+callback and uses the provider-managed completion page. Expo WebBrowser
 resolves on opening Android Custom Tabs but on closing the iOS browser; neither
 result establishes authorization success. Return/focus and manual refresh query
 the server's actual accounts. Native callback/deep-link integration and live
@@ -760,7 +764,7 @@ Server-reported absence is not a claim that background infrastructure cleanup ha
 Agent settings expose name/reset, avatar upload/reset and confirmed local-Agent
 disconnect. Web/native share name-draft synchronization, avatar limits and
 disconnect eligibility. The system file picker uses the existing SDK-aligned
-`expo-file-system` 57.0.7 through `catalog:expo57`, without an additional image
+`expo-file-system` 58.0.9 through `catalog:expo58`, without an additional image
 picker dependency. Uploads accept PNG/JPEG/WebP up to 2 MiB and never auto-retry.
 Disconnect refreshes ownership and Agent identity before dispatch; incomplete
 ownership fails closed. Legacy ownership IDs are read only when server capabilities
@@ -850,8 +854,8 @@ Vault request links lack a verified HTTPS origin and show the unavailable state
 without retaining the token. Real-device cold/warm starts,
 StrictMode, backgrounding and account transitions remain acceptance checks.
 
-The native deployment terminal uses Expo SDK 57 DOM components with
-`@expo/dom-webview` 57.0.1 and SDK-compatible `react-native-web` 0.21.3. A dedicated
+The native deployment terminal uses Expo SDK 58 DOM components with
+`@expo/dom-webview` 58.0.2 and SDK-compatible `react-native-web` 0.21.4. A dedicated
 Shared DOM entrypoint owns the xterm 6 renderer, ttyd transport, resize, output
 flow control and reconnect lifecycle, consumed by both the Web panel and native
 DOM adapter. Root catalogs centralize these versions; the regular Shared API
@@ -873,7 +877,7 @@ late callbacks and closes the socket; explicit retry remains available. Disposal
 clears the deadline and prevents retained handles from starting another attempt.
 An isolated Chromium clock/network probe verified stalled credentials, stalled
 handshake, zero sockets from late credentials and no retry after disposal.
-Both platforms exported native and DOM bundles with a single React 19.2.3
+Both platforms exported native and DOM bundles with a single React 19.3.0
 identity in each source map. An isolated Chromium/local-WebSocket probe exercised
 real xterm input, resize, two handshakes with fresh credentials after 1013, and
 socket cleanup. This is not an iOS/Android WebView, keyboard, real server or native
@@ -909,6 +913,47 @@ optional for local prebuild; when unset, no update URL/project id is emitted.
 Done: generated identifiers match `ai.clawdi.app`, iOS contains
 `PrivacyInfo.xcprivacy`, and Android has `allowBackup="false"`. This checks
 plugins and metadata, not native compilation, signing or store acceptance.
+
+### Expo SDK 58 native changes
+
+SDK 58 needs a new binary; JavaScript updates for earlier binaries do not apply.
+See the [SDK 58 changelog](https://expo.dev/changelog/sdk-58).
+
+- **iOS startup.** The app uses UIKit's scene life cycle, which the iOS 27 SDK
+  requires. Prebuild generates `SceneDelegate.swift`, the
+  `UIApplicationSceneManifest` Info.plist entry and an `AppDelegate` that only
+  creates the React Native factory; the scene delegate creates the window. The
+  app adds no AppDelegate code: Clerk and Expo modules use
+  `ExpoAppDelegateSubscriber`, which Expo forwards under scenes. A plugin that
+  needs app delegate events must do the same; see the
+  [scene life cycle guide](https://expo.fyi/ios-scene-lifecycle). Sentry RN 8
+  (Cocoa 9) requires Xcode 16.4 or later.
+- **Android R8.** Release builds shrink and obfuscate Java/Kotlin with R8
+  (`android.enableMinifyInReleaseBuilds=true` in the generated
+  `gradle.properties`). The template keeps the Reanimated and TurboModule
+  classes, and the other native libraries ship consumer rules in their AARs, so
+  the app adds no keep rules. Add a rule only when a library documents one. With
+  R8 on, Sentry receives obfuscated Java/Kotlin frames unless the ProGuard
+  mapping is uploaded, which the Expo Sentry plugin only does through its
+  experimental `experimental_android.enableAndroidGradlePlugin` option. The app
+  does not enable it; JavaScript stack traces are unaffected.
+- **Expo Router.** `usePreventRemove` blocks a redispatched action while its
+  condition is still true. Guards clear the condition, then call the callback's
+  `repeat()` or the hook's returned `disablePrevention()` before navigating
+  (`src/platform/navigation/use-sheet.ts`). Layouts set
+  `unstable_settings.anchor`, since `initialRouteName` is deprecated. Android
+  `NativeTabs` `md` icons need the optional `expo-symbols` peer.
+- **`@expo/ui`.** An iOS `<Host>` now top-leading-aligns its content like
+  Android. Unset `HStack`/`VStack` spacing uses the system default; the settings
+  menu sets explicit spacing.
+- **WebView.** `react-native-webview` 14 defaults the `WebView` class's extra-props
+  type parameter to `undefined`, which makes every prop `never`; Live chat passes
+  `WebView<object>`.
+- **Known upstream gaps.** Sentry RN 8.28's `reactNavigationIntegration` listens
+  for `__unsafe_action__`, which Expo Router 58 removed, so navigation spans do
+  not start; errors are still reported. Its optional Expo Router store import
+  logs a Metro warning
+  ([getsentry/sentry-react-native#6901](https://github.com/getsentry/sentry-react-native/issues/6901)).
 
 ### Release configuration
 
@@ -1023,7 +1068,7 @@ samples performance at 0.1 using Sentry RN's native release/dist defaults. It
 drops Vault-request telemetry and strips identities, request bodies, URL queries
 and token parameters; session replay is disabled. The Expo Sentry plugin always
 installs native upload hooks, with env-only credentials. This keeps the plugin
-set stable between Build and Update. SDK57 fingerprinting includes resolved
+set stable between Build and Update. Fingerprinting includes resolved
 `extra` and loaded plugins: use the same public values and `EAS_PROJECT_ID` for
 both, and do not put build-only credentials in config. Changing these public
 config values can require a new binary.
@@ -1304,7 +1349,7 @@ reviewed store/capacity/backend contracts; a read-only UI does not satisfy them.
 ## Reproduce the compatibility gate
 
 > HISTORICAL V0 - The probe and pending decisions below describe the original
-> investigation. The product now uses the approved SDK 57 runtime exception
+> investigation. The product now uses the Expo SDK 58 pins
 > and default native type policy documented above; original evidence is kept
 > unchanged for reproducibility.
 

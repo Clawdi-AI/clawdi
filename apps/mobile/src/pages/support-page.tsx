@@ -41,7 +41,8 @@ export default function SupportPage() {
 	const { user } = useCurrentUser();
 	const { theme } = useUniwind();
 	const colorScheme = theme === "dark" ? "dark" : "light";
-	const widget = useRef<WebView>(null);
+	// WebView 14 defaults its extra-props parameter to `undefined`, which collapses every prop to `never`.
+	const widget = useRef<WebView<object>>(null);
 	useEffect(() => {
 		widget.current?.injectJavaScript(chatwootColorSchemeScript(colorScheme));
 	}, [colorScheme]);
@@ -88,7 +89,7 @@ export default function SupportPage() {
 			) : identifierHash.isPending || !identifierHash.data ? (
 				<RouteLoadingSkeleton />
 			) : (
-				<WebView
+				<WebView<object>
 					key={attempt}
 					ref={widget}
 					testID="support-chat-widget"

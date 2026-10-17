@@ -7,12 +7,12 @@ both platforms; v1 is a portrait phone app with iPad support disabled.
 ## Privacy manifest evidence
 
 `apps/mobile/app.config.js` declares `NSPrivacyTracking: false` and the union
-of required reasons in the installed SDK 57 / React Native 0.86.3 manifests.
-The Sentry React Native 7.11.0 podspec pins Cocoa 8.58.0; its
-[versioned manifest](https://github.com/getsentry/sentry-cocoa/blob/8.58.0/Sources/Resources/PrivacyInfo.xcprivacy)
+of required reasons in the installed SDK 58 / React Native 0.88.0 manifests.
+The Sentry React Native 8.28.0 podspec pins Cocoa 9.29.0; its
+[versioned manifest](https://github.com/getsentry/sentry-cocoa/blob/9.29.0/Sources/Resources/PrivacyInfo.xcprivacy)
 supplies the same file timestamp, boot time and UserDefaults reasons.
-RevenueCat React Native 10.11.0 pins PurchasesHybridCommon 19.5.0, which pins
-RevenueCat iOS 5.92.0. Its [manifest](https://github.com/RevenueCat/purchases-ios/blob/5.92.0/Sources/PrivacyInfo.xcprivacy)
+RevenueCat React Native 10.14.0 pins PurchasesHybridCommon 19.12.0, which pins
+RevenueCat iOS 5.95.0. Its [manifest](https://github.com/RevenueCat/purchases-ios/blob/5.95.0/Sources/PrivacyInfo.xcprivacy)
 declares UserDefaults CA92.1 and purchase history for app functionality.
 
 | Required API | Reasons | Source in native dependencies |

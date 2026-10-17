@@ -1,6 +1,6 @@
 import { type Href, router, useNavigation } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAccountScope } from "@/platform/account-lifecycle";
 
 /** Mutations keep their existing fences. Results invalidate the parent before dismissal. */
@@ -17,17 +17,14 @@ export function useSheet<Result = void>({
 	const navigation = useNavigation();
 	const mounted = useRef(true);
 	const closing = useRef(false);
-	const completed = useRef(false);
+	const [completed, setCompleted] = useState(false);
 	useEffect(() => {
 		mounted.current = true;
 		return () => {
 			mounted.current = false;
 		};
 	}, []);
-	usePreventRemove(busy, ({ data }) => {
-		// React Navigation permits redispatching the original, explicitly accepted action.
-		if (completed.current) navigation.dispatch(data.action);
-	});
+	const disablePrevention = usePreventRemove(busy && !completed);
 	return {
 		close: async (result?: Result) => {
 			if (
@@ -41,7 +38,9 @@ export function useSheet<Result = void>({
 			try {
 				if (result !== undefined) await onResult?.(result);
 				if (!mounted.current || !scope.isCurrent() || !navigation.isFocused()) return;
-				completed.current = true;
+				// A completed sheet may close while its mutation is still busy.
+				setCompleted(true);
+				disablePrevention();
 				if (router.canDismiss()) router.dismiss();
 				else router.replace(fallback);
 			} finally {

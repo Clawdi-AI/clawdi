@@ -16,7 +16,7 @@ import {
 } from "@clawdi/shared/view";
 import { useQueryClient } from "@tanstack/react-query";
 import { File } from "expo-file-system";
-import { useLocalSearchParams, useNavigation, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import CircleAlert from "lucide-react-native/icons/circle-alert";
 import RotateCcw from "lucide-react-native/icons/rotate-ccw";
@@ -70,7 +70,6 @@ function Settings({ id }: { id: string | undefined }) {
 	const capture = useForegroundLease();
 	const action = useAuthAction(scope.identity);
 	const router = useRouter();
-	const navigation = useNavigation();
 	const cache = useQueryClient();
 	const { cloud, agentSettings } = useMobileApi();
 	const agent = useCloudAgent(id);
@@ -87,7 +86,7 @@ function Settings({ id }: { id: string | undefined }) {
 	const serverName = agent.data?.display_name ?? "";
 	usePreventRemove(
 		scope.isReady && !disconnected && previous.current !== undefined && draft !== serverName,
-		({ data }) => {
+		({ repeat }) => {
 			const visible = capture();
 			const ticket = ++confirmation.current;
 			unsavedDialog.show(t("agentSettings.unsavedTitle"), t("agentSettings.unsavedMessage"), [
@@ -98,7 +97,8 @@ function Settings({ id }: { id: string | undefined }) {
 					onPress: () => {
 						if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
 						confirmation.current++;
-						navigation.dispatch(data.action);
+						setDraft(serverName);
+						repeat();
 					},
 				},
 			]);
