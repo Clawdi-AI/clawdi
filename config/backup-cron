@@ -1,0 +1,7 @@
+# At 02:00 container time: a full backup on Sunday and differential backups on
+# all other days. The full backup replaces Sunday's differential backup.
+# Supercronic inherits the container's PGBACKREST_* environment variables and
+# sends job output to the container log.
+0 2 * * 0 pgbackrest backup --type=full && pgbackrest check; result=$?; sh /usr/local/bin/write-status || exit 1; exit "$result"
+0 2 * * 1-6 pgbackrest backup --type=diff && pgbackrest check; result=$?; sh /usr/local/bin/write-status || exit 1; exit "$result"
+*/5 * * * * sh /usr/local/bin/write-status

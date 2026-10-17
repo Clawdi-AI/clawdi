@@ -320,8 +320,12 @@ accessories:
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     cmd: gosu postgres supercronic /etc/pgbackrest/backup-cron
     volumes:
+      - /home/phala/clawdi-db-status/cloud:/var/run/clawdi-db-status
       - /home/phala/clawdi-postgres/data:/var/lib/postgresql
       - /home/phala/clawdi-postgres/socket:/var/run/postgresql
+    files:
+      - config/backup-cron:/etc/pgbackrest/backup-cron
+      - config/pgbackrest-write-status:/usr/local/bin/write-status
     env:
       clear:
         <<: *pgbackrest-env
