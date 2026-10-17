@@ -37,29 +37,49 @@ log database or mount log files into service data volumes.
 
 ## Host prerequisite
 
-Complete this once on every Kamal host before recreating any container with the
-new deployment configuration. The limits below apply to the entire host system
-journal, not separately to Clawdi. The journal retains at most 30 days and aims
-to stay within 2 GiB while leaving 5 GiB free; the effective history can be
-shorter under pressure.
+The limits below apply to the entire host system journal, including Cloud and
+Hosted containers. On `clawdi`, the owner verified a 500 GB root filesystem with
+386 GB free at 5:58 AM PDT on 2026-10-17. The journal used 2.9 GB and retained
+only about 1.7 days: the default `SystemMaxFiles=100` was reached before the
+existing 10 GB size cap.
+
+At approximately 1.7 GB/day, 30 days needs about 51 GB. Use a 60 GiB size cap,
+retain the existing 20 GiB free-space reserve, and raise the file limit to 1,000.
+Growing from 2.9 GB to the full cap would leave over 300 GB free with other disk
+usage unchanged. These limits target 30 days at the observed volume; increased
+log volume, file rotation, or disk pressure can still shorten retention.
+`MaxRetentionSec=30day` is a maximum age, not a minimum retention guarantee.
+
+An approved operator applies the following idempotent commands on the Kamal
+host. Check current disk headroom and the existing configuration first; reassess
+the budget if the host no longer has the headroom above. The drop-in changes only
+the five settings shown, leaving other settings to the host configuration and
+defaults.
 
 ```bash
+df -h /var/log
+sudo journalctl --disk-usage
+sudo systemd-analyze cat-config systemd/journald.conf
+
 sudo install -d -m 0755 /etc/systemd/journald.conf.d
 sudo install -d -m 2755 -o root -g systemd-journal /var/log/journal
-sudoedit /etc/systemd/journald.conf.d/60-clawdi-kamal.conf
-```
-
-Write exactly this non-secret drop-in:
-
-```ini
+sudo tee /etc/systemd/journald.conf.d/60-clawdi-kamal.conf >/dev/null <<'EOF'
 [Journal]
 Storage=persistent
-SystemMaxUse=2G
-SystemKeepFree=5G
+SystemMaxUse=60G
+SystemKeepFree=20G
+SystemMaxFiles=1000
 MaxRetentionSec=30day
+EOF
+
+sudo chmod 0644 /etc/systemd/journald.conf.d/60-clawdi-kamal.conf
+sudo chown root:root /etc/systemd/journald.conf.d/60-clawdi-kamal.conf
+sudo systemd-analyze cat-config systemd/journald.conf
 ```
 
-Apply and verify it without reading application log payloads:
+Before restarting, inspect the merged configuration: the five values above must
+be the last assignments for their keys in `[Journal]`; later drop-ins override
+earlier ones. Then apply and verify without reading application log payloads:
 
 ```bash
 sudo systemctl restart systemd-journald
@@ -67,14 +87,50 @@ sudo journalctl --flush
 sudo systemctl is-active systemd-journald
 sudo systemd-analyze cat-config systemd/journald.conf
 sudo journalctl --disk-usage
+df -h /var/log/journal
 test -d /var/log/journal
 ```
 
-`Storage=persistent`, `SystemMaxUse`, `SystemKeepFree`, and `MaxRetentionSec`
-are systemd-journald controls; see the upstream
+Done: `systemctl is-active systemd-journald` prints `active`, the merged
+configuration has all five intended values without later overrides, and disk
+headroom still supports the budget. A retention-only update takes effect after
+the journald restart; container recreation below is needed only when changing
+Docker logging drivers.
+
+Record the oldest retained entry's timestamp and age immediately after applying,
+then repeat daily. This reads one entry's metadata without its message:
+
+```bash
+set -o pipefail
+sudo journalctl --quiet --no-pager --lines=+1 --output=json \
+  --output-fields=__REALTIME_TIMESTAMP \
+  | python3 -c '
+import json
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+entry = json.load(sys.stdin)
+oldest = datetime.fromtimestamp(
+    int(entry["__REALTIME_TIMESTAMP"]) / 1_000_000,
+    tz=ZoneInfo("America/Los_Angeles"),
+)
+age_days = (datetime.now(oldest.tzinfo) - oldest).total_seconds() / 86400
+print(f"Oldest entry: {oldest:%Y-%m-%d %I:%M:%S %p %Z}; age: {age_days:.2f} days")
+'
+```
+
+Done: the oldest entry's age grows beyond the previous approximately 1.7-day
+window and approaches 30 days over the following month. Previously deleted logs
+cannot be recovered by raising the limits. If age stalls early, inspect journal
+disk usage, free space, file count (`sudo find /var/log/journal -type f \(
+-name '*.journal' -o -name '*.journal~' \) | wc -l`), and configuration overrides
+before changing the budget again.
+
+These are systemd-journald controls; see the upstream
 [`journald.conf`](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)
-reference. Do not continue if the effective configuration does not show all
-four values or the journal service is unhealthy.
+and [`journalctl`](https://www.freedesktop.org/software/systemd/man/latest/journalctl.html)
+references.
 
 ## Rollout
 
