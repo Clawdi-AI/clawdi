@@ -29,4 +29,4 @@ EOF
 # Docker commands on the test host. No socket mount or test-only user override.
 "${compose[@]}" run --rm -T commands | bash -euo pipefail
 "${compose[@]}" run --rm -T checks
-echo 'PITR, post-target exclusion, checksums, amcheck and missing-WAL detection passed'
+echo 'PITR, quiet-application sanity, all six failure phases, integrity and missing-WAL detection passed'

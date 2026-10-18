@@ -34,10 +34,9 @@ A second, credential-free container uses `--network none`, a local WAL directory
 PostgreSQL configuration is replaced before starting the scratch server.
 
 PostgreSQL must reach/promote at the target. The application query requires
-nonempty users/agent environments/sessions and recent session activity; no
-counts/rows leave the container. Replay timestamp and application activity must
-be within one hour before target. Low activity deliberately fails this gate and
-needs owner investigation, rather than silently passing an old restore.
+nonempty users/agent environments/sessions; no counts/rows leave the container.
+Application activity can be old. PITR recency is checked separately using
+`pg_last_xact_replay_timestamp()`, which must be within one hour before target.
 `pg_amcheck --heapallindexed --parent-check --install-missing` checks the scratch
 application database, followed by clean shutdown and full `pg_checksums --check`.
 amcheck does not structurally validate GIN/HNSW indexes; checksums cover pages.
@@ -126,8 +125,16 @@ paired Hosted PR.
 
 The monitor reads atomic drill files independently of SQL/feed health. Missing,
 invalid, failed and >35-day-old runs alert through the existing Discord/Sentry
-path. A failed result is not hidden by an earlier success. Rollback: disable the
-alert flag through the release path, disable host cron/config and remove only
+path. A failed result is not hidden by an earlier success. Check failures retain
+schema 1 and publish only a fixed phase: `checks_start` (server startup),
+`checks_promote` (promotion/query or bounded wait), `checks_sanity` (nonempty core
+tables), `checks_replay` (replay timestamp window), `checks_amcheck` (structural
+checks), or `checks_checksums` (clean shutdown/offline checksums). The check
+container uses reserved exit codes 71–76 for these phases; the runner discards
+stdout/stderr diagnostics. All phases still alert as failed. Inspect only the
+status metadata; never publish scratch logs or application data.
+
+Rollback: disable the alert flag through the release path, disable host cron/config and remove only
 this task's interrupted scratch resources. Retention can remain at four fulls.
 
 Done: both stanzas pass PITR/application/amcheck/checksum gates, record RTO/RPO,
@@ -140,8 +147,13 @@ Run `bash scripts/test.sh postgres-drill`. Docker Compose creates a tiny
 checksummed PostgreSQL database and local pgBackRest repository, commits on both
 sides of an explicit PITR target, restores, and verifies that the post-target
 row is excluded. A separate credential-free/network-none container runs integrity
-checks; a fresh restore with removed WAL must fail. Shellcheck, Python lint and
-safety/status tests run in containers too. The fixture keeps the production
+checks. The actual product sanity SQL must pass with application timestamps
+from 2000 while recent WAL reaches the target. Each of the six check steps is
+fault-injected against a fresh restore and must return its reserved code; the
+runner tests verify failed status/cleanup without diagnostic leaks, and Hosted
+monitor tests verify every phase still alerts. A fresh restore with removed WAL
+must also fail. Shellcheck, Python lint and safety/status tests run in
+containers too. The fixture keeps the production
 image's default root user and reproduces pgBackRest's root refusal. The driver
 then executes the runner's actual Docker commands for metadata, scratch setup,
 restore/WAL fetch and checks, without substituting a test-only image user. The
