@@ -26,8 +26,9 @@ pgBackRest `--type=time --target-action=promote --archive-mode=off`, and prefetc
 the selected timeline's WAL. The target is ten minutes before execution.
 Cloud's drill runs 90 minutes after the 02:00 UTC backup. Prefetching all WAL
 since that backup must stay under the 16 GiB WAL cap, and Cloud writes about
-3.4 GB of WAL per hour (measured 2026-10-18). A 13:00 start fetched about 32 GiB
-and failed at `restore`. The
+3.4 GB of WAL per hour (measured 2026-10-18). A late-morning run (target
+11:36 UTC) needed about 32 GiB of WAL since 02:00 and failed at `restore` on the
+16 GiB cap. The
 reader starts no PostgreSQL server. Its network is used only for R2 reads.
 All repository commands, including `info` and `repo-ls`, run with Docker
 `--user postgres` (UID/GID 999 in the pinned image). A separate credential-free,
