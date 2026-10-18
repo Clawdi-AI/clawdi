@@ -1,0 +1,7 @@
+# Install only after provisioning dedicated credentials and the private config.
+# Host cron (root), NOT inside the backup accessory; no Docker socket mounts.
+# UTC: monthly day 2 at 13:00 (06:00 PDT / 05:00 PST).
+# Hosted runs four hours earlier in its owning repository.
+CRON_TZ=UTC
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 13 2 * * root /usr/bin/python3 /opt/clawdi-postgres/cloud/scripts/postgres-drill/run.py /etc/clawdi-postgres/cloud.json

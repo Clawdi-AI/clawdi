@@ -4,6 +4,10 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "$script_dir/.." && pwd)"
 
+if [[ "${1:-}" = postgres-drill ]]; then
+	exec timeout --signal=TERM --kill-after=30s 15m bash "$repo_root/scripts/postgres-drill/tests/run.sh"
+fi
+
 compose_project_name="${CLAWDI_TEST_COMPOSE_PROJECT_NAME:-clawdi-test-$$}"
 remove_test_runner_image=false
 provider_baseline_dir=""

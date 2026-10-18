@@ -1,0 +1,34 @@
+name: Postgres restore drill
+
+on:
+  pull_request:
+    paths:
+      - "scripts/postgres-drill/**"
+      - "config/postgres-drill/**"
+      - "config/backup-cron"
+      - "scripts/test.sh"
+      - ".github/workflows/postgres-drill.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/postgres-drill/**"
+      - "config/postgres-drill/**"
+      - "config/backup-cron"
+      - ".github/workflows/postgres-drill.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-drill-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  restore-drill:
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test PITR, integrity, missing WAL and script safety in Docker
+        run: bash scripts/test.sh postgres-drill
