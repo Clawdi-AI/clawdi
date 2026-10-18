@@ -1,7 +1,9 @@
 # Install only after provisioning dedicated credentials and the private config.
 # Host cron (root), NOT inside the backup accessory; no Docker socket mounts.
-# UTC: monthly day 2 at 13:00 (06:00 PDT / 05:00 PST).
-# Hosted runs four hours earlier in its owning repository.
+# UTC: monthly day 2 at 03:30 (20:30 PDT / 19:30 PST on day 1), 90 minutes
+# after the 02:00 backup. The drill prefetches all WAL since the selected
+# backup; Cloud writes about 3.4 GB of WAL per hour (measured 2026-10-18), so a
+# later start exceeds the 16 GiB WAL cap. Hosted runs at 09:00 in its own repo.
 CRON_TZ=UTC
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-0 13 2 * * root /usr/bin/python3 /opt/clawdi-postgres/cloud/scripts/postgres-drill/run.py /etc/clawdi-postgres/cloud.json
+30 3 2 * * root /usr/bin/python3 /opt/clawdi-postgres/cloud/scripts/postgres-drill/run.py /etc/clawdi-postgres/cloud.json
