@@ -18,6 +18,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Fixed PostgreSQL drill preflight running pgBackRest as root. Repository reads,
+  restores and WAL fetch now run as postgres, with separate scratch ownership
+  setup. Docker regression coverage uses the production image's default user
+  and the runner's actual container commands; root must repeat the live gate.
+
 - Added gated monthly PostgreSQL PITR/integrity drills with RTO/RPO metadata
   consumed by Hosted fleet health; repo1 now retains four weekly fulls. See the
   [root rollout gate](docs/ops/postgres-backup-restore.md). Hermetic verification

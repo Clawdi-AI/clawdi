@@ -2,10 +2,12 @@
 # Hermetic fixture: an actual tiny checksummed database, local pgBackRest repo,
 # commits on either side of the PITR target, and a missing-WAL failure.
 set -euo pipefail
+# Keep the pinned image's default user, just like the production entrypoint.
+test "$(id -u)" = 0
 work=/fixture
 mkdir -p "$work"/socket "$work"/repo /scratch
 chown -R postgres:postgres "$work"
-# Docker's empty volume starts root-owned. The reader must prepare its parent
+# Docker's empty volume starts root-owned. The runner must prepare its parent
 # so the credential-free postgres user can write its private recovery log.
 test "$(stat -c %u /scratch)" = 0
 export PGDATA=$work/source PGHOST=$work/socket PGUSER=postgres PGDATABASE=postgres
@@ -41,11 +43,14 @@ backup=$(gosu postgres pgbackrest repo-ls backup/drill-test | sed -n '/^[0-9].*F
 test -n "$backup"
 printf '%s\n' "$target" > "$work/target"
 printf '%s\n' "$backup" > "$work/backup"
-bash /repo/scripts/postgres-drill/fetch.sh "$target" "$backup" 67108864
-cat > /scratch/sanity.sql <<'SQL'
-SELECT count(*) = 2 AND max(id) = 2 FROM drill_rows;
-SQL
+# Reproduce the production failure: no user override means pgBackRest exit 31.
+if pgbackrest info; then
+    echo 'pgBackRest unexpectedly accepted the image default root user' >&2
+    exit 1
+else
+    test "$?" = 31
+fi
 gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop >/dev/null
 trap - EXIT
-# The fixture driver starts check.sh in a DIFFERENT network-none container,
-# with /fixture mounted read-only and no PGBACKREST_* variables.
+# The driver now executes Runner's actual Docker argv for metadata, ownership,
+# restore/prefetch and checks. Only the fixture setup uses gosu.

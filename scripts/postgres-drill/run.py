@@ -169,15 +169,14 @@ class Runner:
         env_file: Path | None = None,
         stdin: str | None = None,
         offline: bool = False,
-        user: str | None = None,
+        user: str = "postgres",
     ) -> str:
         cmd = ["docker", "run", "--rm", "--name", self.name, *self.resources]
         if offline:
             cmd += ["--network=none"]
         if env_file:
             cmd += ["--env-file", str(env_file)]
-        if user:
-            cmd += ["--user", user]
+        cmd += ["--user", user]
         cmd += ["--mount", f"type=volume,src={self.volume},dst=/scratch"]
         if stdin is not None:
             cmd += ["--interactive"]
@@ -265,6 +264,25 @@ class Runner:
         )
         return info, listing
 
+    def prepare_scratch(self) -> None:
+        # Docker creates an empty volume as root. This initializer has no
+        # credentials or network; every repository operation runs as postgres.
+        self.container(
+            [
+                "install",
+                "-d",
+                "-o",
+                "postgres",
+                "-g",
+                "postgres",
+                "-m",
+                "700",
+                "/scratch",
+            ],
+            offline=True,
+            user="root",
+        )
+
     def drill(self, status: dict) -> None:
         config = self.config
         env_file = repository_file(config["readonly_env"], self.stanza)
@@ -297,6 +315,7 @@ class Runner:
         if disk.free - scratch < max(disk.total // 4, 2 * repo_size):
             raise ValueError("insufficient scratch headroom")
         self.phase = "restore"
+        self.prepare_scratch()
         self.container(
             ["bash", "-s", "--", target, backup["label"], str(wal_limit)],
             env_file=env_file,

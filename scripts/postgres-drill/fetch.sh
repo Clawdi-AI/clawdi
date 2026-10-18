@@ -4,12 +4,13 @@ set -euo pipefail
 target=$1
 backup=$2
 wal_limit=$3
-install -d -o postgres -g postgres -m 700 /scratch /scratch/data /scratch/wal
+test "$(id -u)" -ne 0
+install -d -m 700 /scratch/data /scratch/wal
 if [[ -n $(ls -A /scratch/data) ]]; then exit 1; fi
 export PGBACKREST_PG1_PATH=/scratch/data
 export PGBACKREST_LOCK_PATH=/tmp/pgbackrest
 export PGBACKREST_LOG_PATH=/tmp/pgbackrest
-gosu postgres pgbackrest --repo=1 --set="$backup" --type=time --target="$target" \
+pgbackrest --repo=1 --set="$backup" --type=time --target="$target" \
     --target-action=promote --target-timeline=current --archive-mode=off \
     --no-link-all --tablespace-map-all=/scratch/data/tablespaces \
     --log-level-console=off restore
@@ -18,7 +19,7 @@ gosu postgres pgbackrest --repo=1 --set="$backup" --type=time --target="$target"
 # target (and fails if archived WAL cannot reach it).
 start=$(sed -n 's/^START WAL LOCATION:.*(file \([0-9A-F]*\)).*/\1/p' /scratch/data/backup_label)
 [[ $start =~ ^[0-9A-F]{24}$ ]]
-gosu postgres pgbackrest --repo=1 --log-level-console=off repo-ls \
+pgbackrest --repo=1 --log-level-console=off repo-ls \
     "archive/$PGBACKREST_STANZA" --recurse > /tmp/archive-list
 awk -F/ -v start="$start" '
     { name=substr($NF,1,24) }
@@ -27,7 +28,7 @@ awk -F/ -v start="$start" '
 ' /tmp/archive-list | sort -u > /tmp/wal-list
 test -s /tmp/wal-list
 while read -r wal; do
-    gosu postgres pgbackrest --repo=1 --log-level-console=off \
+    pgbackrest --repo=1 --log-level-console=off \
         archive-get "$wal" "/scratch/wal/$wal"
     # Check during prefetch, not after filling the host disk.
     used=$(du -sb /scratch/wal | cut -f1)
@@ -49,4 +50,3 @@ printf "recovery_target_time = '%s'\n" "$target" >> /scratch/data/postgresql.con
 : > /scratch/data/postgresql.auto.conf
 printf 'local all all trust\n' > /scratch/data/pg_hba.conf
 : > /scratch/data/pg_ident.conf
-chown postgres:postgres /scratch/data/{postgresql.conf,postgresql.auto.conf,pg_hba.conf,pg_ident.conf}

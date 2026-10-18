@@ -14,11 +14,7 @@ services:
   checks:
     image: ${POSTGRES_DRILL_IMAGE:?use scripts/test.sh postgres-drill}
     user: postgres
-    entrypoint: [bash, -ceu]
-    command:
-      - |
-        test -z "$${PGBACKREST_REPO1_S3_KEY:-}"
-        bash /repo/scripts/postgres-drill/check.sh postgres "$$(cat /fixture/target)" 3600
+    entrypoint: [bash, /repo/scripts/postgres-drill/tests/failure.sh]
     volumes:
       - ../../..:/repo:ro
       - fixture:/fixture:ro
@@ -28,6 +24,17 @@ services:
     network_mode: none
     cpus: 2
     mem_limit: 1g
+  commands:
+    image: python:3.13-slim
+    entrypoint: [python, -B, /repo/scripts/postgres-drill/tests/docker_commands.py]
+    volumes:
+      - ../../..:/repo:ro
+      - fixture:/fixture:ro
+    environment:
+      - POSTGRES_DRILL_IMAGE
+      - DRILL_TEST_PROJECT
+      - DRILL_TEST_ENV
+    network_mode: none
   unit:
     image: python:3.13-slim
     entrypoint: [python, -B, -m, unittest, discover, -s, /repo/scripts/postgres-drill/tests, -p, 'test_*.py', -v]

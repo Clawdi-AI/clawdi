@@ -25,6 +25,10 @@ a read-only key is unavailable), restores a selected successful backup with stan
 pgBackRest `--type=time --target-action=promote --archive-mode=off`, and prefetches
 the selected timeline's WAL. The target is ten minutes before execution. The
 reader starts no PostgreSQL server. Its network is used only for R2 reads.
+All repository commands, including `info` and `repo-ls`, run with Docker
+`--user postgres` (UID/GID 999 in the pinned image). A separate credential-free,
+network-none initializer gives the empty scratch volume to postgres; it runs
+only `install` as root. The fetch script rejects root execution.
 A second, credential-free container uses `--network none`, a local WAL directory,
 `listen_addresses=''`, no preload libraries, and `archive_mode=off`. Original
 PostgreSQL configuration is replaced before starting the scratch server.
@@ -137,9 +141,13 @@ checksummed PostgreSQL database and local pgBackRest repository, commits on both
 sides of an explicit PITR target, restores, and verifies that the post-target
 row is excluded. A separate credential-free/network-none container runs integrity
 checks; a fresh restore with removed WAL must fail. Shellcheck, Python lint and
-safety/status tests run in containers too. The checkout is mounted read-only and
-all test containers/volumes are removed. Hosted also tests metadata consumption,
-failure/staleness alerts and feed-outage independence through its hermetic backend
+safety/status tests run in containers too. The fixture keeps the production
+image's default root user and reproduces pgBackRest's root refusal. The driver
+then executes the runner's actual Docker commands for metadata, scratch setup,
+restore/WAL fetch and checks, without substituting a test-only image user. The
+checkout is mounted read-only and all test resources are removed. Hosted also
+tests metadata consumption, failure/staleness alerts and feed-outage independence
+through its hermetic backend
 runner. Real R2 access, host cron, resource limits and alert delivery require the
 root rollout gate.
 
