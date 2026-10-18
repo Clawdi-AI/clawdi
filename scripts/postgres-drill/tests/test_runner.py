@@ -45,16 +45,9 @@ class SafetyTests(unittest.TestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o644)
         self.assertEqual(list(self.root.glob(".*.json.*")), [])
 
-    def test_preflight_reserves_disk_before_restoring(self):
-        runner = drill.Runner(
-            {
-                "stanza": "test",
-                "database": "postgres",
-                "image": "test@sha256:" + "a" * 64,
-                "status_dir": str(self.root),
-                "readonly_env": str(self.env),
-            }
-        )
+    def test_preflight_reserves_scratch_and_quarter_disk_not_twice_repository(self):
+        sanity = self.root / "sanity.sql"
+        sanity.write_text("SELECT true;\n")
         metadata = (
             [
                 {
@@ -69,21 +62,44 @@ class SafetyTests(unittest.TestCase):
                     ],
                 }
             ],
-            {"backup/file": {"type": "file", "size": 500}},
+            # A WAL-heavy repository larger than free disk must not prevent a
+            # small bounded restore. Only scratch + the 25% floor are required.
+            {"archive/file": {"type": "file", "size": 234 * 1024**3}},
         )
-        with (
-            patch.object(runner, "metadata", return_value=metadata),
-            patch.object(runner, "command", return_value=str(self.root)),
-            patch.object(runner, "container") as container,
-            patch.object(
-                drill.shutil,
-                "disk_usage",
-                return_value=drill.shutil._ntuple_diskusage(4000, 1000, 3000),
-            ),
-        ):
-            with self.assertRaisesRegex(ValueError, "headroom"):
-                runner.drill({})
-            container.assert_not_called()
+        # scratch = 1000 * 1.2 + 100 = 1300; the filesystem floor is 1000.
+        for free, allowed in ((2299, False), (2300, True), (2301, True)):
+            with self.subTest(free=free):
+                runner = drill.Runner(
+                    {
+                        "stanza": "test",
+                        "database": "postgres",
+                        "image": "test@sha256:" + "a" * 64,
+                        "status_dir": str(self.root),
+                        "readonly_env": str(self.env),
+                        "sanity_sql": str(sanity),
+                        "max_wal_bytes": 100,
+                    }
+                )
+                with (
+                    patch.object(runner, "metadata", return_value=metadata),
+                    patch.object(runner, "command", return_value=str(self.root)),
+                    patch.object(runner, "container", return_value="1") as container,
+                    patch.object(
+                        drill.shutil,
+                        "disk_usage",
+                        return_value=drill.shutil._ntuple_diskusage(
+                            4000, 4000 - free, free
+                        ),
+                    ),
+                ):
+                    if allowed:
+                        status = {}
+                        runner.drill(status)
+                        self.assertIn("replayed_at_epoch", status)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "headroom"):
+                            runner.drill({})
+                        container.assert_not_called()
 
     def test_failed_run_publishes_safe_status_and_cleans_up(self):
         directory = self.root / "status"

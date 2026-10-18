@@ -46,6 +46,19 @@ restore_command = 'cp /scratch/wal/%f %p'
 recovery_target_action = 'promote'
 recovery_target_timeline = 'current'
 EOF
+# Recovery shared-memory settings must be at least the primary's values. Read
+# only the restored control file, never the production config or data directory.
+control=$(LC_ALL=C pg_controldata /scratch/data)
+for setting in max_connections max_worker_processes max_wal_senders max_prepared_transactions max_locks_per_transaction; do
+    case "$setting" in
+        max_prepared_transactions) control_key=max_prepared_xacts ;;
+        max_locks_per_transaction) control_key=max_locks_per_xact ;;
+        *) control_key=$setting ;;
+    esac
+    value=$(sed -n "s/^${control_key} setting: *//p" <<< "$control")
+    [[ $value =~ ^[0-9]+$ ]]
+    printf '%s = %s\n' "$setting" "$value" >> /scratch/data/postgresql.conf
+done
 printf "recovery_target_time = '%s'\n" "$target" >> /scratch/data/postgresql.conf
 : > /scratch/data/postgresql.auto.conf
 printf 'local all all trust\n' > /scratch/data/pg_hba.conf

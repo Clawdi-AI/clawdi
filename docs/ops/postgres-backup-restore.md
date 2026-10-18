@@ -32,6 +32,12 @@ only `install` as root. The fetch script rejects root execution.
 A second, credential-free container uses `--network none`, a local WAL directory,
 `listen_addresses=''`, no preload libraries, and `archive_mode=off`. Original
 PostgreSQL configuration is replaced before starting the scratch server.
+The generated configuration preserves the restored control file's
+`max_connections`, `max_worker_processes`, `max_wal_senders`,
+`max_prepared_transactions` and `max_locks_per_transaction`. `pg_controldata`
+runs with `LC_ALL=C`; all five fields must be present and contain only integers.
+These shared-memory settings must be at least the primary's recorded values
+for recovery to start. No restored configuration or production files are read.
 
 PostgreSQL must reach/promote at the target. The application query requires
 nonempty users/agent environments/sessions; no counts/rows leave the container.
@@ -44,9 +50,12 @@ amcheck does not structurally validate GIN/HNSW indexes; checksums cover pages.
 Every container is limited to 2 CPUs, 2 GiB memory, 256 PIDs and I/O weight 100.
 The entire run is bounded to four hours. Before restoration, repository object
 sizes and uncompressed backup size are read; required scratch space includes
-120% of the uncompressed backup plus the 16 GiB WAL cap. Remaining space on
-DockerRootDir's filesystem must be at least **25% of total and twice the entire
-repository size**. WAL prefetch enforces its cap during download. The host-wide
+120% of the uncompressed backup plus the 16 GiB WAL cap. After reserving that
+scratch estimate, free space on DockerRootDir's filesystem must remain at least
+**25% of the filesystem total**: `available - scratch >= total / 4`. Repository
+size does not add a free-space requirement; archived WAL can greatly exceed the
+bounded prefetch needed by one restore. WAL prefetch enforces its cap during
+download. The host-wide
 `/run/lock/clawdi-postgres-drill.lock` serializes both stanzas.
 A busy lock waits at most five minutes, then publishes `failed/lock_timeout`.
 After acquiring it, the runner removes earlier killed-run resources matching
@@ -146,8 +155,12 @@ that owner-recorded gate, production execution and alert delivery are unverified
 Run `bash scripts/test.sh postgres-drill`. Docker Compose creates a tiny
 checksummed PostgreSQL database and local pgBackRest repository, commits on both
 sides of an explicit PITR target, restores, and verifies that the post-target
-row is excluded. A separate credential-free/network-none container runs integrity
-checks. The actual product sanity SQL must pass with application timestamps
+row is excluded. The source uses 200 connections and raises all five
+recovery-sensitive settings above their defaults. Lowering the restored
+connection limit to 100 must fail startup; using the control-file settings must
+pass. Missing/noninteger control fields must fail before recovery. Capacity
+tests cover the exact 25% boundary with a repository larger than free disk.
+A separate credential-free/network-none container runs integrity checks. The actual product sanity SQL must pass with application timestamps
 from 2000 while recent WAL reaches the target. Each of the six check steps is
 fault-injected against a fresh restore and must return its reserved code; the
 runner tests verify failed status/cleanup without diagnostic leaks, and Hosted
@@ -165,6 +178,7 @@ root rollout gate.
 
 ## References
 
+- [PostgreSQL recovery shared-memory settings](https://www.postgresql.org/docs/18/hot-standby.html#HOT-STANDBY-ADMIN)
 - [pgBackRest restore options](https://pgbackrest.org/command.html#command-restore)
 - [pgBackRest retention](https://pgbackrest.org/configuration.html#section-repository)
 - [R2 bucket locks](https://developers.cloudflare.com/r2/buckets/bucket-locks/)

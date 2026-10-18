@@ -21,6 +21,13 @@ listen_addresses = ''
 unix_socket_directories = '$PGHOST'
 archive_mode = on
 archive_command = 'pgbackrest archive-push %p'
+# Each recovery-sensitive setting exceeds its default, including Hosted's 200
+# connections. The restored server must inherit these from pg_control.
+max_connections = 200
+max_worker_processes = 12
+max_wal_senders = 12
+max_prepared_transactions = 4
+max_locks_per_transaction = 96
 EOF
 gosu postgres pg_ctl -D "$PGDATA" -l "$work/source.log" -w start >/dev/null
 cleanup() { gosu postgres pg_ctl -D "$PGDATA" -m immediate -w stop >/dev/null 2>&1 || true; }
