@@ -18,6 +18,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Added gated monthly PostgreSQL PITR/integrity drills with RTO/RPO metadata
+  consumed by Hosted fleet health; repo1 now retains four weekly fulls. See the
+  [root rollout gate](docs/ops/postgres-backup-restore.md). Hermetic verification
+  covers PITR and missing-WAL failure; production rollout remains root-owned.
+
 - Discord Gateway session invalidations now log a warning without a traceback
   while the worker reconnects using the existing session and retry behavior.
 - Unified current OSS dashboard, CLI, and documentation copy under the Clawdi

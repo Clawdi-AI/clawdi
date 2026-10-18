@@ -1,0 +1,51 @@
+services:
+  fixture:
+    image: ${POSTGRES_DRILL_IMAGE:?use scripts/test.sh postgres-drill}
+    entrypoint: [bash, /repo/scripts/postgres-drill/tests/integration.sh]
+    volumes:
+      - ../../..:/repo:ro
+      - fixture:/fixture
+      - scratch:/scratch
+    tmpfs:
+      - /var/lib/postgresql:rw,size=1m
+    network_mode: none
+    cpus: 2
+    mem_limit: 1g
+  checks:
+    image: ${POSTGRES_DRILL_IMAGE:?use scripts/test.sh postgres-drill}
+    user: postgres
+    entrypoint: [bash, -ceu]
+    command:
+      - |
+        test -z "$${PGBACKREST_REPO1_S3_KEY:-}"
+        bash /repo/scripts/postgres-drill/check.sh postgres "$$(cat /fixture/target)" 3600
+    volumes:
+      - ../../..:/repo:ro
+      - fixture:/fixture:ro
+      - scratch:/scratch
+    tmpfs:
+      - /var/lib/postgresql:rw,size=1m
+    network_mode: none
+    cpus: 2
+    mem_limit: 1g
+  unit:
+    image: python:3.13-slim
+    entrypoint: [python, -B, -m, unittest, discover, -s, /repo/scripts/postgres-drill/tests, -p, 'test_*.py', -v]
+    volumes:
+      - ../../..:/repo:ro
+    network_mode: none
+  lint:
+    image: ghcr.io/astral-sh/ruff:0.16.4
+    volumes:
+      - ../../..:/repo:ro
+    entrypoint: [/ruff, check, --no-cache, /repo/scripts/postgres-drill]
+    network_mode: none
+  shellcheck:
+    image: koalaman/shellcheck:v0.11.0
+    volumes:
+      - ../../..:/repo:ro
+    entrypoint: [shellcheck, /repo/scripts/postgres-drill/fetch.sh, /repo/scripts/postgres-drill/check.sh, /repo/scripts/postgres-drill/tests/integration.sh, /repo/scripts/postgres-drill/tests/run.sh, /repo/scripts/postgres-drill/tests/failure.sh]
+    network_mode: none
+volumes:
+  fixture:
+  scratch:
