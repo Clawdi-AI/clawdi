@@ -322,7 +322,7 @@ class Runner:
         root = self.command(["docker", "info", "--format", "{{.DockerRootDir}}"])
         disk = shutil.disk_usage(root)
         scratch = int(backup["info"]["size"] * 1.2) + wal_limit
-        if disk.free - scratch < max(disk.total // 4, 2 * repo_size):
+        if disk.free - scratch < disk.total // 4:
             raise ValueError("insufficient scratch headroom")
         self.phase = "restore"
         self.prepare_scratch()

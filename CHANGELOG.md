@@ -18,6 +18,12 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- PostgreSQL drills preserve recovery-sensitive settings from the restored
+  control file and reserve scratch space plus a 25% filesystem free-space floor.
+  Large WAL archives no longer impose an extra repository-size disk requirement.
+  Docker regressions cover above-default settings, invalid/missing control fields
+  and the capacity boundary; root must reinstall scripts and repeat the live gate.
+
 - PostgreSQL restore drills now accept quiet application tables while retaining
   nonempty-table and replay-recency checks. Failures report fixed check phases
   without data or diagnostics. Docker regressions cover old activity and all six
