@@ -1,8 +1,10 @@
 import fcntl
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -146,6 +148,62 @@ class SafetyTests(unittest.TestCase):
                 ["docker", "volume", "rm", own],
             ],
         )
+
+    def test_check_failures_publish_only_the_reserved_phase_and_clean_up(self):
+        config = self.root / "config.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "stanza": "test",
+                    "database": "postgres",
+                    "image": "test@sha256:" + "a" * 64,
+                    "status_dir": str(self.root),
+                }
+            )
+        )
+        phases = (
+            "checks_start",
+            "checks_promote",
+            "checks_sanity",
+            "checks_replay",
+            "checks_amcheck",
+            "checks_checksums",
+        )
+        for code, phase in enumerate(phases, start=71):
+            with self.subTest(phase=phase):
+
+                def fail_check(runner, _status, exit_code=code):
+                    runner.phase = "checks_start"
+                    runner.command(
+                        [
+                            drill.sys.executable,
+                            "-c",
+                            (
+                                "import sys; print('private-diagnostic'); "
+                                "print('private-diagnostic', file=sys.stderr); "
+                                f"sys.exit({exit_code})"
+                            ),
+                        ]
+                    )
+
+                stderr = io.StringIO()
+                with (
+                    patch.object(drill.Runner, "drill", fail_check),
+                    patch.object(drill.Runner, "cleanup_previous"),
+                    patch.object(drill.Runner, "cleanup", return_value=True) as cleanup,
+                    patch.object(drill.sys, "argv", ["run.py", str(config)]),
+                    redirect_stderr(stderr),
+                ):
+                    self.assertEqual(drill.main(), 1)
+                cleanup.assert_called_once()
+                file = self.root / "test.drill.json"
+                status = json.loads(file.read_text())
+                self.assertEqual(status["outcome"], "failed")
+                self.assertEqual(status["phase"], phase)
+                self.assertEqual(status["schema"], 1)
+                self.assertNotIn("private-diagnostic", file.read_text())
+                self.assertEqual(stderr.getvalue(), "Postgres restore drill failed\n")
 
     def test_host_lock_busy_times_out_without_cleanup_or_restore(self):
         directory = self.root / "cloud"

@@ -25,6 +25,14 @@ HERE = Path(__file__).resolve().parent
 HOST_LOCK = Path("/run/lock/clawdi-postgres-drill.lock")
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]+")
 LABEL = re.compile(r"\d{8}-\d{6}F(?:_\d{8}-\d{6}[DI])?")
+CHECK_FAILURE_PHASES = {
+    71: "checks_start",
+    72: "checks_promote",
+    73: "checks_sanity",
+    74: "checks_replay",
+    75: "checks_amcheck",
+    76: "checks_checksums",
+}
 ENV_KEYS = {
     "PGBACKREST_STANZA",
     "PGBACKREST_REPO1_TYPE",
@@ -159,6 +167,8 @@ class Runner:
             check=False,
         )
         if result.returncode:
+            if self.phase == "checks_start":
+                self.phase = CHECK_FAILURE_PHASES.get(result.returncode, self.phase)
             raise RuntimeError("command failed")
         return result.stdout.strip()
 
@@ -321,12 +331,13 @@ class Runner:
             env_file=env_file,
             stdin=(HERE / "fetch.sh").read_text(),
         )
-        self.phase = "checks"
+        self.phase = "checks_sanity"
         sanity = Path(config["sanity_sql"]).resolve(strict=True).read_text()
         # Supply SQL through stdin; neither it nor customer data appears in argv.
         self.container(
             ["sh", "-c", "cat > /scratch/sanity.sql"], offline=True, stdin=sanity
         )
+        self.phase = "checks_start"
         replayed = int(
             self.container(
                 [

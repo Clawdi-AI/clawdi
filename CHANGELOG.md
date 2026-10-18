@@ -18,6 +18,11 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- PostgreSQL restore drills now accept quiet application tables while retaining
+  nonempty-table and replay-recency checks. Failures report fixed check phases
+  without data or diagnostics. Docker regressions cover old activity and all six
+  check failures; root must reinstall scripts/sanity SQL and repeat the live gate.
+
 - Fixed PostgreSQL drill preflight running pgBackRest as root. Repository reads,
   restores and WAL fetch now run as postgres, with separate scratch ownership
   setup. Docker regression coverage uses the production image's default user

@@ -28,6 +28,17 @@ trap cleanup EXIT
 gosu postgres psql -Xq -v ON_ERROR_STOP=1 <<'SQL'
 CREATE TABLE drill_rows (id int PRIMARY KEY, updated_at timestamptz NOT NULL);
 INSERT INTO drill_rows VALUES (1, clock_timestamp());
+-- Both products' core tables are nonempty, with no recent application activity.
+CREATE TABLE users (id int PRIMARY KEY);
+CREATE TABLE subscriptions (id int PRIMARY KEY);
+CREATE TABLE v2_hosted_deployments (id int PRIMARY KEY, updated_at timestamptz NOT NULL);
+CREATE TABLE agent_environments (id int PRIMARY KEY);
+CREATE TABLE sessions (id int PRIMARY KEY, updated_at timestamptz NOT NULL);
+INSERT INTO users VALUES (1);
+INSERT INTO subscriptions VALUES (1);
+INSERT INTO agent_environments VALUES (1);
+INSERT INTO v2_hosted_deployments VALUES (1, '2000-01-01T00:00:00Z');
+INSERT INTO sessions VALUES (1, '2000-01-01T00:00:00Z');
 SQL
 gosu postgres pgbackrest stanza-create
 gosu postgres pgbackrest --type=full backup
