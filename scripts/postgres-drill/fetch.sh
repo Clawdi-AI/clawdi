@@ -4,7 +4,7 @@ set -euo pipefail
 target=$1
 backup=$2
 wal_limit=$3
-install -d -o postgres -g postgres -m 700 /scratch/data /scratch/wal
+install -d -o postgres -g postgres -m 700 /scratch /scratch/data /scratch/wal
 if [[ -n $(ls -A /scratch/data) ]]; then exit 1; fi
 export PGBACKREST_PG1_PATH=/scratch/data
 export PGBACKREST_LOCK_PATH=/tmp/pgbackrest

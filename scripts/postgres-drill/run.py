@@ -22,6 +22,7 @@ from pathlib import Path
 from uuid import uuid4
 
 HERE = Path(__file__).resolve().parent
+HOST_LOCK = Path("/run/lock/clawdi-postgres-drill.lock")
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]+")
 LABEL = re.compile(r"\d{8}-\d{6}F(?:_\d{8}-\d{6}[DI])?")
 ENV_KEYS = {
@@ -109,6 +110,43 @@ class Runner:
             "--tmpfs=/var/lib/postgresql:rw,size=1m",
         ]
         self.phase = "preflight"
+
+    def cleanup_previous(self) -> None:
+        """Called only while holding the host-wide lock, before starting work.
+
+        The fixed-length hex suffix distinguishes Cloud from the similarly
+        named Hosted stanza. Never trust Docker's substring filters alone.
+        """
+        prefix = f"pg-drill-{self.stanza}-"
+        pattern = re.compile(rf"{re.escape(prefix)}[0-9a-f]{{12}}")
+        containers = self.command(
+            [
+                "docker",
+                "ps",
+                "--all",
+                "--filter",
+                f"name={prefix}",
+                "--format",
+                "{{.Names}}",
+            ]
+        )
+        for name in containers.splitlines():
+            if pattern.fullmatch(name) and name != self.name:
+                self.command(["docker", "rm", "--force", "--volumes", name])
+        volumes = self.command(
+            [
+                "docker",
+                "volume",
+                "ls",
+                "--filter",
+                f"name={prefix}",
+                "--format",
+                "{{.Name}}",
+            ]
+        )
+        for name in volumes.splitlines():
+            if pattern.fullmatch(name) and name != self.volume:
+                self.command(["docker", "volume", "rm", name])
 
     def command(self, args: list[str], *, stdin: str | None = None) -> str:
         timeout = max(1, self.remaining - time.monotonic())
@@ -303,16 +341,32 @@ def main() -> int:
         if not config.get("enabled", False):
             return 0
         runner = Runner(config)
-        with (runner.status_dir / f".{runner.stanza}.lock").open("a") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            started = time.time()
-            status = {
-                "schema": 1,
-                "stanza": runner.stanza,
-                "outcome": "running",
-                "started_at_epoch": int(started),
-            }
-            path = runner.status_dir / f"{runner.stanza}.drill.json"
+        started = time.time()
+        status = {
+            "schema": 1,
+            "stanza": runner.stanza,
+            "outcome": "running",
+            "started_at_epoch": int(started),
+        }
+        path = runner.status_dir / f"{runner.stanza}.drill.json"
+        # Fixed host path, independent of each stanza's status/config paths.
+        with HOST_LOCK.open("a") as lock:
+            wait_until = min(time.monotonic() + 300, runner.remaining)
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= wait_until:
+                        status.update(
+                            outcome="failed",
+                            phase="lock_timeout",
+                            finished_at_epoch=int(time.time()),
+                            rto_seconds=round(time.time() - started, 2),
+                        )
+                        publish(path, status)
+                        return 1
+                    time.sleep(1)
             publish(path, status)
 
             def interrupted(_signum, _frame):
@@ -321,20 +375,18 @@ def main() -> int:
             signal.signal(signal.SIGTERM, interrupted)
             signal.signal(signal.SIGINT, interrupted)
             signal.signal(signal.SIGALRM, interrupted)
-            signal.alarm(int(config.get("timeout_seconds", 14400)))
+            signal.alarm(max(1, int(runner.remaining - time.monotonic())))
             try:
+                runner.phase = "cleanup_previous"
+                runner.cleanup_previous()
+                runner.phase = "preflight"
                 runner.drill(status)
                 status["outcome"] = "success"
-            except (
-                OSError,
-                ValueError,
-                KeyError,
-                StopIteration,
-                RuntimeError,
-                subprocess.SubprocessError,
-                TimeoutError,
-            ):
+            except Exception as error:
                 status.update(outcome="failed", phase=runner.phase)
+                # The outer CLI boundary catches this normalized failure and
+                # emits only a fixed message, never the exception or traceback.
+                raise RuntimeError("Postgres restore drill failed") from error
             finally:
                 signal.alarm(0)
                 if not runner.cleanup():
@@ -345,9 +397,16 @@ def main() -> int:
                 )
                 publish(path, status)
         return int(status["outcome"] != "success")
-    except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError):
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ):
         # Never stringify exceptions: command stderr/config may contain secrets.
-        print("Postgres maintenance configuration/preflight failed", file=sys.stderr)
+        print("Postgres restore drill failed", file=sys.stderr)
         return 1
 
 

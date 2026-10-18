@@ -43,15 +43,17 @@ The entire run is bounded to four hours. Before restoration, repository object
 sizes and uncompressed backup size are read; required scratch space includes
 120% of the uncompressed backup plus the 16 GiB WAL cap. Remaining space on
 DockerRootDir's filesystem must be at least **25% of total and twice the entire
-repository size**. WAL prefetch enforces its cap during download. The per-stanza
-host lock prevents overlapping drills for that stanza. These are headroom
+repository size**. WAL prefetch enforces its cap during download. The host-wide
+`/run/lock/clawdi-postgres-drill.lock` serializes both stanzas.
+A busy lock waits at most five minutes, then publishes `failed/lock_timeout`.
+After acquiring it, the runner removes earlier killed-run resources matching
+only its exact stanza plus the generated 12-hex suffix. These are headroom
 checks, not a disk quota; concurrent unrelated disk consumption remains a risk.
 
 Finally the runner forcibly removes its own named container and scratch volume,
 including on timeout or SIGTERM. Cleanup failure is a failed result. No command
 diagnostics or application data are published. A power loss/SIGKILL can bypass
-cleanup: root must remove only the `pg-drill-<stanza>-<random>` resources from the
-interrupted run before retrying. A running status older than four hours plus
+cleanup; the next locked run removes that stanza's leftover scratch resources. A running status older than four hours plus
 five minutes alerts. Scratch shares the DB host under the approved scope;
 **off-host drills remain a later improvement**. Monitor host I/O during rollout.
 

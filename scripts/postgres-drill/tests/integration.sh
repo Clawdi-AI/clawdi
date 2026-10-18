@@ -4,7 +4,10 @@
 set -euo pipefail
 work=/fixture
 mkdir -p "$work"/socket "$work"/repo /scratch
-chown -R postgres:postgres "$work" /scratch
+chown -R postgres:postgres "$work"
+# Docker's empty volume starts root-owned. The reader must prepare its parent
+# so the credential-free postgres user can write its private recovery log.
+test "$(stat -c %u /scratch)" = 0
 export PGDATA=$work/source PGHOST=$work/socket PGUSER=postgres PGDATABASE=postgres
 export PGBACKREST_STANZA=drill-test
 export PGBACKREST_PG1_PATH=$PGDATA PGBACKREST_PG1_SOCKET_PATH=$PGHOST
