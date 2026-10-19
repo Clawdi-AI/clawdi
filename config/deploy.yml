@@ -279,6 +279,9 @@ accessories:
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     options:
       ulimit: nofile=65536:65536
+      # This host has no IPv6 route. Without no-aaaa, R2 lookups can return only
+      # AAAA records, and pgBackRest archive-push then fails (2026-10-19).
+      dns-option: no-aaaa
     # 512MB buffers (default 128MB is tiny for 16G host); idle-in-transaction
     # timeout guards against the connection-pile-up-behind-locks failure mode.
     cmd: >-
@@ -319,6 +322,10 @@ accessories:
     image: *postgres-image
     host: <%= ENV.fetch("DEPLOY_HOST") %>
     cmd: gosu postgres supercronic /etc/pgbackrest/backup-cron
+    options:
+      # This host has no IPv6 route. Without no-aaaa, R2 lookups can return only
+      # AAAA records, and pgBackRest archive-push then fails (2026-10-19).
+      dns-option: no-aaaa
     volumes:
       - /home/phala/clawdi-db-status/cloud:/var/run/clawdi-db-status
       - /home/phala/clawdi-postgres/data:/var/lib/postgresql
