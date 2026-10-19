@@ -115,6 +115,8 @@ class Runner:
             "--blkio-weight=100",
             "--security-opt=no-new-privileges",
             "--log-driver=none",
+            # The DB host has no IPv6 route; resolve R2 to IPv4 only (glibc no-aaaa).
+            "--dns-option=no-aaaa",
             "--tmpfs=/var/lib/postgresql:rw,size=1m",
         ]
         self.phase = "preflight"
