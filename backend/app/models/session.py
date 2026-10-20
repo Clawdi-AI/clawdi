@@ -24,6 +24,15 @@ from app.models.base import Base, TimestampMixin
 from app.models.project import Project
 
 
+class SessionSnapshotGcCandidate(Base):
+    """Durable reader grace before collecting an unreferenced snapshot."""
+
+    __tablename__ = "session_snapshot_gc_candidates"
+
+    file_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    unreferenced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class AgentEnvironment(Base, TimestampMixin):
     __tablename__ = "agent_environments"
     # `id` is the stable agent identity. `registration_key` is an

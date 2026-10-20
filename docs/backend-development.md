@@ -111,14 +111,25 @@ executor work. An upload timeout never publishes its eventual result.
 The channels worker runs `SessionSnapshotRetentionWorker` every five minutes
 for S3 stores. It lists at most 1,000 objects per run, advances its cursor
 across runs, and limits each run to 60 seconds. It collects only well-formed
-keys in the new snapshot prefix older than 24 hours. A fresh database check
-immediately before each delete preserves all current Session keys and snapshot
-share keys that are active or were revoked within 24 hours. Database sessions
-close before storage I/O. No inline deletion can remove bytes an existing
-reader is fetching; legacy keys are outside this sweep. Restarts restart the
-cursor safely, and repeated deletes are idempotent. Never apply an expiry
-lifecycle rule to the live snapshot prefix. Local file stores are outside this
-S3 inventory sweep.
+keys in the new snapshot prefix older than 24 hours. Unreferenced keys enter
+`session_snapshot_gc_candidates` and receive a further 24-hour reader grace
+from that observation, even if the object was published much earlier. The
+expand-only migration leaves existing rows and objects untouched; older code
+ignores the table, and a worker with no table skips collection. An empty table
+starts discovery and cannot delete anything until the grace expires. Downgrade
+only forgets candidates and never deletes stored objects.
+
+At most 1,000 due candidates are processed per run, independently of listing
+progress. A fresh database check immediately before each delete preserves all
+current Session keys and snapshot share keys that are active or were revoked
+within 24 hours. The publication deadline prevents old unreferenced attempts
+from becoming current again. Database sessions close before storage I/O. The
+separate reader grace protects requests that already loaded a key before it
+was superseded; S3 reads themselves have a 30-second deadline. Legacy keys are
+outside this sweep. Restarts restart the listing cursor safely while retaining
+candidate timestamps; repeated deletes are idempotent, including a delete that
+succeeded before a database failure. Never apply an expiry lifecycle rule to
+the live snapshot prefix. Local file stores are outside this S3 inventory sweep.
 
 Inspect one page without deleting anything, using the configured S3 store and
 database:
@@ -128,7 +139,8 @@ cd backend
 uv run python -m app.workers.session_snapshots --dry-run
 ```
 
-Done: output is `snapshot_sweep candidates=<count> dry_run=True`; no object
+Done: output is `snapshot_sweep candidates=<due-unreferenced-count> dry_run=True`;
+no candidates are recorded in dry-run mode and no object
 keys, credentials, or contents are printed. The existing channels-worker
 process installs the periodic sweep automatically; no separate cron is needed.
 

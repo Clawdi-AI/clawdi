@@ -389,15 +389,37 @@ async def test_s3_trickling_body_cannot_extend_total_deadline(s3_store, monkeypa
     assert await store.get("after-trickle") == b"ok"
 
 
+@pytest.fixture
+async def snapshot_gc_sessions(engine, seed_user):
+    from sqlalchemy import delete
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.models.session import SessionSnapshotGcCandidate
+
+    factory = async_sessionmaker(engine)
+    try:
+        yield factory
+    finally:
+        async with factory() as db:
+            await db.execute(
+                delete(SessionSnapshotGcCandidate).where(
+                    SessionSnapshotGcCandidate.file_key.like(
+                        f"session-snapshots/v1/{seed_user.id}/%"
+                    )
+                )
+            )
+            await db.commit()
+
+
 @pytest.mark.committed_db
 async def test_snapshot_sweep_retains_live_references_and_recent_objects(
-    s3_store, db_session, seed_user, engine
+    s3_store, db_session, seed_user, snapshot_gc_sessions
 ):
     import uuid
 
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from sqlalchemy import select
 
-    from app.models.session import Session
+    from app.models.session import Session, SessionSnapshotGcCandidate
     from app.models.session_share import SessionShare
     from app.services.session_snapshot_retention_worker import (
         SNAPSHOT_PREFIX,
@@ -435,24 +457,56 @@ async def test_snapshot_sweep_retains_live_references_and_recent_objects(
                 revoked_at=revoked,
             )
         )
+    # Due candidates still require a current reference check, even when the
+    # listing has not reached their keys in this run.
+    for live in [current, shared, recently_revoked]:
+        db_session.add(
+            SessionSnapshotGcCandidate(file_key=live, unreferenced_at=now - timedelta(days=2))
+        )
     await db_session.commit()
-    worker = SessionSnapshotRetentionWorker(async_sessionmaker(engine), file_store=store)
-    assert await worker.run_once(now=now, dry_run=True) == 1
-    assert "/contract-bucket/" + orphan in handler.objects
-    assert await worker.run_once(now=now) == 1
-    assert "/contract-bucket/" + orphan not in handler.objects
+    worker = SessionSnapshotRetentionWorker(snapshot_gc_sessions, file_store=store)
+    assert await worker.run_once(now=now, dry_run=True) == 0
     assert await worker.run_once(now=now) == 0
-    for keep in [current, shared, recently_revoked, recent, "sessions/legacy.json"]:
+    assert "/contract-bucket/" + orphan in handler.objects
+    async with snapshot_gc_sessions() as db:
+        assert (
+            await db.scalar(
+                select(SessionSnapshotGcCandidate.unreferenced_at).where(
+                    SessionSnapshotGcCandidate.file_key == orphan
+                )
+            )
+            == now
+        )
+    # A long-lived current object just became unreferenced. Its old object
+    # timestamp must not let the sweep race a reader holding the prior key.
+    row.file_key = None
+    await db_session.commit()
+    assert await worker.run_once(now=now + timedelta(hours=1)) == 0
+    worker = SessionSnapshotRetentionWorker(snapshot_gc_sessions, file_store=store)
+    assert await worker.run_once(now=now + timedelta(hours=24), dry_run=True) == 1
+    assert "/contract-bucket/" + orphan in handler.objects
+    assert await worker.run_once(now=now + timedelta(hours=24)) == 1
+    assert "/contract-bucket/" + orphan not in handler.objects
+    assert "/contract-bucket/" + current in handler.objects
+    assert await worker.run_once(now=now + timedelta(hours=25)) == 1
+    assert "/contract-bucket/" + current not in handler.objects
+    assert await worker.run_once(now=now + timedelta(hours=25)) == 0
+    # Model a successful object delete followed by a failed candidate commit.
+    db_session.add(
+        SessionSnapshotGcCandidate(file_key=orphan, unreferenced_at=now - timedelta(days=2))
+    )
+    await db_session.commit()
+    assert await worker.run_once(now=now + timedelta(hours=25)) == 1
+    assert await worker.run_once(now=now + timedelta(hours=25)) == 0
+    for keep in [shared, recently_revoked, recent, "sessions/legacy.json"]:
         assert "/contract-bucket/" + keep in handler.objects
 
 
 @pytest.mark.committed_db
 async def test_snapshot_sweep_pages_at_most_1000_objects_without_starvation(
-    s3_store, engine, seed_user
+    s3_store, seed_user, snapshot_gc_sessions
 ):
     import uuid
-
-    from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.services.session_snapshot_retention_worker import (
         SNAPSHOT_PREFIX,
@@ -466,10 +520,37 @@ async def test_snapshot_sweep_pages_at_most_1000_objects_without_starvation(
         key = f"{SNAPSHOT_PREFIX}{seed_user.id}/{session_id}/{index:064x}-{uuid.uuid4()}.json"
         handler.objects["/contract-bucket/" + key] = (b"old", None)
         handler.modified["/contract-bucket/" + key] = now - timedelta(days=2)
-    worker = SessionSnapshotRetentionWorker(async_sessionmaker(engine), file_store=store)
-    assert await worker.run_once(now=now, dry_run=True) == 1000
-    assert await worker.run_once(now=now, dry_run=True) == 1
-    assert await worker.run_once(now=now, dry_run=True) == 1000
-    # Dry runs never send DELETE, and use real boto pagination parameters.
+    worker = SessionSnapshotRetentionWorker(snapshot_gc_sessions, file_store=store)
+    for _ in range(3):
+        assert await worker.run_once(now=now, dry_run=True) == 0
     assert [method for method, _, _ in handler.requests] == ["GET", "GET", "GET"]
     assert len(handler.objects) == 1001
+    assert await worker.run_once(now=now) == 0
+    assert await worker.run_once(now=now) == 0
+    # Restarting the worker retains the durable grace and delete budget.
+    worker = SessionSnapshotRetentionWorker(snapshot_gc_sessions, file_store=store)
+    assert await worker.run_once(now=now + timedelta(days=1)) == 1000
+    assert len(handler.objects) == 1
+    assert await worker.run_once(now=now + timedelta(days=1)) == 1
+    assert await worker.run_once(now=now + timedelta(days=1)) == 0
+
+
+async def test_snapshot_sweep_is_noop_before_candidate_migration(s3_store, engine):
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.services.session_snapshot_retention_worker import SessionSnapshotRetentionWorker
+
+    # A real connection whose search path has no application tables models
+    # starting the new worker against the previous schema during rollout.
+    old_schema_engine = create_async_engine(
+        engine.url, connect_args={"server_settings": {"search_path": "pg_catalog"}}
+    )
+    store, handler = s3_store
+    try:
+        worker = SessionSnapshotRetentionWorker(
+            async_sessionmaker(old_schema_engine), file_store=store
+        )
+        assert await worker.run_once() == 0
+        assert handler.requests == []
+    finally:
+        await old_schema_engine.dispose()
