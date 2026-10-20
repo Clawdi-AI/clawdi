@@ -81,6 +81,76 @@ uv run ruff format --check .
 uv run python -m compileall app scripts tests alembic
 ```
 
+## Object storage and upload capacity
+
+Snapshot, event-generation chunk, and event-append uploads release their
+request transaction before the object write. After writing, they reacquire
+current user/key authority, scope, Agent fencing, and row locks, then repeat
+identity, receipt, and content/head checks before publishing. A concurrent
+change returns a conflict; a revoked credential cannot publish a stored object.
+Batch sync can therefore update the same Session while its upload is waiting.
+This follows [SQLAlchemy's short-transaction guidance](https://docs.sqlalchemy.org/en/20/errors.html#queuepool-limit-of-size-x-overflow-y-reached-connection-timed-out-timeout-z).
+
+New snapshot keys are `session-snapshots/v1/<user>/<session>/<hash>-<uuid>.json`.
+Each attempt owns its object, so a late storage completion or failed database
+commit cannot overwrite committed bytes. Existing `Session.file_key` values,
+including legacy overwrite keys, remain readable. Failed publication leaves
+an unreferenced object for collection; retries write a fresh object. Snapshot
+publication has a two-minute deadline after storage completes.
+
+All S3 operations, including body reads and sweep listings/deletes, have a
+30-second caller deadline including admission. Botocore uses a five-second
+connect timeout, ten-second read timeout, and standard retries with two total
+attempts. These are [per-attempt settings](https://botocore.amazonaws.com/v1/documentation/api/latest/reference/config.html),
+so the async facade also enforces the total deadline. Storage errors return a
+sanitized 503 with `Retry-After: 1`. Python cannot cancel a running boto3 thread:
+each process admits at most eight operations, and a timed-out operation retains
+its slot until the actual work finishes. Waiting callers do not enqueue more
+executor work. An upload timeout never publishes its eventual result.
+
+The channels worker runs `SessionSnapshotRetentionWorker` every five minutes
+for S3 stores. It lists at most 1,000 objects per run, advances its cursor
+across runs, and limits each run to 60 seconds. It collects only well-formed
+keys in the new snapshot prefix older than 24 hours. A fresh database check
+immediately before each delete preserves all current Session keys and snapshot
+share keys that are active or were revoked within 24 hours. Database sessions
+close before storage I/O. No inline deletion can remove bytes an existing
+reader is fetching; legacy keys are outside this sweep. Restarts restart the
+cursor safely, and repeated deletes are idempotent. Never apply an expiry
+lifecycle rule to the live snapshot prefix. Local file stores are outside this
+S3 inventory sweep.
+
+Inspect one page without deleting anything, using the configured S3 store and
+database:
+
+```bash
+cd backend
+uv run python -m app.workers.session_snapshots --dry-run
+```
+
+Done: output is `snapshot_sweep candidates=<count> dry_run=True`; no object
+keys, credentials, or contents are printed. The existing channels-worker
+process installs the periodic sweep automatically; no separate cron is needed.
+
+Verify uploads, deadlines, and collection with disposable PostgreSQL and the
+local S3 HTTP fixture:
+
+```bash
+scripts/test.sh backend tests/test_session_upload_pool.py tests/test_file_store_s3.py tests/test_session_events.py tests/test_sessions.py
+```
+
+Done: blocked writes leave a two-slot pool available to same-Session batches,
+runtime manifests, and sync lease refresh; revoked keys and failed writes do
+not publish; trickling responses hit the caller deadline; collection preserves
+live references, grace periods, pagination limits, and dry runs.
+
+Telegram `getUpdates` already releases authentication before its bounded local
+wait, and its proxy releases before provider I/O. SSE authentication, lease,
+and visibility queries already own short sessions. Telegram binding-fenced
+webhook delivery and command/menu reconciliation still retain their existing
+transaction fences across HTTP; those paths need a separate deadline review
+without weakening retirement/ownership guarantees.
+
 ## Channel provider URLs
 
 Operator-configured Discord and Telegram API base URLs must use HTTPS and a
@@ -585,13 +655,9 @@ pre-ping I/O. A bounded task group cancels and joins unfinished checkouts on
 failure or cancellation; existing cleanup returns all reserved connections.
 Renders run concurrently. Connections stay reserved across commits and repairs,
 so no manifest can hold auth while competing for a second checkout.
-The shared eight-slot web pool still supports four concurrent manifests and
-retains all eight connections after bursts (pool size 8, overflow 0), rather
-than discarding overflow connections and repeatedly initializing replacements.
-Connections remain lazy; this changes retention, not the maximum connection
-budget. The pool remains fully available to other traffic when manifests are
-idle. Neither
-control slot is borrowed. Signed Project Skill downloads retain only immutable
+The shared ten-slot web pool supports five concurrent manifests and retains
+connections after bursts (pool size 10, overflow 0). Connections remain lazy. The pool remains fully available to other traffic when manifests are
+idle. Neither control slot is borrowed. Signed Project Skill downloads retain only immutable
 file metadata and close their read-only lookup before object storage I/O.
 JWT signature/JWKS verification precedes pair acquisition; principal authority
 is still resolved under the original transaction locks afterwards.

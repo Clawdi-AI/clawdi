@@ -436,6 +436,7 @@ async def test_staging_uploads_and_retries_refresh_retention_activity(
             files={"file": ("0.ndjson", data, "application/x-ndjson")},
         )
         assert uploaded.status_code == 200, uploaded.text
+        generation = await db_session.merge(generation)
         await db_session.refresh(generation)
         assert generation.updated_at >= before_upload
         assert generation.status == "staging"
@@ -493,6 +494,7 @@ async def test_legacy_batch_does_not_request_snapshot_over_committed_events(
     assert legacy_batch.status_code == 200, legacy_batch.text
     assert legacy_batch.json()["needs_content"] == []
 
+    session = await db_session.merge(session)
     await db_session.refresh(session)
     assert session.content_protocol == "events-v1"
     assert str(session.event_generation_id) == generation
@@ -798,6 +800,7 @@ async def test_events_v1_strict_append_idempotency_and_safe_projection(
         files={"file": ("6.ndjson", second_data, "application/x-ndjson")},
     )
     assert second_append.status_code == 200, second_append.text
+    session = await db_session.merge(session)
     await db_session.refresh(session)
     assert session.event_head_hash == second_head
     assert session.content_hash == second_head
@@ -1147,6 +1150,7 @@ async def test_event_search_rebuild_fences_same_head_generation_replacement(
         local_session_id=local_id,
         events=events,
     )
+    session = await db_session.merge(session)
     await db_session.refresh(session)
     session.search_index_revision = None
     await db_session.commit()
@@ -1295,6 +1299,7 @@ async def test_generation_commit_does_not_publish_an_incomplete_search_projectio
     )
     assert conflicting_retry.status_code == 409, conflicting_retry.text
     assert conflicting_retry.json() == {"detail": "Event chunk search projection conflict"}
+    seed_user = await db_session.merge(seed_user)
     await db_session.refresh(seed_user)
     await db_session.refresh(chunk)
     assert chunk.search_indexed_at is None
@@ -1317,6 +1322,7 @@ async def test_generation_commit_does_not_publish_an_incomplete_search_projectio
         },
     )
     assert committed.status_code == 200, committed.text
+    session = await db_session.merge(session)
     await db_session.refresh(session)
     assert session.search_index_revision is None
     before_rebuild = (

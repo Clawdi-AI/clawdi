@@ -34,9 +34,11 @@ from app.core.auth import (
     get_auth,
     is_connected_agent_principal,
     require_any_scope,
+    require_auth_scopes,
     require_oauth_cli_auth,
     require_scope,
     require_user_session,
+    revalidate_auth_context,
 )
 from app.core.config import settings
 from app.core.database import get_session
@@ -3174,6 +3176,71 @@ async def delete_session(
         raise
 
 
+async def _snapshot_upload_session(
+    db: AsyncSession,
+    auth: AuthContext,
+    local_session_id: str,
+    environment_id: UUID | None,
+    profile_key: str | None,
+    fence_headers: ConnectedAgentFenceHeaders,
+) -> Session:
+    bound_env = _bound_env_id(auth)
+    stmt = select(Session).where(
+        Session.user_id == auth.user_id,
+        Session.local_session_id == local_session_id,
+    )
+    if bound_env is not None:
+        # Bound api_keys can only write within their env. A NULL
+        # `environment_id` (orphan from a since-deleted env) is
+        # treated as "not yours" — without this an orphaned
+        # session would be a silent shared write target.
+        stmt = stmt.where(Session.origin_environment_id == bound_env)
+    elif environment_id is not None:
+        stmt = stmt.where(Session.origin_environment_id == environment_id)
+    if profile_key is not None:
+        stmt = stmt.where(Session.origin_profile_key == profile_key)
+    sessions = list((await db.execute(stmt)).scalars())
+    session = require_session_match(
+        sessions,
+        profile_key,
+        origin_required_message=(
+            "More than one Agent owns this local_session_id; "
+            "send environment_id in the upload form or use an "
+            "environment-bound credential."
+        ),
+    )
+    if session.origin_environment_id is not None:
+        await require_connected_agent_fence(
+            db,
+            auth=auth,
+            agent_ids={session.origin_environment_id},
+            headers=fence_headers,
+            lock=True,
+        )
+    sessions = list(
+        (
+            await db.execute(stmt.with_for_update().execution_options(populate_existing=True))
+        ).scalars()
+    )
+    session = require_session_match(
+        sessions,
+        profile_key,
+        origin_required_message=(
+            "More than one Agent owns this local_session_id; "
+            "send environment_id in the upload form or use an "
+            "environment-bound credential."
+        ),
+    )
+
+    if session.content_protocol == "events-v1":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Session has been upgraded to events-v1",
+        )
+
+    return session
+
+
 @router.post("/sessions/{local_session_id}/upload")
 async def upload_session_content(
     request: Request,
@@ -3195,55 +3262,14 @@ async def upload_session_content(
     if profile_key is None and (await request.form()).get("profile_key") == "":
         profile_key = ""
     with request_stage(request.scope, "upload_lookup_lock_ms"):
-        bound_env = _bound_env_id(auth)
-        stmt = select(Session).where(
-            Session.user_id == auth.user_id,
-            Session.local_session_id == local_session_id,
-        )
-        if bound_env is not None:
-            # Bound api_keys can only write within their env. A NULL
-            # `environment_id` (orphan from a since-deleted env) is
-            # treated as "not yours" — without this an orphaned
-            # session would be a silent shared write target.
-            stmt = stmt.where(Session.origin_environment_id == bound_env)
-        elif environment_id is not None:
-            stmt = stmt.where(Session.origin_environment_id == environment_id)
-        if profile_key is not None:
-            stmt = stmt.where(Session.origin_profile_key == profile_key)
-        sessions = list((await db.execute(stmt)).scalars())
-        session = require_session_match(
-            sessions,
-            profile_key,
-            origin_required_message=(
-                "More than one Agent owns this local_session_id; "
-                "send environment_id in the upload form or use an "
-                "environment-bound credential."
-            ),
-        )
-        if session.origin_environment_id is not None:
-            await require_connected_agent_fence(
-                db,
-                auth=auth,
-                agent_ids={session.origin_environment_id},
-                headers=fence_headers,
-                lock=True,
-            )
-        sessions = list((await db.execute(stmt.with_for_update())).scalars())
-        session = require_session_match(
-            sessions,
-            profile_key,
-            origin_required_message=(
-                "More than one Agent owns this local_session_id; "
-                "send environment_id in the upload form or use an "
-                "environment-bound credential."
-            ),
+        session = await _snapshot_upload_session(
+            db, auth, local_session_id, environment_id, profile_key, fence_headers
         )
 
-        if session.content_protocol == "events-v1":
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                "Session has been upgraded to events-v1",
-            )
+    upload_identity = (session.id, session.content_hash, session.content_uploaded_at)
+    # close() rolls back and detaches, retaining loaded auth values without
+    # retaining a connection during body analysis or object storage I/O.
+    await db.close()
 
     # Stream the upload in bounded chunks, refusing once total
     # bytes cross the cap. The global `BodySizeLimitMiddleware`
@@ -3291,48 +3317,76 @@ async def upload_session_content(
             },
         )
 
-    fk = _session_content_key(session)
+    # Per-attempt immutable objects isolate failed publishes, late boto3
+    # completion, and concurrent uploads. Existing file_key values still read.
+    fk = f"session-snapshots/v1/{auth.user_id}/{session.id}/{content_hash}-{uuid4()}.json"
     with request_stage(request.scope, "upload_storage_ms"):
         await file_store.put(fk, data)
 
-    session.file_key = fk
-    session.content_hash = content_hash
-    session.content_uploaded_at = datetime.now(UTC)
+    # The sweeper only collects day-old objects; an attempt may publish for
+    # at most two minutes after storage. A paused/abandoned attempt fails closed.
+    try:
+        async with asyncio.timeout(120):
+            auth = await revalidate_auth_context(db, auth)
+            require_auth_scopes(auth, "sessions:write")
+            with request_stage(request.scope, "upload_lookup_lock_ms"):
+                session = await _snapshot_upload_session(
+                    db, auth, local_session_id, environment_id, profile_key, fence_headers
+                )
 
-    # Extract `related_refs` server-side from the just-uploaded
-    # messages for sidebar chips. Best-effort — a parse
-    # failure here MUST NOT fail the upload (the bytes are already in
-    # the file store and the row's content_hash is the source of truth;
-    # we'd rather have a session with NULL related_refs than a
-    # half-committed upload).
-    session.related_refs = analysis.related_refs
-    with request_stage(request.scope, "upload_index_ms"):
-        await replace_snapshot_search_index(
-            db,
-            session,
-            content_hash,
-            analysis.search_messages,
-        )
-    if analysis.parse_error is not None:
-        # Preserve the worker-thread traceback for diagnosing malformed
-        # snapshots without failing their best-effort upload.
-        error = analysis.parse_error
-        log.error(
-            "refs_extract_failed local_session_id=%s — leaving field NULL",
-            local_session_id,
-            exc_info=(type(error), error, error.__traceback__),
-        )
+            if upload_identity != (session.id, session.content_hash, session.content_uploaded_at):
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "session_content_hash_mismatch",
+                        "message": "Session changed during upload",
+                    },
+                )
 
-    with request_stage(request.scope, "upload_commit_ms"):
-        await stage_session_sync(
-            db,
-            session,
-            user=auth.user,
-            message_count=len(analysis.search_messages),
-            projection_complete=analysis.parse_error is None,
-        )
-        await notify_session_content_changed(db, session.id)
-        await db.commit()
+            session.file_key = fk
+            session.content_hash = content_hash
+            session.content_uploaded_at = datetime.now(UTC)
+
+            # Extract `related_refs` server-side from the just-uploaded
+            # messages for sidebar chips. Best-effort — a parse
+            # failure here MUST NOT fail the upload (the bytes are already in
+            # the file store and the row's content_hash is the source of truth;
+            # we'd rather have a session with NULL related_refs than a
+            # half-committed upload).
+            session.related_refs = analysis.related_refs
+            with request_stage(request.scope, "upload_index_ms"):
+                await replace_snapshot_search_index(
+                    db,
+                    session,
+                    content_hash,
+                    analysis.search_messages,
+                )
+            if analysis.parse_error is not None:
+                # Preserve the worker-thread traceback for diagnosing malformed
+                # snapshots without failing their best-effort upload.
+                error = analysis.parse_error
+                log.error(
+                    "refs_extract_failed local_session_id=%s — leaving field NULL",
+                    local_session_id,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+
+            with request_stage(request.scope, "upload_commit_ms"):
+                await stage_session_sync(
+                    db,
+                    session,
+                    user=auth.user,
+                    message_count=len(analysis.search_messages),
+                    projection_complete=analysis.parse_error is None,
+                )
+                await notify_session_content_changed(db, session.id)
+                await db.commit()
+    except TimeoutError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Session publication temporarily unavailable",
+            headers={"Retry-After": "1"},
+        ) from None
 
     return SessionUploadResponse(status="uploaded", file_key=fk, content_hash=content_hash)
 

@@ -29,6 +29,7 @@ from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.principal_lifecycle_cleanup_worker import PrincipalLifecycleCleanupWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 from app.services.session_event_retention_worker import SessionEventRetentionWorker
+from app.services.session_snapshot_retention_worker import SessionSnapshotRetentionWorker
 from app.workers.channels import (
     ChannelWorkerHealth,
     _handle_health_request,
@@ -52,6 +53,7 @@ def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention
         ChannelMessageRetentionWorker,
         RuntimeObservationRetentionWorker,
         SessionEventRetentionWorker,
+        SessionSnapshotRetentionWorker,
         ControlPlaneAuditRetentionWorker,
     )
 

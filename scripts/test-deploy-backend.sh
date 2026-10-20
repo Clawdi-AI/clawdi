@@ -66,7 +66,7 @@ image="ghcr.io/clawdi-ai/clawdi-backend:${CURRENT_IMAGE}"
 if [[ -f "${FAKE_LOG}.${role}.deployed" ]]; then
 	image="ghcr.io/clawdi-ai/clawdi-backend:${DEPLOY_IMAGE_VERSION}"
 	case "${role}" in
-		web) pool=8:0:5; workers=2 ;;
+		web) pool=10:0:5; workers=2 ;;
 		channels-worker) pool=10:10:5 ;;
 		embedding-worker) pool=:: ;;
 	esac
@@ -124,6 +124,7 @@ grep -q 'python -m app.workers.embedding healthcheck' "${resumed}"
 
 run retained 5:3:5 10:10:5 80 present 0 0 2 >/dev/null
 run retained-redeploy 8:0:5 10:10:5 80 present 0 0 2 >/dev/null
+run resized-redeploy 10:0:5 10:10:5 80 present 0 0 2 >/dev/null
 
 if run invalid 12:12:5 10:10:5 >/dev/null 2>&1; then
 	echo "Expected an unknown pool configuration to fail" >&2
@@ -140,7 +141,7 @@ for inspection_case in 'web failed' 'web duplicate' 'database failed' 'database 
 	! grep -Eq '^deploy |^app exec ' "${tmp}/${scenario}.log"
 done
 
-if run saturated 10:10:5 10:10:5 21 >/dev/null 2>&1; then
+if run saturated 10:10:5 10:10:5 25 >/dev/null 2>&1; then
 	echo "Expected insufficient PostgreSQL headroom to fail" >&2
 	exit 1
 fi

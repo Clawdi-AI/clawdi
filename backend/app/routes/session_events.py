@@ -20,7 +20,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_scope
+from app.core.auth import (
+    AuthContext,
+    require_auth_scopes,
+    require_scope,
+    revalidate_auth_context,
+)
 from app.core.database import get_session
 from app.core.posthog import stage_session_sync
 from app.models.session import (
@@ -345,80 +350,91 @@ async def upload_session_event_generation_chunk(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     if validated.content_hash != content_hash:
         raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk content hash mismatch")
-    await _fence_event_generation_environment(
-        db,
-        auth,
-        local_session_id,
-        generation_id,
-        fence_headers,
-    )
-    generation = (
-        await db.execute(
-            select(SessionEventGeneration)
-            .where(SessionEventGeneration.id == generation_id)
-            .with_for_update()
+    uploaded_key: str | None = None
+    while True:
+        await _fence_event_generation_environment(
+            db,
+            auth,
+            local_session_id,
+            generation_id,
+            fence_headers,
         )
-    ).scalar_one_or_none()
-    if generation is None or generation.status != "staging":
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
-    session = await db.get(Session, generation.session_id)
-    if (
-        session is None
-        or session.user_id != auth.user_id
-        or session.local_session_id != local_session_id
-    ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
-    if (
-        auth.is_cli
-        and auth.api_key is not None
-        and auth.api_key.environment_id is not None
-        and session.origin_environment_id != auth.api_key.environment_id
-    ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
-    _require_unexpired_staging_generation(generation)
-    existing = (
-        await db.execute(
-            select(SessionEventChunk).where(
-                SessionEventChunk.generation_id == generation_id,
-                SessionEventChunk.start_seq == start_seq,
+        generation = (
+            await db.execute(
+                select(SessionEventGeneration)
+                .where(SessionEventGeneration.id == generation_id)
+                .with_for_update()
             )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
+        ).scalar_one_or_none()
+        if generation is None or generation.status != "staging":
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
+        session = await db.get(Session, generation.session_id)
         if (
-            existing.content_hash != content_hash
-            or existing.base_head_hash != base_head_hash
-            or existing.result_head_hash != validated.result_head_hash
+            session is None
+            or session.user_id != auth.user_id
+            or session.local_session_id != local_session_id
         ):
-            raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk identity conflict")
-        try:
-            await _stage_missing_chunk_search_projection(
-                db,
-                session,
-                existing,
-                validated.events,
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
+        if (
+            auth.is_cli
+            and auth.api_key is not None
+            and auth.api_key.environment_id is not None
+            and session.origin_environment_id != auth.api_key.environment_id
+        ):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Staging generation not found")
+        _require_unexpired_staging_generation(generation)
+        existing = (
+            await db.execute(
+                select(SessionEventChunk).where(
+                    SessionEventChunk.generation_id == generation_id,
+                    SessionEventChunk.start_seq == start_seq,
+                )
             )
-            generation.updated_at = datetime.now(UTC)
-            await db.commit()
-        except IntegrityError as exc:
-            await db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
-            ) from exc
-        return SessionEventChunkResponse(
-            generation=generation_id,
-            start_seq=existing.start_seq,
-            end_seq=existing.end_seq,
-            count=existing.event_count,
-            content_hash=existing.content_hash,
-            result_head_hash=existing.result_head_hash,
+        ).scalar_one_or_none()
+        if existing is not None:
+            if (
+                existing.content_hash != content_hash
+                or existing.base_head_hash != base_head_hash
+                or existing.result_head_hash != validated.result_head_hash
+            ):
+                raise HTTPException(status.HTTP_409_CONFLICT, "Event chunk identity conflict")
+            try:
+                await _stage_missing_chunk_search_projection(
+                    db,
+                    session,
+                    existing,
+                    validated.events,
+                )
+                generation.updated_at = datetime.now(UTC)
+                await db.commit()
+            except IntegrityError as exc:
+                await db.rollback()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
+                ) from exc
+            return SessionEventChunkResponse(
+                generation=generation_id,
+                start_seq=existing.start_seq,
+                end_seq=existing.end_seq,
+                count=existing.event_count,
+                content_hash=existing.content_hash,
+                result_head_hash=existing.result_head_hash,
+            )
+        end_seq = start_seq + len(validated.events) - 1
+        key = (
+            f"session-events/v1/{auth.user_id}/{session.id}/{generation_id}/chunks/"
+            f"{start_seq}-{end_seq}-{content_hash}.ndjson"
         )
-    end_seq = start_seq + len(validated.events) - 1
-    key = (
-        f"session-events/v1/{auth.user_id}/{session.id}/{generation_id}/chunks/"
-        f"{start_seq}-{end_seq}-{content_hash}.ndjson"
-    )
-    await file_store.put(key, data, "application/x-ndjson")
+        if uploaded_key is not None:
+            if key != uploaded_key:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Session changed during upload")
+            break
+        await db.close()
+        await file_store.put(key, data, "application/x-ndjson")
+        uploaded_key = key
+        auth = await revalidate_auth_context(db, auth)
+        require_auth_scopes(auth, "sessions:write")
+
     db.add(
         SessionEventChunk(
             id=uuid.uuid4(),
@@ -626,107 +642,118 @@ async def append_session_events(
         or base_count + len(validated.events) != final_count
     ):
         raise HTTPException(status.HTTP_409_CONFLICT, "Event append final hash mismatch")
-    session = await _owned_session_by_local(
-        db,
-        auth,
-        local_session_id,
-        environment_id,
-        fence_headers,
-        for_update=True,
-        profile_key=profile_key,
-    )
-    receipt = (
-        await db.execute(
-            select(SessionEventAppendReceipt).where(
-                SessionEventAppendReceipt.session_id == session.id,
-                SessionEventAppendReceipt.append_id == append_id,
-            )
+    uploaded_key: str | None = None
+    while True:
+        session = await _owned_session_by_local(
+            db,
+            auth,
+            local_session_id,
+            environment_id,
+            fence_headers,
+            for_update=True,
+            profile_key=profile_key,
         )
-    ).scalar_one_or_none()
-    if receipt is not None:
-        if (
-            receipt.generation_id != generation
-            or receipt.base_revision != base_revision
-            or receipt.base_count != base_count
-            or receipt.base_head_hash != base_head_hash
-            or receipt.content_hash != content_hash
-            or receipt.result_count != final_count
-            or receipt.result_head_hash != final_head_hash
-        ):
-            raise HTTPException(status.HTTP_409_CONFLICT, "append_id identity conflict")
-        if not _cas_matches(
-            session,
-            generation=generation,
-            revision=receipt.result_revision,
-            count=receipt.result_count,
-            head_hash=receipt.result_head_hash,
-        ):
-            raise _cas_conflict()
-        existing_chunk = (
+        receipt = (
             await db.execute(
-                select(SessionEventChunk).where(
-                    SessionEventChunk.generation_id == generation,
-                    SessionEventChunk.start_seq == base_count,
+                select(SessionEventAppendReceipt).where(
+                    SessionEventAppendReceipt.session_id == session.id,
+                    SessionEventAppendReceipt.append_id == append_id,
                 )
             )
         ).scalar_one_or_none()
-        if existing_chunk is None:
-            raise HTTPException(status.HTTP_409_CONFLICT, "Event append chunk is missing")
-        try:
-            if await _stage_missing_chunk_search_projection(
-                db,
-                session,
-                existing_chunk,
-                validated.events,
+        if receipt is not None:
+            if (
+                receipt.generation_id != generation
+                or receipt.base_revision != base_revision
+                or receipt.base_count != base_count
+                or receipt.base_head_hash != base_head_hash
+                or receipt.content_hash != content_hash
+                or receipt.result_count != final_count
+                or receipt.result_head_hash != final_head_hash
             ):
-                await db.flush()
-                await finalize_event_search_index(
+                raise HTTPException(status.HTTP_409_CONFLICT, "append_id identity conflict")
+            if not _cas_matches(
+                session,
+                generation=generation,
+                revision=receipt.result_revision,
+                count=receipt.result_count,
+                head_hash=receipt.result_head_hash,
+            ):
+                raise _cas_conflict()
+            existing_chunk = (
+                await db.execute(
+                    select(SessionEventChunk).where(
+                        SessionEventChunk.generation_id == generation,
+                        SessionEventChunk.start_seq == base_count,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_chunk is None:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Event append chunk is missing")
+            try:
+                if await _stage_missing_chunk_search_projection(
                     db,
                     session,
-                    generation,
-                    projection_complete=await event_search_projection_complete(db, generation),
-                )
-                await db.commit()
-        except IntegrityError as exc:
-            await db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
-            ) from exc
-        return SessionEventAppendResponse(
+                    existing_chunk,
+                    validated.events,
+                ):
+                    await db.flush()
+                    await finalize_event_search_index(
+                        db,
+                        session,
+                        generation,
+                        projection_complete=await event_search_projection_complete(db, generation),
+                    )
+                    await db.commit()
+            except IntegrityError as exc:
+                await db.rollback()
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT, "Event chunk search projection conflict"
+                ) from exc
+            return SessionEventAppendResponse(
+                generation=generation,
+                revision=receipt.result_revision,
+                count=receipt.result_count,
+                head_hash=receipt.result_head_hash,
+            )
+        if (
+            session.event_generation_id == generation
+            and session.event_count == final_count
+            and _current_head(session) == final_head_hash
+        ):
+            return SessionEventAppendResponse(
+                generation=generation,
+                revision=session.event_revision,
+                count=session.event_count,
+                head_hash=_current_head(session),
+            )
+        if not _cas_matches(
+            session,
             generation=generation,
-            revision=receipt.result_revision,
-            count=receipt.result_count,
-            head_hash=receipt.result_head_hash,
+            revision=base_revision,
+            count=base_count,
+            head_hash=base_head_hash,
+        ):
+            raise _cas_conflict()
+        committed_generation = await db.get(SessionEventGeneration, generation)
+        if committed_generation is None or committed_generation.status != "committed":
+            raise HTTPException(status.HTTP_409_CONFLICT, "Event generation is not committed")
+        projection_complete = await event_search_projection_complete(db, generation)
+        end_seq = final_count - 1
+        key = (
+            f"session-events/v1/{auth.user_id}/{session.id}/{generation}/chunks/"
+            f"{base_count}-{end_seq}-{content_hash}.ndjson"
         )
-    if (
-        session.event_generation_id == generation
-        and session.event_count == final_count
-        and _current_head(session) == final_head_hash
-    ):
-        return SessionEventAppendResponse(
-            generation=generation,
-            revision=session.event_revision,
-            count=session.event_count,
-            head_hash=_current_head(session),
-        )
-    if not _cas_matches(
-        session,
-        generation=generation,
-        revision=base_revision,
-        count=base_count,
-        head_hash=base_head_hash,
-    ):
-        raise _cas_conflict()
-    committed_generation = await db.get(SessionEventGeneration, generation)
-    if committed_generation is None or committed_generation.status != "committed":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Event generation is not committed")
-    projection_complete = await event_search_projection_complete(db, generation)
-    end_seq = final_count - 1
-    key = (
-        f"session-events/v1/{auth.user_id}/{session.id}/{generation}/chunks/"
-        f"{base_count}-{end_seq}-{content_hash}.ndjson"
-    )
-    await file_store.put(key, data, "application/x-ndjson")
+        if uploaded_key is not None:
+            if key != uploaded_key:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Session changed during upload")
+            break
+        await db.close()
+        await file_store.put(key, data, "application/x-ndjson")
+        uploaded_key = key
+        auth = await revalidate_auth_context(db, auth)
+        require_auth_scopes(auth, "sessions:write")
+
     result_revision = session.event_revision + 1
     db.add(
         SessionEventChunk(
