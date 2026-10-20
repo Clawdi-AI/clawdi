@@ -429,17 +429,25 @@ async def test_snapshot_sweep_retains_live_references_and_recent_objects(
     store, handler = s3_store
     now = datetime.now(UTC)
 
-    def key():
-        return f"{SNAPSHOT_PREFIX}{seed_user.id}/{uuid.uuid4()}/{'a' * 64}-{uuid.uuid4()}.json"
+    session_id = uuid.uuid4()
 
-    current, shared, recently_revoked, orphan, recent = [key() for _ in range(5)]
+    def key():
+        return f"{SNAPSHOT_PREFIX}{seed_user.id}/{session_id}/{'a' * 64}-{uuid.uuid4()}.json"
+
+    current, orphan, recent = [key() for _ in range(3)]
+    shared = f"session-share-sources/{seed_user.id}/{session_id}/{'b' * 64}.json"
+    recently_revoked = f"session-share-sources/{seed_user.id}/{session_id}/{'c' * 64}.json"
     for object_key in [current, shared, recently_revoked, orphan, recent, "sessions/legacy.json"]:
         full = "/contract-bucket/" + object_key
         handler.objects[full] = (b"snapshot", None)
         handler.modified[full] = now - timedelta(days=2)
     handler.modified["/contract-bucket/" + recent] = now
     row = Session(
-        user_id=seed_user.id, local_session_id="sweep-live", file_key=current, started_at=now
+        id=session_id,
+        user_id=seed_user.id,
+        local_session_id="sweep-live",
+        file_key=current,
+        started_at=now,
     )
     db_session.add(row)
     await db_session.flush()
@@ -459,7 +467,7 @@ async def test_snapshot_sweep_retains_live_references_and_recent_objects(
         )
     # Due candidates still require a current reference check, even when the
     # listing has not reached their keys in this run.
-    for live in [current, shared, recently_revoked]:
+    for live in [current]:
         db_session.add(
             SessionSnapshotGcCandidate(file_key=live, unreferenced_at=now - timedelta(days=2))
         )
@@ -554,3 +562,70 @@ async def test_snapshot_sweep_is_noop_before_candidate_migration(s3_store, engin
         assert handler.requests == []
     finally:
         await old_schema_engine.dispose()
+
+
+@pytest.mark.committed_db
+async def test_snapshot_reference_check_uses_session_primary_key(
+    s3_store, db_session, seed_user, engine, snapshot_gc_sessions
+):
+    import uuid
+
+    from sqlalchemy import event
+
+    from app.models.session import Session
+    from app.services.session_snapshot_retention_worker import SessionSnapshotRetentionWorker
+
+    sid = uuid.uuid4()
+    key = f"session-snapshots/v1/{seed_user.id}/{sid}/{'a' * 64}-{uuid.uuid4()}.json"
+    db_session.add(
+        Session(
+            id=sid,
+            user_id=seed_user.id,
+            local_session_id="indexed-ref",
+            file_key=key,
+            started_at=datetime.now(UTC),
+        )
+    )
+    await db_session.commit()
+    statements = []
+
+    def capture(_connection, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    worker = SessionSnapshotRetentionWorker(snapshot_gc_sessions, file_store=s3_store[0])
+    event.listen(engine.sync_engine, "before_cursor_execute", capture)
+    try:
+        async with snapshot_gc_sessions() as db:
+            assert await worker._referenced(db, key, sid)
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", capture)
+    assert len(statements) == 1
+    assert "WHERE sessions.id = " in statements[0]
+    assert "AND sessions.file_key = " in statements[0]
+    assert "session_shares" not in statements[0]
+
+
+@pytest.mark.committed_db
+async def test_snapshot_sweep_never_deletes_malformed_keys(
+    s3_store, seed_user, snapshot_gc_sessions
+):
+    import uuid
+
+    from app.models.session import SessionSnapshotGcCandidate
+    from app.services.session_snapshot_retention_worker import SessionSnapshotRetentionWorker
+
+    store, handler = s3_store
+    now = datetime.now(UTC)
+    malformed = f"session-snapshots/v1/{seed_user.id}/{'-' * 36}/{'a' * 64}-{uuid.uuid4()}.json"
+    handler.objects["/contract-bucket/" + malformed] = (b"keep", None)
+    handler.modified["/contract-bucket/" + malformed] = now - timedelta(days=3)
+    async with snapshot_gc_sessions() as db:
+        db.add(
+            SessionSnapshotGcCandidate(file_key=malformed, unreferenced_at=now - timedelta(days=2))
+        )
+        await db.commit()
+    worker = SessionSnapshotRetentionWorker(snapshot_gc_sessions, file_store=store)
+    assert await worker.run_once(now=now) == 0
+    assert await worker.run_once(now=now, dry_run=True) == 0
+    assert "/contract-bucket/" + malformed in handler.objects
+    assert all(method != "DELETE" for method, _, _ in handler.requests)

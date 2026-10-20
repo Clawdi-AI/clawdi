@@ -411,6 +411,17 @@ async def revalidate_auth_context(db: AsyncSession, auth: AuthContext) -> AuthCo
         if authority is None:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
         return _validated_api_key_auth_context(authority, now=datetime.now(UTC))
+    if auth.user.principal_kind == PRINCIPAL_KIND_CLERK and auth.user.clerk_id is not None:
+        try:
+            await assert_clerk_principal_active(
+                db, subject=auth.user.clerk_id, issuer=auth.user.clerk_issuer
+            )
+        except PrincipalSuspendedError:
+            raise AccountSuspendedHTTPException() from None
+        except PrincipalTerminatedError:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Account has been terminated"
+            ) from None
     await _assert_active_user_or_401(db, auth.user_id)
     user = await db.get(User, auth.user_id, populate_existing=True)
     if user is None:

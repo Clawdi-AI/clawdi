@@ -96,7 +96,10 @@ Each attempt owns its object, so a late storage completion or failed database
 commit cannot overwrite committed bytes. Existing `Session.file_key` values,
 including legacy overwrite keys, remain readable. Failed publication leaves
 an unreferenced object for collection; retries write a fresh object. Snapshot
-publication has a two-minute deadline after storage completes.
+publication has a two-minute deadline after storage completes. Owner content,
+message-page, and Markdown export reads load authorized metadata first and
+release their database transaction before fetching snapshot bytes or event
+chunks. Search navigation reacquires a short transaction after storage.
 
 All S3 operations, including body reads and sweep listings/deletes, have a
 30-second caller deadline including admission. Botocore uses a five-second
@@ -121,8 +124,10 @@ only forgets candidates and never deletes stored objects.
 
 At most 1,000 due candidates are processed per run, independently of listing
 progress. A fresh database check immediately before each delete preserves all
-current Session keys and snapshot share keys that are active or were revoked
-within 24 hours. The publication deadline prevents old unreferenced attempts
+current Session keys through a primary-key lookup using the Session UUID in
+the object key. Malformed UUID keys are never deleted. Shares copy bytes into
+`session-share-sources/`, outside this sweep's prefix, so share inventory is
+never scanned. The publication deadline prevents old unreferenced attempts
 from becoming current again. Database sessions close before storage I/O. The
 separate reader grace protects requests that already loaded a key before it
 was superseded; S3 reads themselves have a 30-second deadline. Legacy keys are
@@ -130,6 +135,11 @@ outside this sweep. Restarts restart the listing cursor safely while retaining
 candidate timestamps; repeated deletes are idempotent, including a delete that
 succeeded before a database failure. Never apply an expiry lifecycle rule to
 the live snapshot prefix. Local file stores are outside this S3 inventory sweep.
+
+Follow-up: inventory collection of event chunks whose object write succeeded
+but whose row/receipt publication failed. The existing event-retention worker
+collects recorded abandoned/superseded generations, while unrecorded chunk
+objects need a separate prefix inventory policy.
 
 Inspect one page without deleting anything, using the configured S3 store and
 database:

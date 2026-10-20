@@ -451,3 +451,58 @@ async def test_avatar_character_bounds_preserve_auth_without_repeated_writes(
             async with factory() as cleanup:
                 await cleanup.execute(delete(User).where(User.clerk_id == subject))
                 await cleanup.commit()
+
+
+@pytest.mark.parametrize("fence", ["suspended", "terminated"])
+async def test_revalidation_reacquires_clerk_fence_after_storage(
+    engine, db_session, seed_user, sign_jwt, fence
+):
+    from app.core.auth import revalidate_auth_context
+
+    seed_user.clerk_issuer = _ISSUER
+    await db_session.commit()
+    subject = seed_user.clerk_id
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as session:
+            auth = await _auth_via_clerk_jwt(sign_jwt(subject), session)
+            assert auth is not None
+            await session.close()
+            with capture_sql(engine) as statements:
+                auth = await revalidate_auth_context(session, auth)
+            assert sum("pg_advisory_xact_lock_shared" in sql for sql in statements) == 2
+            await session.close()
+            async with factory() as writer:
+                # A subject fence may precede attaching the local User. User-id
+                # checks alone must not bypass that durable principal fence.
+                if fence == "terminated":
+                    writer.add(
+                        PrincipalLifecycle(
+                            issuer=_ISSUER,
+                            subject=subject,
+                            user_id=None,
+                            terminated_at=datetime.now(UTC),
+                            next_cleanup_attempt_at=datetime.now(UTC),
+                        )
+                    )
+                else:
+                    writer.add(
+                        ClerkPrincipalSuspension(
+                            issuer=_ISSUER,
+                            subject=subject,
+                            user_id=None,
+                            suspended_at=datetime.now(UTC),
+                            reason="reauth_storage_test",
+                        )
+                    )
+                await writer.commit()
+            with pytest.raises(HTTPException) as failure:
+                await revalidate_auth_context(session, auth)
+            assert failure.value.status_code == 401
+    finally:
+        async with factory() as cleanup:
+            for model in (ClerkPrincipalSuspension, PrincipalLifecycle):
+                await cleanup.execute(
+                    delete(model).where(model.issuer == _ISSUER, model.subject == subject)
+                )
+            await cleanup.commit()

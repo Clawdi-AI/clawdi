@@ -89,7 +89,7 @@ async def test_blocked_uploads_release_pool_and_revalidate_before_publish(
             )
         ),
     }
-    monkeypatch.setattr(settings, "db_pool_timeout", 0.3)
+    monkeypatch.setattr(settings, "db_pool_timeout", 1.0)
     ordinary = database._create_engine(pool_size=2, max_overflow=0)
     factory = async_sessionmaker(
         ordinary, class_=database.async_session_factory.class_, expire_on_commit=False
@@ -260,6 +260,154 @@ async def test_blocked_uploads_release_pool_and_revalidate_before_publish(
             if not task.done():
                 task.cancel()
         await asyncio.gather(*uploads, return_exceptions=True)
+        if iterator is not None:
+            await iterator.aclose()
+        await ordinary.dispose()
+
+
+class _BlockedReadStore:
+    def __init__(self, delegate: FileStore, *, fail: bool):
+        self.delegate = delegate
+        self.fail = fail
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.reads = 0
+
+    async def get(self, key: str) -> bytes:
+        self.reads += 1
+        if self.reads == 4:
+            self.started.set()
+        await self.release.wait()
+        if self.fail:
+            raise S3ObjectStoreError("S3 object read failed")
+        return await self.delegate.get(key)
+
+
+@pytest.mark.parametrize("protocol", ["snapshot-v1", "events-v1"])
+@pytest.mark.parametrize("endpoint", ["content", "messages", "export.md"])
+@pytest.mark.parametrize("fail", [False, True])
+async def test_blocked_owner_reads_release_pool(
+    db_session, seed_user, monkeypatch, protocol, endpoint, fail
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"blocked-read-{seed_user.id}",
+        machine_name="Blocked read",
+        agent_type="openclaw",
+    )
+    state = await create_test_hosted_runtime_state(db_session, env, runtime_name="openclaw")
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    state.tools = CANONICAL_CODEX_TOOLS
+    minted = await mint_api_key(
+        db_session, user_id=seed_user.id, environment_id=env.id, label="blocked-read"
+    )
+    env_id = env.id
+    await db_session.commit()
+    headers = {"Authorization": f"Bearer {minted.raw_key}"}
+    manifest_headers = {
+        "Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+        RUNTIME_CAPABILITIES_HEADER: ",".join(
+            (
+                RUNTIME_AGENT_PLUGINS_MANIFEST_CAPABILITY,
+                RUNTIME_AGENT_PLUGIN_GITHUB_RELEASE_SOURCE_CAPABILITY,
+            )
+        ),
+    }
+    monkeypatch.setattr(settings, "db_pool_timeout", 1.0)
+    ordinary = database._create_engine(pool_size=2, max_overflow=0)
+    factory = async_sessionmaker(
+        ordinary, class_=database.async_session_factory.class_, expire_on_commit=False
+    )
+    monkeypatch.setattr(database, "engine", ordinary)
+    for module in (database, sync, distributed_state):
+        monkeypatch.setattr(module, "async_session_factory", factory)
+    pool = ordinary.sync_engine.pool
+    assert isinstance(pool, QueuePool)
+    reads = []
+    iterator = None
+    store = _BlockedReadStore(sessions.file_store, fail=fail)
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers
+        ) as client:
+            local_id = "blocked-reader"
+            batch = {
+                "sessions": [
+                    {
+                        "environment_id": str(env_id),
+                        "local_session_id": local_id,
+                        "started_at": datetime.now(UTC).isoformat(),
+                        "content_protocol": protocol,
+                    }
+                ]
+            }
+            created = await client.post("/v1/sessions/batch", json=batch)
+            assert created.status_code == 200, created.text
+            if protocol == "snapshot-v1":
+                uploaded = await client.post(
+                    f"/v1/sessions/{local_id}/upload",
+                    data={"environment_id": str(env_id)},
+                    files={
+                        "file": (
+                            "snapshot.json",
+                            b'[{"role":"user","content":"read capacity"}]',
+                            "application/json",
+                        )
+                    },
+                )
+                assert uploaded.status_code == 200, uploaded.text
+            else:
+                await _commit_generation(
+                    client,
+                    environment_id=str(env_id),
+                    local_session_id=local_id,
+                    events=[
+                        _event(
+                            0,
+                            "message",
+                            "read",
+                            role="user",
+                            parts=[{"type": "text", "text": "read capacity"}],
+                        )
+                    ],
+                )
+            session_id = await db_session.scalar(
+                select(Session.id).where(
+                    Session.user_id == seed_user.id, Session.local_session_id == local_id
+                )
+            )
+            await db_session.close()
+            monkeypatch.setattr(sessions, "file_store", store)
+            query = "?search_query=read" if endpoint == "messages" else ""
+            reads = [
+                asyncio.create_task(client.get(f"/v1/sessions/{session_id}/{endpoint}{query}"))
+                for _ in range(4)
+            ]
+            async with asyncio.timeout(10):
+                await store.started.wait()
+                assert pool.checkedout() == 0
+                assert (await client.get("/v1/sessions")).status_code == 200
+                manifest = await client.get("/v1/runtime/manifest", headers=manifest_headers)
+                assert manifest.status_code == 200, manifest.text
+                async with factory() as db:
+                    context = await auth._auth_via_api_key(minted.raw_key, db)
+                assert context is not None
+                stream = await sync.events(_connected_request(), context, None)
+                iterator = stream.body_iterator.__aiter__()
+                assert await anext(iterator) == b": connected\n\n"
+                assert pool.checkedout() == 0
+                store.release.set()
+                responses = await asyncio.gather(*reads)
+            assert all(response.status_code == (503 if fail else 200) for response in responses)
+            if not fail:
+                assert all("read capacity" in response.text for response in responses)
+    finally:
+        store.release.set()
+        for task in reads:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*reads, return_exceptions=True)
         if iterator is not None:
             await iterator.aclose()
         await ordinary.dispose()

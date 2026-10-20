@@ -4,21 +4,34 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
-from sqlalchemy import delete, exists, func, or_, select
+from sqlalchemy import delete, exists, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.session import Session, SessionSnapshotGcCandidate
-from app.models.session_share import SessionShare
 from app.services.file_store import S3FileStore, get_file_store
 
 log = logging.getLogger(__name__)
 SNAPSHOT_PREFIX = "session-snapshots/v1/"
 SNAPSHOT_RETENTION = timedelta(days=1)
 _SNAPSHOT_KEY = re.compile(
-    r"session-snapshots/v1/[0-9a-f-]{36}/[0-9a-f-]{36}/[0-9a-f]{64}-[0-9a-f-]{36}\.json"
+    r"session-snapshots/v1/(?P<user>[0-9a-f-]{36})/(?P<session>[0-9a-f-]{36})/"
+    r"[0-9a-f]{64}-(?P<attempt>[0-9a-f-]{36})\.json"
 )
+
+
+def _snapshot_session_id(key: str) -> UUID | None:
+    match = _SNAPSHOT_KEY.fullmatch(key)
+    if match is None:
+        return None
+    try:
+        UUID(match["user"])
+        UUID(match["attempt"])
+        return UUID(match["session"])
+    except ValueError:
+        return None
 
 
 class SessionSnapshotRetentionWorker:
@@ -37,21 +50,13 @@ class SessionSnapshotRetentionWorker:
         self._poll_interval_seconds = poll_interval_seconds
         self._start_after = ""
 
-    async def _referenced(self, db: AsyncSession, key: str, cutoff: datetime) -> bool:
+    async def _referenced(self, db: AsyncSession, key: str, session_id: UUID) -> bool:
+        # Snapshot keys encode their one owning Session. Use its primary key,
+        # never a scan of every Session for each listed object. Shares copy
+        # bytes into session-share-sources/, outside this collector's prefix.
         return bool(
             await db.scalar(
-                select(
-                    or_(
-                        exists().where(Session.file_key == key),
-                        exists().where(
-                            SessionShare.snapshot_file_key == key,
-                            or_(
-                                SessionShare.revoked_at.is_(None),
-                                SessionShare.revoked_at >= cutoff,
-                            ),
-                        ),
-                    )
-                )
+                select(exists().where(Session.id == session_id, Session.file_key == key))
             )
         )
 
@@ -74,9 +79,10 @@ class SessionSnapshotRetentionWorker:
             # A day-old attempt can no longer publish: publication is bounded
             # to two minutes. Start a separate, durable reader grace only once
             # the key is observed unreferenced, regardless of its object age.
-            if not dry_run and _SNAPSHOT_KEY.fullmatch(item.key) and item.last_modified < cutoff:
+            session_id = _snapshot_session_id(item.key)
+            if not dry_run and session_id is not None and item.last_modified < cutoff:
                 async with self._sessionmaker() as db:
-                    if await self._referenced(db, item.key, cutoff):
+                    if await self._referenced(db, item.key, session_id):
                         await db.execute(
                             delete(SessionSnapshotGcCandidate).where(
                                 SessionSnapshotGcCandidate.file_key == item.key
@@ -109,10 +115,11 @@ class SessionSnapshotRetentionWorker:
             )
         candidates = 0
         for key in due:
-            if not _SNAPSHOT_KEY.fullmatch(key):
-                raise ValueError("Invalid snapshot collection candidate")
+            session_id = _snapshot_session_id(key)
+            if session_id is None:
+                continue
             async with self._sessionmaker() as db:
-                referenced = await self._referenced(db, key, cutoff)
+                referenced = await self._referenced(db, key, session_id)
             if not referenced:
                 if not dry_run:
                     await store.delete(key)

@@ -23,7 +23,8 @@ database migration, CI, and implementation details.
   recheck authorization and content ordering before publishing, and return a
   retryable error when storage exceeds its deadline. Immutable snapshot objects
   protect previously committed content; bounded background cleanup retains live
-  snapshots and shares.
+  snapshots and shares. Owner content, message pages, and Markdown exports also
+  release database capacity while reading object storage.
 
 - PostgreSQL drills preserve recovery-sensitive settings from the restored
   control file and reserve scratch space plus a 25% filesystem free-space floor.

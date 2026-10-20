@@ -3416,7 +3416,9 @@ async def get_session_content(
     if not session_has_uploaded_content(session):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
     try:
-        projection = await load_session_content_projection(session, file_store, db)
+        projection = await load_session_content_projection(
+            session, file_store, db, release_db_before_storage=True
+        )
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentUnavailable:
@@ -3516,7 +3518,9 @@ async def get_session_messages(
     # share the same cache — a popular shared link must not re-parse
     # a 10 MB JSON blob per visitor.
     try:
-        projection = await load_session_content_projection(session, file_store, db)
+        projection = await load_session_content_projection(
+            session, file_store, db, release_db_before_storage=True
+        )
     except SessionContentChanged:
         raise _session_content_revision_conflict() from None
     except SessionContentMissing:
@@ -3819,7 +3823,9 @@ async def export_owned_session_markdown(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content not uploaded")
 
     try:
-        messages = await load_session_messages(session, file_store, db)
+        messages = await load_session_messages(
+            session, file_store, db, release_db_before_storage=True
+        )
     except SessionContentMissing:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Session content file not found") from None
     except SessionContentUnavailable:

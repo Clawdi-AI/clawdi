@@ -357,7 +357,9 @@ async def test_profile_writes_enforce_bound_key_and_machine_fence(
 
 
 @pytest.mark.asyncio
-async def test_named_snapshot_content_keeps_existing_storage_paths(client, db_session, seed_user):
+async def test_named_snapshot_content_uses_separate_immutable_objects(
+    client, db_session, seed_user
+):
     import hashlib
     import json
 
@@ -403,12 +405,12 @@ async def test_named_snapshot_content_keeps_existing_storage_paths(client, db_se
                 )
             )
         ).scalar_one()
+        assert row.file_key.startswith(f"session-snapshots/v1/{seed_user.id}/{row.id}/{digest}-")
         keys.append(row.file_key)
+        read = await client.get(f"/v1/sessions/{row.id}/content")
+        assert read.status_code == 200, read.text
+        assert read.json()[0]["content"] == (profile or "default")
     assert len(set(keys)) == 2
-    assert keys == [
-        f"sessions/{seed_user.id}/{env.id}/default.json",
-        f"sessions/{seed_user.id}/{env.id}/work.json",
-    ]
 
 
 @pytest.mark.asyncio
