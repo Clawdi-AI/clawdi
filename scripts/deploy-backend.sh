@@ -2,13 +2,14 @@
 set -euo pipefail
 
 readonly service="clawdi"
-readonly web_pool="8:0:5"
+readonly web_pool="10:0:5"
+readonly retained_web_pool="8:0:5"
 readonly overflow_web_pool="5:3:5"
 readonly previous_web_pool="5:5:5"
 readonly channels_pool="10:10:5"
 readonly legacy_pool="20:20:45"
-# New web role: 2 * (8 ordinary + 2 control + 1 LISTEN).
-readonly minimum_available_connections=22
+# New web role: 2 * (10 ordinary + 2 control + 1 LISTEN).
+readonly minimum_available_connections=26
 readonly backend_image="ghcr.io/clawdi-ai/clawdi-backend:${DEPLOY_IMAGE_VERSION:?}"
 
 [[ "${DEPLOY_IMAGE_VERSION}" =~ ^[0-9a-f]{40}$ ]] || {
@@ -64,7 +65,7 @@ validate_database_role_state() {
 	[[ "${state}" == missing ]] && return
 	IFS='|' read -r container image pool workers <<<"${state}"
 	case "${role}:${pool}" in
-		"web:${legacy_pool}"|"web:${channels_pool}"|"web:${previous_web_pool}"|"web:${overflow_web_pool}"|"web:${web_pool}"|\
+		"web:${legacy_pool}"|"web:${channels_pool}"|"web:${previous_web_pool}"|"web:${overflow_web_pool}"|"web:${retained_web_pool}"|"web:${web_pool}"|\
 			"channels-worker:${legacy_pool}"|"channels-worker:${channels_pool}") ;;
 		*) echo "Refusing unknown ${role} database pool: ${pool}" >&2; exit 1 ;;
 	esac

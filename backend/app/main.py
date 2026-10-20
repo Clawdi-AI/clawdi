@@ -82,6 +82,7 @@ from app.services.clerk_backend import close_clerk_backend_client, start_clerk_b
 from app.services.composio import close_composio_client, run_tool_router_mcp_session_reaper
 from app.services.discord_advisory_session import DiscordAdvisorySession
 from app.services.embedding import LocalEmbedder, LocalServiceEmbedder
+from app.services.file_store_s3 import S3ObjectStoreError
 from app.services.memory_types import MemoryProviderUnavailableError, MemoryProviderUpstreamError
 from app.services.metrics import db_control_lock_timeouts, db_pool_timeouts, observe_event_loop_lag
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
@@ -473,6 +474,16 @@ async def control_lock_timeout_exception_handler(
     return JSONResponse(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         content={"detail": "Deployment control temporarily unavailable"},
+        headers={"Retry-After": "1", "Cache-Control": "no-store"},
+    )
+
+
+@app.exception_handler(S3ObjectStoreError)
+async def object_storage_exception_handler(_request: Request, _exc: S3ObjectStoreError) -> Response:
+    log.warning("object_storage_unavailable")
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": "Object storage temporarily unavailable"},
         headers={"Retry-After": "1", "Cache-Control": "no-store"},
     )
 

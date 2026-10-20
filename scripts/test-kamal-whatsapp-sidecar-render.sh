@@ -158,7 +158,7 @@ web = config.role("web")
 end
 expected_web_env = {
   "WEB_CONCURRENCY" => 2,
-  "DB_POOL_SIZE" => 8,
+  "DB_POOL_SIZE" => 10,
   "DB_MAX_OVERFLOW" => 0,
   "DB_POOL_TIMEOUT" => 5,
   "PROMETHEUS_MULTIPROC_DIR" => "/tmp/clawdi-prometheus-multiproc",
@@ -168,7 +168,7 @@ unless web.specialized_env.clear == expected_web_env
 end
 raise "web role memory drifted" unless config.raw_config.servers.dig("web", "options", "memory") == "6g"
 web_env = web.env(web.primary_host).clear
-unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 8, 0, 5 ]
+unless web_env.values_at("DB_POOL_SIZE", "DB_MAX_OVERFLOW", "DB_POOL_TIMEOUT") == [ 10, 0, 5 ]
   raise "web role database pool drifted"
 end
 embedding_worker = config.role("embedding-worker")
@@ -218,15 +218,15 @@ rolling_connections = [
   2 * web_connections + worker_connections,
   web_connections + 2 * worker_connections,
 ].max
-raise "steady database connection budget drifted" unless steady_connections == 40
-raise "rolling database connection budget drifted" unless rolling_connections == 60
+raise "steady database connection budget drifted" unless steady_connections == 44
+raise "rolling database connection budget drifted" unless rolling_connections == 68
 web_listeners = web_env.fetch("WEB_CONCURRENCY")
 worker_listeners = 1
 rolling_clients = [
   2 * (web_connections + web_listeners) + worker_connections + worker_listeners,
   web_connections + web_listeners + 2 * (worker_connections + worker_listeners),
 ].max
-raise "rolling client budget drifted" unless rolling_clients == 65
+raise "rolling client budget drifted" unless rolling_clients == 73
 raise "rolling client reserve exhausted" unless 100 - 3 - rolling_clients >= 22
 shared_env = config.raw_config.env.clear
 if shared_env.keys.any? { |key| key.start_with?("DB_POOL_") }

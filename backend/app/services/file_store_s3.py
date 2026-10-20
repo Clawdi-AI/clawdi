@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
 import boto3
 from botocore.client import Config as BotoConfig
 from botocore.exceptions import BotoCoreError, ClientError
 from botocore.response import StreamingBody
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 if TYPE_CHECKING:
     from mypy_boto3_s3.client import S3Client
 
+
+S3_MAX_IN_FLIGHT = 8
 
 _BYTES_ADAPTER = TypeAdapter(bytes)
 
@@ -24,7 +28,29 @@ class S3ObjectStoreClient(Protocol):
     def get(self, key: str) -> bytes: ...
     def delete(self, key: str) -> None: ...
     def exists(self, key: str) -> bool: ...
+    def list_objects(self, prefix: str, *, start_after: str, limit: int) -> list[S3Object]: ...
     def close(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class S3Object:
+    key: str
+    last_modified: datetime
+    size: int
+
+
+class _S3ListedObject(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    key: str = Field(alias="Key")
+    last_modified: AwareDatetime = Field(alias="LastModified")
+    size: int = Field(alias="Size", ge=0)
+
+
+class _S3ListResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    contents: list[_S3ListedObject] = Field(default_factory=list, alias="Contents")
 
 
 class S3ObjectStoreError(RuntimeError):
@@ -79,6 +105,10 @@ class _Boto3S3ObjectStoreClient:
         self._bucket = bucket
         self._client: S3Client
         config = BotoConfig(
+            connect_timeout=5,
+            read_timeout=10,
+            retries={"mode": "standard", "total_max_attempts": 2},
+            max_pool_connections=S3_MAX_IN_FLIGHT,
             s3={"addressing_style": "path" if force_path_style else "auto"},
         )
         try:
@@ -164,6 +194,24 @@ class _Boto3S3ObjectStoreClient:
             raise S3ObjectStoreError("S3 object metadata check failed") from exc
         _validate_operation_response(response, operation="metadata check")
         return True
+
+    def list_objects(self, prefix: str, *, start_after: str, limit: int) -> list[S3Object]:
+        if not prefix or not 1 <= limit <= 1000:
+            raise ValueError("S3 listing requires a prefix and a limit between 1 and 1000")
+        try:
+            response = self._client.list_objects_v2(
+                Bucket=self._bucket, Prefix=prefix, StartAfter=start_after, MaxKeys=limit
+            )
+        except (BotoCoreError, ClientError) as exc:
+            raise S3ObjectStoreError("S3 object listing failed") from exc
+        _validate_operation_response(response, operation="listing")
+        try:
+            listed = _S3ListResponse.model_validate(response)
+            if len(listed.contents) > limit:
+                raise S3ObjectStoreError("S3 returned an oversized object listing")
+        except ValidationError:
+            raise S3ObjectStoreError("S3 returned an invalid object listing") from None
+        return [S3Object(item.key, item.last_modified, item.size) for item in listed.contents]
 
     def close(self) -> None:
         try:

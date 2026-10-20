@@ -401,6 +401,42 @@ def _validated_api_key_auth_context(
     )
 
 
+async def revalidate_auth_context(db: AsyncSession, auth: AuthContext) -> AuthContext:
+    """Reacquire current authority after releasing a request transaction for I/O."""
+    if auth.api_key is not None:
+        key_hash = auth.api_key.key_hash
+        if await lock_api_key_user_authority_shared(db, key_hash) is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
+        authority = await _load_api_key_authority(db, key_hash)
+        if authority is None:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "API key has been revoked")
+        return _validated_api_key_auth_context(authority, now=datetime.now(UTC))
+    if auth.user.principal_kind == PRINCIPAL_KIND_CLERK and auth.user.clerk_id is not None:
+        try:
+            await assert_clerk_principal_active(
+                db, subject=auth.user.clerk_id, issuer=auth.user.clerk_issuer
+            )
+        except PrincipalSuspendedError:
+            raise AccountSuspendedHTTPException() from None
+        except PrincipalTerminatedError:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "Account has been terminated"
+            ) from None
+    await _assert_active_user_or_401(db, auth.user_id)
+    user = await db.get(User, auth.user_id, populate_existing=True)
+    if user is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    if auth.credential_expires_at is not None and auth.credential_expires_at <= datetime.now(UTC):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Credentials have expired")
+    return AuthContext(
+        user=user,
+        oauth_cli=auth.oauth_cli,
+        oauth_access_expires_at=auth.oauth_access_expires_at,
+        credential_expires_at=auth.credential_expires_at,
+        dev_bypass=auth.dev_bypass,
+    )
+
+
 async def _auth_via_dev_bypass(token: str, db: AsyncSession) -> AuthContext | None:
     if not settings.dev_auth_bypass:
         return None

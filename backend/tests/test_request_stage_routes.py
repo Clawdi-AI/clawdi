@@ -73,7 +73,10 @@ async def test_upload_stages_real_auth_pg(
         async def fail(*_args, **_kwargs):
             nonlocal elapsed
             # Authentication may commit last_used_at before handler entry.
-            if failure == "commit" and row.file_key is None:
+            if failure == "commit" and not any(
+                isinstance(instance, Session) and instance.file_key is not None
+                for instance in db_session.identity_map.values()
+            ):
                 return await original(*_args, **_kwargs)
             elapsed += 0.019
             raise RuntimeError("injected stage failure")
@@ -134,6 +137,7 @@ async def test_upload_stages_real_auth_pg(
                     await store.get(response.json()["file_key"])
                     == b'[{"role":"user","content":"body-secret"}]'
                 )
+                db_session.add(row)
                 await db_session.refresh(row)
                 assert row.content_hash == response.json()["content_hash"]
                 assert row.search_index_revision is not None

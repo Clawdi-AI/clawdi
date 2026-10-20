@@ -18,6 +18,14 @@ database migration, CI, and implementation details.
 
 ## Unreleased
 
+- Session uploads keep the API and runtime configuration available during slow
+  object storage calls. Uploads release database connections while writing,
+  recheck authorization and content ordering before publishing, and return a
+  retryable error when storage exceeds its deadline. Immutable snapshot objects
+  protect previously committed content; bounded background cleanup retains live
+  snapshots and shares. Owner content, message pages, and Markdown exports also
+  release database capacity while reading object storage.
+
 - PostgreSQL drills preserve recovery-sensitive settings from the restored
   control file and reserve scratch space plus a 25% filesystem free-space floor.
   Large WAL archives no longer impose an extra repository-size disk requirement.

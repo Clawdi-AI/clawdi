@@ -377,13 +377,25 @@ def test_sdk_errors_are_nonfatal(monkeypatch):
 
 @pytest.mark.parametrize("initially_enabled", [True, False])
 async def test_snapshot_sync_emits_once_across_replays_and_batch_hash_changes(
-    cli_client, db_session, captures, monkeypatch, initially_enabled
+    cli_client, db_session, seed_user, captures, monkeypatch, initially_enabled
 ):
     from datetime import UTC, datetime
     from hashlib import sha256
 
+    from app.core.auth import AuthContext, get_auth
+    from app.main import app
     from app.models.session import Session
+    from app.services.api_key import mint_api_key
 
+    # Upload publication revalidates a real persisted credential after I/O.
+    # The shared CLI fixture otherwise supplies only a transient auth marker.
+    minted = await mint_api_key(db_session, user_id=seed_user.id, label="analytics-upload")
+    await db_session.commit()
+
+    async def upload_auth():
+        return AuthContext(user=seed_user, api_key=minted.api_key)
+
+    app.dependency_overrides[get_auth] = upload_auth
     if not initially_enabled:
         monkeypatch.setattr(settings, "posthog_api_key", "")
     client = cli_client

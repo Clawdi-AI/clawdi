@@ -190,12 +190,12 @@ before the executable is removed. No root cleanup script is installed.
 
 ## Merge And Release
 
-The web pool retains eight ordinary connections per worker (`8+0`) without
-increasing its maximum connection budget. Deployment preflight accepts the
-previous `5+3` shape for this transition. To reverse the retention policy, use
-a reviewed forward revert that accepts both pool shapes during preflight;
-an older workflow ref that only recognizes `5+3` will reject a running `8+0`
-role. Do not bypass that state check or edit the running container environment.
+The web pool retains ten ordinary connections per worker (`10+0`). Deployment
+preflight accepts the previous `8+0` and `5+3` shapes for this transition.
+Rollback uses a reviewed forward change that accepts both old and new pool
+shapes; an old workflow ref cannot recognize the new `10+0` shape. Preflight
+requires 26 free ordinary connections before adding the new two-worker web
+container. Do not edit the running container environment or bypass the check.
 
 1. Merge the PR into `main` after required checks are green.
 2. Watch Actions for these workflows:
@@ -438,21 +438,22 @@ Every migration must therefore remain expand/contract compatible with the old
 API during this window. Operators must use the release workflow rather than
 running Alembic independently.
 
-Each of the two `web` workers owns a `5 + 3` ordinary PostgreSQL pool and a
+Each of the two `web` workers owns a `10 + 0` ordinary PostgreSQL pool and
 two separate `1 + 0` internal pools (control transactions and nested consistent
-runtime-source snapshots). `channels-worker` uses only its
-`10 + 10` ordinary pool. All pools use a 5-second acquisition timeout;
-`embedding-worker` does not import the database engine and owns no pool.
-The control pools are lazy and are never checked out by background workers.
+runtime-source snapshots). `channels-worker` uses only its `10 + 10` ordinary
+pool. All pools use a 5-second acquisition timeout; `embedding-worker` does not
+import the database engine and owns no pool. Control pools are lazy and never
+checked out by background workers.
 
-Steady pooled capacity is `2 * (5 + 3 + 2) + 20 = 40`. Each web worker and
+Steady pooled capacity is `2 * (10 + 0 + 2) + 20 = 44`. Each web worker and
 the channels worker also owns one independent LISTEN connection, giving
-`40 + 3 = 43` total client connections. Database-owning roles roll sequentially:
-web overlap is `2 * 22 + 21 = 65`, channels overlap is `22 + 2 * 21 = 64`.
-The previous web pool (`5 + 5`, without control) has the same total budget, so
-the transition does not increase it. PostgreSQL remains at 100 connections;
-subtracting 3 superuser-reserved slots leaves 97 ordinary slots and at least
-`97 - 65 = 32` for migrations, backups, operators, and transient client work.
+`44 + 3 = 47` client connections. Database-owning roles roll sequentially:
+web overlap is `2 * (24 + 2) + 21 = 73`; channels overlap is `26 + 2 * 21 = 68`.
+PostgreSQL `max_connections=100` minus three superuser-reserved slots leaves
+97 ordinary slots: at peak, `97 - 73 = 24` remain for migrations, backups,
+operators, and other direct/transient clients. The render contract preserves
+at least 22 spare slots. Increasing to `10+2` with the unchanged channels budget
+would leave only 16, so overflow remains zero.
 
 The deploy helper inspects the running roles before every release. It accepts
 only the known legacy and bounded pool contracts and fails closed on unknown or

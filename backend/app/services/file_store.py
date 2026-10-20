@@ -1,10 +1,19 @@
 import asyncio
+from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
 from app.core.config import settings
-from app.services.file_store_s3 import S3ObjectStoreClient, create_s3_object_store_client
+from app.services.file_store_s3 import (
+    S3_MAX_IN_FLIGHT,
+    S3Object,
+    S3ObjectStoreClient,
+    S3ObjectStoreError,
+    create_s3_object_store_client,
+)
+
+S3_OPERATION_TIMEOUT_SECONDS = 30.0
 
 
 class FileStore(Protocol):
@@ -79,6 +88,7 @@ class S3FileStore:
         if not bucket:
             raise RuntimeError("FILE_STORE_S3_BUCKET is required when FILE_STORE_TYPE=s3")
         self.bucket = bucket
+        self._slots = asyncio.Semaphore(S3_MAX_IN_FLIGHT)
         self.client: S3ObjectStoreClient = create_s3_object_store_client(
             bucket=bucket,
             region=region,
@@ -88,17 +98,41 @@ class S3FileStore:
             force_path_style=force_path_style,
         )
 
+    async def _call[T](self, operation: Callable[[], T]) -> T:
+        # Cancelling to_thread cannot stop boto3. Keep its admission slot until
+        # the real operation ends, including after the caller's deadline.
+        def completed(task: asyncio.Task[T]) -> None:
+            self._slots.release()
+            if not task.cancelled():
+                task.exception()
+
+        try:
+            async with asyncio.timeout(S3_OPERATION_TIMEOUT_SECONDS):
+                await self._slots.acquire()
+                task = asyncio.create_task(asyncio.to_thread(operation))
+                task.add_done_callback(completed)
+                return await asyncio.shield(task)
+        except TimeoutError:
+            raise S3ObjectStoreError("S3 operation deadline exceeded") from None
+
     async def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
-        await asyncio.to_thread(self.client.put, key, data, content_type)
+        await self._call(lambda: self.client.put(key, data, content_type))
 
     async def get(self, key: str) -> bytes:
-        return await asyncio.to_thread(self.client.get, key)
+        return await self._call(lambda: self.client.get(key))
 
     async def delete(self, key: str) -> None:
-        await asyncio.to_thread(self.client.delete, key)
+        await self._call(lambda: self.client.delete(key))
 
     async def exists(self, key: str) -> bool:
-        return await asyncio.to_thread(self.client.exists, key)
+        return await self._call(lambda: self.client.exists(key))
+
+    async def list_objects(
+        self, prefix: str, *, start_after: str = "", limit: int = 1000
+    ) -> list[S3Object]:
+        return await self._call(
+            lambda: self.client.list_objects(prefix, start_after=start_after, limit=limit)
+        )
 
 
 @lru_cache(maxsize=1)

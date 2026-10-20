@@ -914,7 +914,7 @@ async def test_session_upload_records_content_hash_and_uploaded_at(
 
     assert payload["content_hash"] == hashlib.sha256(body_bytes).hexdigest()
     assert payload["status"] == "uploaded"
-    assert payload["file_key"].startswith("sessions/")
+    assert payload["file_key"].startswith("session-snapshots/v1/")
 
 
 @pytest.mark.asyncio
@@ -2566,7 +2566,16 @@ async def test_failed_upload_cannot_cache_uncommitted_snapshot_bytes(
         },
     )
     assert first.status_code == 200, first.text
-    file_key = first.json()["file_key"]
+    file_key = f"sessions/{seed_user.id}/legacy-snapshot.json"
+    await route.file_store.put(file_key, committed)
+    await db_session.execute(
+        text(
+            "UPDATE sessions SET file_key = :key "
+            "WHERE user_id = :user_id AND local_session_id = :local_id"
+        ),
+        {"key": file_key, "user_id": seed_user.id, "local_id": local_id},
+    )
+    await db_session.commit()
     listing = (await client.get("/v1/sessions", params={"environment_id": env_id})).json()
     session_id = listing["items"][0]["id"]
     revision = f"snapshot:{hashlib.sha256(committed).hexdigest()}"
@@ -2584,21 +2593,12 @@ async def test_failed_upload_cannot_cache_uncommitted_snapshot_bytes(
                 },
             )
     await db_session.rollback()
+    seed_user = await db_session.merge(seed_user)
     await db_session.refresh(seed_user)
-    assert await route.file_store.get(file_key) == uncommitted
+    # An unpublished immutable object cannot overwrite the committed bytes.
+    assert await route.file_store.get(file_key) == committed
     detail = await client.get(f"/v1/sessions/{session_id}")
     assert detail.json()["content_hash"] == hashlib.sha256(committed).hexdigest()
-    for _ in range(2):
-        rejected = await client.get(
-            f"/v1/sessions/{session_id}/messages",
-            params={
-                "content_revision": revision,
-            },
-        )
-        assert rejected.status_code == 409, rejected.text
-    # Restoring the committed bytes succeeds, proving no mislabeled projection
-    # from the failed upload poisoned subsequent cache hits.
-    await route.file_store.put(file_key, committed)
     recovered = await client.get(
         f"/v1/sessions/{session_id}/messages",
         params={

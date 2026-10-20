@@ -137,6 +137,8 @@ async def load_session_messages(
     session: Session,
     file_store: _FileStoreLike,
     db: AsyncSession | None = None,
+    *,
+    release_db_before_storage: bool = False,
 ) -> list[SessionMessageValue]:
     """Fetch and parse the session's messages array.
 
@@ -148,7 +150,9 @@ async def load_session_messages(
     - `SessionContentInvalid`: JSON decode failure or non-list payload.
       Indicates an upload corruption; route layer returns 500.
     """
-    projection = await load_session_content_projection(session, file_store, db)
+    projection = await load_session_content_projection(
+        session, file_store, db, release_db_before_storage=release_db_before_storage
+    )
     return projection.messages
 
 
@@ -156,6 +160,8 @@ async def load_session_content_projection(
     session: Session,
     file_store: _FileStoreLike,
     db: AsyncSession | None = None,
+    *,
+    release_db_before_storage: bool = False,
 ) -> SessionContentProjection:
     """Load cached message and owner-only timeline projections."""
     if session.content_protocol == "events-v1" and session.event_generation_id is not None:
@@ -167,11 +173,14 @@ async def load_session_content_projection(
             db,
             event_count=session.event_count,
             event_head_hash=session.event_head_hash or EMPTY_EVENT_HEAD,
+            release_db_before_storage=release_db_before_storage,
         )
 
     if not session.file_key:
         raise SessionContentMissing(f"session {session.id} has no uploaded content")
 
+    if release_db_before_storage and db is not None:
+        await db.close()
     return await load_snapshot_projection(
         session.file_key,
         session.content_hash or "",
@@ -231,6 +240,7 @@ async def load_event_generation_projection(
     *,
     event_count: int,
     event_head_hash: str,
+    release_db_before_storage: bool = False,
 ) -> SessionContentProjection:
     """Load the safe projection for one immutable prefix of a committed generation."""
     generation = (
@@ -244,6 +254,8 @@ async def load_event_generation_projection(
     cache_key = (f"events-v1:{generation.id}:{event_count}", event_head_hash)
     cached = _cache_get(cache_key)
     if cached is not None:
+        if release_db_before_storage:
+            await db.close()
         return cached
     events = await _load_event_generation_events(
         generation.id,
@@ -251,6 +263,7 @@ async def load_event_generation_projection(
         final_head_hash=event_head_hash,
         file_store=file_store,
         db=db,
+        release_db_before_storage=release_db_before_storage,
     )
     timeline = project_safe_timeline(events)
     # Reuse the sanitized text projection, retaining an explicit public-field allowlist.
@@ -298,6 +311,7 @@ async def _load_event_generation_events(
     final_head_hash: str,
     file_store: _FileStoreLike,
     db: AsyncSession,
+    release_db_before_storage: bool = False,
 ) -> list[SessionEvent]:
     chunks = list(
         (
@@ -311,6 +325,10 @@ async def _load_event_generation_events(
             )
         ).scalars()
     )
+    # All chunk identities are loaded. Owner reads may release authorization
+    # and the connection here; callers needing a binding/share fence opt out.
+    if release_db_before_storage:
+        await db.close()
     events: list[SessionEvent] = []
     next_seq = 0
     head = EMPTY_EVENT_HEAD
