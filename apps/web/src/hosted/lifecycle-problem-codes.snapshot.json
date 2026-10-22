@@ -30,5 +30,6 @@
 	"runtime_configuration_failed",
 	"runtime_observation_conflict",
 	"runtime_readiness_timeout",
-	"runtime_unreachable"
+	"runtime_unreachable",
+	"storage_full"
 ]

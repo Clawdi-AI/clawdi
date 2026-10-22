@@ -602,3 +602,32 @@ describe("runtime configuration failures", () => {
 		);
 	});
 });
+
+describe("storage full failures", () => {
+	test("warns and points the owner at the terminal instead of failing the agent", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: {
+				type: "https://api.clawdi.ai/problems/deployments/storage_full",
+				title: "Deployment storage is full",
+				status: 507,
+				detail: "internal quota output",
+				code: "storage_full",
+				phase: "reconcile",
+				retryable: true,
+				conditionReason: "StorageFull",
+				conditionMessage: "internal quota output",
+				observedGeneration: 2,
+			},
+		});
+
+		expect(deploymentFailurePresentation(deployment)).toMatchObject({
+			title: "Storage full",
+			reason: "Storage is full. Delete unneeded files in the terminal, then restart the agent.",
+			failedVerb: null,
+			code: "storage_full",
+			status: { kind: "runtime_unavailable", label: "Temporarily unavailable", tone: "warning" },
+			remediation: { kind: "restart", label: "Restart agent" },
+		});
+	});
+});
