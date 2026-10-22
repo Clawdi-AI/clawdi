@@ -56,7 +56,8 @@ describe("computeStatusDetailsPresentation", () => {
 		});
 		expect(computeStatusDetailsPresentation(deployment, quiet)).toMatchObject({
 			title: "Storage full",
-			description: expect.stringContaining("Open the terminal"),
+			description:
+				"Storage is full. Delete unneeded files in the terminal, then restart the agent.",
 			tone: "warning",
 		});
 		expect(agentTerminalPresentation(deployment).state).toBe("available");

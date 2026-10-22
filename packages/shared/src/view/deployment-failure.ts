@@ -20,7 +20,7 @@ const RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION =
 	"Clawdi couldn't apply part of this agent's configuration. Fix or disable the item named above, then restart the agent.";
 const STORAGE_FULL_FAILURE_CODE = "storage_full";
 const STORAGE_FULL_FAILURE_REASON =
-	"This agent's storage is full. Open the terminal and delete files you don't need, or contact support, then restart the agent.";
+	"Storage is full. Delete unneeded files in the terminal, then restart the agent.";
 const STORAGE_FULL_FAILURE_DESCRIPTION =
 	"This agent can't save new data until you free up space. Open the terminal and delete files you don't need, or contact support, then restart the agent.";
 

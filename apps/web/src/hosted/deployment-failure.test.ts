@@ -623,8 +623,7 @@ describe("storage full failures", () => {
 
 		expect(deploymentFailurePresentation(deployment)).toMatchObject({
 			title: "Storage full",
-			reason:
-				"This agent's storage is full. Open the terminal and delete files you don't need, or contact support, then restart the agent.",
+			reason: "Storage is full. Delete unneeded files in the terminal, then restart the agent.",
 			failedVerb: null,
 			code: "storage_full",
 			status: { kind: "runtime_unavailable", label: "Temporarily unavailable", tone: "warning" },
