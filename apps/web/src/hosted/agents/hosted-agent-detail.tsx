@@ -1059,12 +1059,19 @@ export function ComputeStatusDetails({
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	return (
 		<div className={computeStatusDetailsClasses.root}>
-			{failure?.status.kind === "runtime_unavailable" ? (
+			{failure?.status.kind === "runtime_unavailable" && failure.code !== "storage_full" ? (
 				<p className={computeStatusDetailsClasses.warning} role="status">
 					{computeStatusDetailsCopy.checking}
 				</p>
 			) : failure ? (
-				<div className={computeStatusDetailsClasses.failure} role="status">
+				<div
+					className={
+						failure.status.tone === "warning"
+							? cn("space-y-1", computeStatusDetailsClasses.warning)
+							: computeStatusDetailsClasses.failure
+					}
+					role="status"
+				>
 					<p className={computeStatusDetailsClasses.failureTitle}>{failure.title}</p>
 					<p className={computeStatusDetailsClasses.failureReason}>{failure.reason}</p>
 				</div>

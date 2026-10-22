@@ -4,6 +4,7 @@ import type { Deployment } from "./deploy";
 const POST_READY_RUNTIME_FAILURE_CODES = new Set([
 	"runtime_unreachable",
 	"runtime_configuration_failed",
+	"storage_full",
 ]);
 
 /** Public readiness evidence authorizes a launch attempt, not an authenticated browser session. */

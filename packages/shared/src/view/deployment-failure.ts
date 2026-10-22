@@ -18,6 +18,11 @@ const RUNTIME_CONFIGURATION_FAILURE_REASON =
 	"One of this agent's channels, AI providers, or tools couldn't be set up. Review recent changes, then restart the agent.";
 const RUNTIME_CONFIGURATION_FAILURE_DESCRIPTION =
 	"Clawdi couldn't apply part of this agent's configuration. Fix or disable the item named above, then restart the agent.";
+const STORAGE_FULL_FAILURE_CODE = "storage_full";
+const STORAGE_FULL_FAILURE_REASON =
+	"This agent's storage is full. Open the terminal and delete files you don't need, or contact support, then restart the agent.";
+const STORAGE_FULL_FAILURE_DESCRIPTION =
+	"This agent can't save new data until you free up space. Open the terminal and delete files you don't need, or contact support, then restart the agent.";
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -123,6 +128,16 @@ export function deploymentFailurePresentation(
 		deployment?.resource.status?.summary_state === "failed"
 			? deployment.resource.status.failure
 			: null;
+	// The runtime keeps running; the owner frees space through the terminal.
+	if (failure.failedVerb === null && statusFailure?.code === STORAGE_FULL_FAILURE_CODE) {
+		return {
+			...failure,
+			title: "Storage full",
+			description: STORAGE_FULL_FAILURE_DESCRIPTION,
+			status: RUNTIME_UNAVAILABLE_STATUS,
+			remediation: { kind: "restart", label: "Restart agent" },
+		};
+	}
 	// Specific customer-actionable classes must win over a broad controller
 	// phase such as reconcile. A phase alone cannot prove a runtime-health issue.
 	if (failure.failedVerb === null && statusFailure?.phase === "plan_change") {
@@ -249,6 +264,7 @@ export function deploymentFailureReason(
 	if (failure.code === RUNTIME_CONFIGURATION_FAILURE_CODE) {
 		return failure.detail?.trim() || RUNTIME_CONFIGURATION_FAILURE_REASON;
 	}
+	if (failure.code === STORAGE_FULL_FAILURE_CODE) return STORAGE_FULL_FAILURE_REASON;
 
 	// Failure title/detail/conditionMessage are free-form backend strings. Even
 	// after removing identifiers they can contain exception names or service

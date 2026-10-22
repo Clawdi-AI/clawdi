@@ -35,13 +35,14 @@ export function computeStatusDetailsPresentation(
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const line = (description: string, tone: "destructive" | "warning" | "neutral", cancel = false) =>
 		({ title: null, description, tone, cancel }) as const;
-	if (failure?.status.kind === "runtime_unavailable")
+	// Storage full is the one runtime-unavailable state the owner can fix.
+	if (failure?.status.kind === "runtime_unavailable" && failure.code !== "storage_full")
 		return line(computeStatusDetailsCopy.checking, "warning");
 	if (failure)
 		return {
 			title: failure.title,
 			description: failure.reason,
-			tone: "destructive" as const,
+			tone: failure.status.tone === "warning" ? ("warning" as const) : ("destructive" as const),
 			cancel: false,
 		};
 	if (status.kind === "failed") return line(computeStatusDetailsCopy.failed, "destructive");

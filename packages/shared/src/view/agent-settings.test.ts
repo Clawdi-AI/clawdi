@@ -38,6 +38,30 @@ describe("computeStatusDetailsPresentation", () => {
 		).toMatchObject({ tone: "destructive", cancel: false });
 	});
 
+	test("storage full names the fix instead of the generic runtime check", () => {
+		const deployment = hostedDeploymentFixture({
+			status: "failed",
+			failure: {
+				type: "https://api.clawdi.ai/problems/deployments/storage_full",
+				title: "Deployment storage is full",
+				status: 507,
+				detail: "Deployment storage is full",
+				code: "storage_full",
+				phase: "reconcile",
+				retryable: true,
+				conditionReason: "StorageFull",
+				conditionMessage: "Deployment storage is full",
+				observedGeneration: 1,
+			},
+		});
+		expect(computeStatusDetailsPresentation(deployment, quiet)).toMatchObject({
+			title: "Storage full",
+			description: expect.stringContaining("Open the terminal"),
+			tone: "warning",
+		});
+		expect(agentTerminalPresentation(deployment).state).toBe("available");
+	});
+
 	test("a running agent has no status line; a stopped one names its unavailable dashboard", () => {
 		expect(computeStatusDetailsPresentation(hostedDeploymentFixture(), quiet)).toBeNull();
 		expect(
