@@ -1,12 +1,12 @@
 {
-  "enabled": false,
-  "stanza": "clawdi",
-  "database": "clawdi",
-  "image": "ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:3b6f3a170e4da3e2489c878fc0f54a359ae3f476e568b489c0c7120799fe15e4",
-  "status_dir": "/home/phala/clawdi-db-status/cloud",
-  "sanity_sql": "/opt/clawdi-postgres/cloud/config/postgres-drill/sanity.sql",
-  "readonly_env": "/etc/clawdi-postgres/cloud-readonly.env",
-  "max_wal_bytes": 17179869184,
-  "max_target_lag_seconds": 3600,
-  "timeout_seconds": 14400
+	"enabled": false,
+	"stanza": "clawdi",
+	"database": "clawdi",
+	"image": "ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:3b6f3a170e4da3e2489c878fc0f54a359ae3f476e568b489c0c7120799fe15e4",
+	"status_dir": "/home/phala/clawdi-db-status/cloud",
+	"sanity_sql": "/opt/clawdi-postgres/cloud/config/postgres-drill/sanity.sql",
+	"readonly_env": "/etc/clawdi-postgres/cloud-readonly.env",
+	"max_wal_bytes": 17179869184,
+	"max_target_lag_seconds": 3600,
+	"timeout_seconds": 14400
 }
