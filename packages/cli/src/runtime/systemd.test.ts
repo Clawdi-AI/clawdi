@@ -137,6 +137,7 @@ esac
 			const environment = { ...process.env };
 			const paths = {
 				...getRuntimePaths({ mode: "hosted" }),
+				serviceStateRoot: root,
 				statusRoot: join(root, "status"),
 				runRoot: join(root, "run"),
 				appliedState: join(root, "applied.json"),

@@ -469,6 +469,51 @@ installer owns those bytes, so a refresh gets at most `daemon-reload`. Changes
 to a Clawdi drop-in or environment file still activate the official service;
 changes to a `clawdi-*` base unit retain normal activation rules.
 
+Repairing a Clawdi drop-in or environment file to its committed activation
+fingerprint only reloads the user manager. Filesystem drift or an interrupted
+write does not itself require restarting an active gateway. A restored candidate
+must match a current-format receipt exactly to avoid activation; a legacy-only
+candidate match retains the conservative activation behavior. A candidate that
+differs from the committed receipt, including a new desired environment written
+before an interrupted apply, still activates.
+Explicit native runtime invalidations also retain their activation behavior.
+
+Before starting or restarting a user service, Clawdi durably records its candidate
+fingerprint in `systemd-activation-journal.json` beside the applied receipt. Until
+receipt commit or a fully verified last-good replay acknowledges that intent,
+the running process may have loaded uncommitted content. A journal fingerprint
+different from the candidate forces activation, so replaying committed A after
+activating B restarts the service. A matching journal entry does not force another
+restart of committed A when an unrelated install error prevents receipt commit.
+Journal writes use the existing atomic platform writer; no wall-clock comparison
+is used. A crash between journaling rollback A and executing its restart can leave
+B running until the next desired change or explicit invalidation.
+
+A corrupt activation journal fails closed and blocks applies. Remediation requires
+an authorized root operator: use `systemctl` to stop runtime-watch and the managed
+user services so none retain an unknown loaded revision, archive the corrupt
+journal, then run `clawdi runtime watch --once --json` and
+`clawdi runtime verify --json` before starting runtime-watch with `systemctl`.
+Do not discard activation evidence while services keep running.
+
+Restart diagnostics include the pre-mutation, candidate, and committed
+fingerprints, any uncommitted activation fingerprint, receipt and desired source
+identities, changed file paths, and changed environment key names. They never
+include file content or environment
+values. Missing committed fingerprints are reported as null.
+
+Gateway environment rendering uses the loaded bundle's secret values, not
+apply-time credential refreshes. Cloud source revisions cover encrypted provider,
+channel, and runtime secret identities. Clawdi-managed provider keys use the
+transparent egress placeholder; native OAuth refreshes stay in the runtime's
+credential store. A custom provider key rendered into Hermes's environment needs
+activation when its desired value changes. OpenClaw's hot-apply path instead uses
+its native file secret references. Local runtime paths, egress CA paths, and
+OpenClaw reload mode/file-secret references can also affect rendering independently
+of the bundle identity; timestamps and discovered host IPs or ports are not
+rendered into gateway environments. The local memory budget affects only the
+reload-only OOM policy block.
+
 Hermes gets `TERMINAL_LOCAL_MEMORY_MAX_MB` at half the tightest visible cgroup-v2
 `memory.max` or physical RAM, in whole MiB (2,048 MiB on a 4 GiB instance;
 4,096 MiB on 8 GiB). Its official background-worker scopes honor this knob

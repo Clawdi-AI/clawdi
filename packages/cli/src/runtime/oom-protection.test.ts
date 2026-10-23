@@ -97,6 +97,7 @@ test("policy migration reloads both managers without restarting; repeated apply 
 	roots.push(root);
 	const paths = {
 		...getRuntimePaths({ mode: "local" }),
+		serviceStateRoot: root,
 		systemdSystemRoot: join(root, "system"),
 		systemdUserRoot: join(root, "user"),
 		systemdEnvRoot: join(root, "env"),

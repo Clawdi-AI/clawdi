@@ -10,6 +10,7 @@ import {
 import { hostedSkillEvidenceSchema } from "./hosted-skill-evidence";
 import type { RuntimePaths } from "./paths";
 import { writeRuntimePlatformFileAtomic } from "./state";
+import { clearSystemdActivationJournal } from "./systemd-activation-journal";
 
 const appliedContentSourceSchema = z
 	.object({
@@ -257,6 +258,7 @@ export function writeRuntimeAppliedState(
 		},
 	);
 	secureRuntimeAppliedStateFile(paths.appliedState);
+	clearSystemdActivationJournal(paths);
 	return paths.appliedState;
 }
 

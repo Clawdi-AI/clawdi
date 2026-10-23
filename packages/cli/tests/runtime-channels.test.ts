@@ -1215,7 +1215,6 @@ exit 64
 		});
 		const changedCredential = convergeRuntimeManifest(changedCheckpoint, paths);
 		expect(changedCredential.installErrors).toEqual([]);
-		writeTestRuntimeAppliedState(paths, changedCheckpoint, changedCredential);
 		expect(systemdEnvDigest(readSystemdEnvFile(paths, "hermes-gateway"))).not.toBe(
 			initialHermesRevision,
 		);
@@ -1230,6 +1229,7 @@ exit 64
 		});
 		const systemctlCalls = readFileSync(systemctlLog, "utf-8");
 		expect(systemctlCalls).toContain("--user restart hermes-gateway.service");
+		writeTestRuntimeAppliedState(paths, changedCheckpoint, changedCredential);
 
 		const removed = await hostedChannelBundleLoad(home, "hermes", 15, [], {});
 		const patchedSocket = readFileSync(baileysSocket, "utf8");

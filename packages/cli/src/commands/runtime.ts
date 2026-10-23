@@ -100,6 +100,7 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
+import { clearSystemdActivationJournal } from "../runtime/systemd-activation-journal";
 import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
@@ -1715,6 +1716,10 @@ async function applyRuntimeDesiredState(
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 								restartChangedUnits: load.source === "last-good-cache",
 								invalidatedUserUnits,
+								desiredIdentity: {
+									generation: load.manifest.generation,
+									sourceRevision: load.sourceRevision ?? null,
+								},
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],
@@ -1837,6 +1842,7 @@ async function applyRuntimeDesiredState(
 							persistComponentActivations(committed, paths, (scope, unit) =>
 								readComponentServiceState(paths, scope, unit),
 							);
+							clearSystemdActivationJournal(paths);
 						}
 					}
 				}
