@@ -194,7 +194,7 @@ SDK contracts were checked against installed Expo 57.0.26, Expo Router 57.0.24,
 
 **Headers and actions** — `src/platform/navigation/native-header.tsx`,
 `header-actions{,.android}.tsx`, `signed-in-layout.tsx`. Each tab contains a
-native Stack. Root screens enable `headerLargeTitleEnabled` (the SDK 57 name
+native Stack. Root screens enable `headerLargeTitleEnabled` (the SDK 58 name
 for the deprecated `headerLargeTitle`). Titles use Web copy, shared color
 tokens and Geist. `PageHeader` and `SettingsPanelHeader` keep descriptions,
 identity/status/adornments; native stacks own titles and back controls.

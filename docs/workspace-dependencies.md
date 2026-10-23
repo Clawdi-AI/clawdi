@@ -4,6 +4,12 @@ This is the Wave 1 dependency handoff for the Clawdi repository. It is a
 policy and audit record, not an approval to add the mobile app or to upgrade
 unrelated clients.
 
+> Current state: mobile runs Expo SDK 58. The named catalog is `expo58` and
+> holds SDK 58's exact pins (Expo 58.0.14, React Native 0.88.0, React 19.3.0).
+> The policy below applies to it unchanged. Version numbers, `expo57` and
+> SDK 57 references in the audit and gate sections are the historical Wave 1
+> record.
+
 ## Decision Summary
 
 - Keep the Clawdi default catalog on the existing Web/Electron/CLI toolchain.
@@ -19,9 +25,9 @@ unrelated clients.
   before this policy can be marked complete.
 - The root candidate's object form is valid for Bun `1.4.2`:
   `workspaces.packages`, `workspaces.catalog`, and
-  `workspaces.catalogs.expo57` are supported. `catalog:` means the default
-  catalog; `catalog:expo57` means the named catalog.
-- Use `catalog:expo57` explicitly for the SDK 57 native tuple. Never use the
+  `workspaces.catalogs.expo58` are supported. `catalog:` means the default
+  catalog; `catalog:expo58` means the named catalog.
+- Use `catalog:expo58` explicitly for the SDK 58 native tuple. Never use the
   default `catalog:` for native React packages. An unused catalog is not proof
   that a mobile package resolves to it.
 - Root owns the root manifests and `bun.lock`. This worktree does not change
@@ -189,30 +195,31 @@ gets a real direct import:
 - `@x402/evm` and `@x402/fetch` are only direct Shared dependencies today.
 - `tools/openapi-typescript/package.json` is outside the root workspace glob
   and owns TypeScript `5.9.3` in its own lock; it is not Clawdi product proof.
-- The SDK 57 native React exception belongs in the named catalog, not in the
+- The SDK 58 native React pins belong in the named catalog, not in the
   default catalog.
 
-### Named `expo57` catalog
+### Named `expo58` catalog
 
-The candidate's named group is an approved *exception candidate*, not an
-approved product dependency set. It records the SDK 57 template/runtime
-diagnostic observed by the mobile plan:
+The named group holds the exact versions Expo SDK 58 pins, as reported by
+`bunx expo install --check`. The root `package.json` is the source of truth;
+the core tuple is:
 
-| Package | Candidate version |
+| Package | Version |
 | --- | --- |
-| `expo` | `57.0.26` |
-| `react-native` | `0.86.3` |
-| `react` / `react-dom` | `19.2.3` |
-| `@types/react` | `19.2.18` |
-| `@react-native/metro-config` | `0.86.3` |
-| `@babel/core` | `7.29.7` |
-| `expo-router` | `57.0.24` |
-| `@expo/ui` | `57.0.21` |
-| native gesture/reanimated/worklets/screen/safe-area/svg peers | candidate exact versions |
+| `expo` | `58.0.14` |
+| `react-native` | `0.88.0` |
+| `react` / `react-dom` | `19.3.0` |
+| `@types/react` | `19.3.0` |
+| `@react-native/metro-config` | `0.88.0` |
+| `@babel/core` / `@babel/runtime` | `7.29.7` |
+| `expo-router` | `58.0.23` |
+| `@expo/ui` | `58.0.20` |
+| native gesture/reanimated/worklets/screen/safe-area/svg/webview peers | SDK 58 exact versions |
 
-The mobile package must use `catalog:expo57` for every package intentionally
+The mobile package must use `catalog:expo58` for every package intentionally
 in this tuple. It must not use `catalog:` for `react`, `react-dom`, or
-`@types/react`, and it must not rely on a root-hoisted React `19.2.8`.
+`@types/react`, and it must not rely on a root-hoisted Web React. Edit the
+catalog by hand; `expo install --fix` replaces catalog references with ranges.
 
 The default and named catalogs may contain different versions of the same
 package. That is the point of the exception, but it creates two React regions.
