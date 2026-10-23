@@ -329,6 +329,21 @@ for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
 }
 
 for (const gatewayUnit of ["hermes-gateway.service", "openclaw-gateway.service"] as const) {
+	test(`${gatewayUnit}: retrying committed A with matching uncommitted activation does not restart`, () => {
+		const f = fixture({ gatewayUnit, activeState: "inactive" });
+		writeFileSync(f.dropIn, dropInContents(true, f.gateway));
+		const a = readSystemdUnitSnapshot(f.paths);
+		commit(f.paths, Object.fromEntries([...a.system, ...a.user]));
+		expect(applySystemdRuntimeUpdate(f.paths, a, a, {}).userUnitsChanged).toEqual([f.gateway]);
+		expect(readFileSync(f.log, "utf8")).toContain(`--user start ${f.gateway}`);
+		// An unrelated install error blocks commit after recovery. Keep the intent.
+		expect(readSystemdActivationJournal(f.paths)).toEqual(Object.fromEntries(a.user));
+		writeFileSync(f.log, "");
+		expect(applySystemdRuntimeUpdate(f.paths, a, a, {}).userUnitsChanged).toEqual([]);
+		expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+		expect(readSystemdActivationJournal(f.paths)).toEqual(Object.fromEntries(a.user));
+	});
+
 	test(`${gatewayUnit}: a late failure replays committed A over the running uncommitted B`, () => {
 		const f = fixture({ gatewayUnit });
 		writeFileSync(f.dropIn, dropInContents(true, f.gateway));

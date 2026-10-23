@@ -474,23 +474,32 @@ fingerprint only reloads the user manager. Filesystem drift or an interrupted
 write does not itself require restarting an active gateway. A restored candidate
 must match a current-format receipt exactly to avoid activation; a legacy-only
 candidate match retains the conservative activation behavior. A candidate that
-differs from the committed receipt, including a new
-desired environment written before an interrupted apply, still activates.
+differs from the committed receipt, including a new desired environment written
+before an interrupted apply, still activates.
 Explicit native runtime invalidations also retain their activation behavior.
 
 Before starting or restarting a user service, Clawdi durably records its candidate
 fingerprint in `systemd-activation-journal.json` beside the applied receipt. Until
 receipt commit or a fully verified last-good replay acknowledges that intent,
-the running process may have loaded uncommitted content. Replaying the committed
-files therefore activates again even when those files match the old receipt.
-Journal writes use the existing atomic platform writer and fail closed on invalid
-state. No wall-clock comparison is used. A crash after receipt commit but before
-journal acknowledgement can conservatively repeat activation on recovery.
+the running process may have loaded uncommitted content. A journal fingerprint
+different from the candidate forces activation, so replaying committed A after
+activating B restarts the service. A matching journal entry does not force another
+restart of committed A when an unrelated install error prevents receipt commit.
+Journal writes use the existing atomic platform writer; no wall-clock comparison
+is used. A crash between journaling rollback A and executing its restart can leave
+B running until the next desired change or explicit invalidation.
+
+A corrupt activation journal fails closed and blocks applies. Remediation requires
+an authorized root operator: use `systemctl` to stop runtime-watch and the managed
+user services so none retain an unknown loaded revision, archive the corrupt
+journal, then run `clawdi runtime watch --once --json` and
+`clawdi runtime verify --json` before starting runtime-watch with `systemctl`.
+Do not discard activation evidence while services keep running.
 
 Restart diagnostics include the pre-mutation, candidate, and committed
 fingerprints, any uncommitted activation fingerprint, receipt and desired source
-identities, changed file paths, and
-changed environment key names. They never include file content or environment
+identities, changed file paths, and changed environment key names. They never
+include file content or environment
 values. Missing committed fingerprints are reported as null.
 
 Gateway environment rendering uses the loaded bundle's secret values, not

@@ -442,10 +442,15 @@ export function applySystemdRuntimeUpdate(
 				after.system.get(unit) !== committedFingerprint("system", unit),
 		),
 	);
+	// Matching intent avoids restarting committed content on every failed retry.
+	// It records an attempt, not command completion: a crash after journaling
+	// rollback A but before restarting can leave B running until a desired change
+	// or explicit invalidation activates the service again.
 	const pendingUserActivation = new Set(
 		user.present.filter(
 			(unit) =>
-				activationJournal[unit] !== undefined ||
+				(activationJournal[unit] !== undefined &&
+					activationJournal[unit] !== after.user.get(unit)) ||
 				after.user.get(unit) !== committedFingerprint("user", unit),
 		),
 	);
