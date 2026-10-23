@@ -1,0 +1,5 @@
+{
+	"source": "clawdi-hosted infra/v2/hosted-runtime/image/Dockerfile:2 and infra/v2/hosted-runtime/incus-image/build.lock.json:53-55; Hosted CI compares these pins",
+	"version": "24.21.0",
+	"image": "node:24.21.0-trixie-slim@sha256:db3ae80f5d8df06e04dabdf7b44cbf008d32de168205fa0294444aabbc08c590"
+}

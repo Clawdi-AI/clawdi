@@ -779,6 +779,22 @@ also run by the privileged systemd CI workflow before the official installer
 suite. Done: the command exits 0 and reports the native no-job auto-restart
 regression passing; no operator configuration or live runtime is used.
 
+Qualify an OpenClaw release against the real installer, gateway, config and
+plugin commands, and a native session generated with a loopback model stub:
+
+```bash
+CLAWDI_QUALIFICATION_OPENCLAW_VERSION=2026.10.6 scripts/test-openclaw-upstream-contract.sh
+```
+
+Docker is required; no model credentials are needed. Done: the command exits 0
+and prints `OpenClaw upstream adapter contract: PASS`. Omit the version to test
+the latest official release, as the three-hour upstream workflow does. The
+container's system Node version and image digest come from
+`packages/cli/tests/fixtures/openclaw-upstream-contract/system-node.json`;
+SDK helpers also run under that Node, including the transcript subprocess's
+`process.execPath`. Gateway restart coverage stops and starts the foreground
+process; native systemd unit installation remains in the official installer suite.
+
 For daemon end-to-end and manual browser verification, see
 [`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).
 
