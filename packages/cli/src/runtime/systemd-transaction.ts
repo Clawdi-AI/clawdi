@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseEnv } from "node:util";
 import { log } from "../serve/log";
 import { readRuntimeAppliedState } from "./applied-state";
 import { egressSnapshotEnabled } from "./egress-snapshot";
@@ -11,7 +12,12 @@ import { openClawHotApplyEnabled } from "./openclaw-warm-gateway";
 import type { getRuntimePaths } from "./paths";
 import { profileRuntimeStep } from "./profile";
 import { buildRuntimeUserCommand, runtimeUserUid } from "./runtime-user-command";
-import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
+import {
+	managedRuntimeSystemdUnitEntries,
+	parseSystemctlShow,
+	RUNTIME_SYSTEMD_DROP_IN_FILE,
+	systemctlPath,
+} from "./systemd";
 import { runtimeUserName, runtimeUserSystemdEnvironment } from "./systemd-user";
 
 function readFileIfExists(path: string): string | null {
@@ -24,8 +30,20 @@ export interface SystemdUnitSnapshot {
 	user: Map<string, string>;
 	/** Full file revisions, including policies that need reload but no activation. */
 	reload?: { system: Map<string, string>; user: Map<string, string> };
-	/** Released receipt formats, recomputed from the pre-mutation files only. */
+	/** Released receipt formats for exact revision comparisons during migration. */
 	legacy?: readonly { system: Map<string, string>; user: Map<string, string> }[];
+	/** Diagnostic revisions only; environment values never leave the reader. */
+	files?: {
+		system: Map<string, SystemdUnitFileRevisions>;
+		user: Map<string, SystemdUnitFileRevisions>;
+	};
+}
+
+interface SystemdUnitFileRevisions {
+	unit: string | null;
+	dropIn: string | null;
+	environment: string | null;
+	environmentKeys: Map<string, string>;
 }
 
 type SystemdRuntimeScope = "system" | "user";
@@ -81,10 +99,38 @@ export function readSystemdUnitSnapshot(
 		system: readManagedSystemdUnits(paths, paths.systemdSystemRoot, undefined, "files", read),
 		user: readManagedSystemdUnits(paths, paths.systemdUserRoot, undefined, "files", read),
 	};
+	const fileRevisions = (root: string, units: Map<string, string>) => {
+		const digest = (contents: string | null) =>
+			contents === null ? null : createHash("sha256").update(contents).digest("hex");
+		return new Map(
+			[...units.keys()].map((unit) => {
+				const environment = read(join(paths.systemdEnvRoot, `${unit}.env`));
+				return [
+					unit,
+					{
+						unit: digest(read(join(root, unit))),
+						dropIn: digest(read(join(root, `${unit}.d`, RUNTIME_SYSTEMD_DROP_IN_FILE))),
+						environment: digest(environment),
+						environmentKeys: new Map(
+							Object.entries(parseEnv(environment ?? "")).flatMap(([key, value]) =>
+								value === undefined
+									? []
+									: [[key, createHash("sha256").update(value).digest("hex")] as const],
+							),
+						),
+					},
+				] as const;
+			}),
+		);
+	};
 	return {
 		system: readManagedSystemdUnits(paths, paths.systemdSystemRoot, undefined, "activation", read),
 		user: readManagedSystemdUnits(paths, paths.systemdUserRoot, undefined, "activation", read),
 		reload,
+		files: {
+			system: fileRevisions(paths.systemdSystemRoot, reload.system),
+			user: fileRevisions(paths.systemdUserRoot, reload.user),
+		},
 		legacy: [
 			// 0.14.101 hashed all bytes, including any already-published OOM block.
 			reload,
@@ -220,15 +266,19 @@ export function withoutStaleSystemdUnits(
 	staleSystemUnits: readonly string[],
 	staleUserUnits: readonly string[],
 ): SystemdUnitSnapshot {
-	const system = new Map(snapshot.system);
-	const user = new Map(snapshot.user);
-	for (const unit of staleSystemUnits) system.delete(unit);
-	for (const unit of staleUserUnits) user.delete(unit);
-	const reloadSystem = new Map(snapshot.reload?.system ?? snapshot.system);
-	const reloadUser = new Map(snapshot.reload?.user ?? snapshot.user);
-	for (const unit of staleSystemUnits) reloadSystem.delete(unit);
-	for (const unit of staleUserUnits) reloadUser.delete(unit);
-	return { system, user, reload: { system: reloadSystem, user: reloadUser } };
+	const prune = <Value>(revision: { system: Map<string, Value>; user: Map<string, Value> }) => {
+		const system = new Map(revision.system);
+		const user = new Map(revision.user);
+		for (const unit of staleSystemUnits) system.delete(unit);
+		for (const unit of staleUserUnits) user.delete(unit);
+		return { system, user };
+	};
+	return {
+		...prune(snapshot),
+		reload: prune(snapshot.reload ?? snapshot),
+		legacy: snapshot.legacy?.map(prune),
+		files: snapshot.files ? prune(snapshot.files) : undefined,
+	};
 }
 
 /** Submit only a new first-apply sidecar job; final activation still proves it. */
@@ -282,6 +332,7 @@ export function applySystemdRuntimeUpdate(
 		skipActivatedSystemUnits?: readonly string[];
 		/** Active user units whose running process already matches the candidate. */
 		adoptUserUnits?: readonly string[];
+		desiredIdentity?: { generation: number; sourceRevision: string | null };
 	},
 ): {
 	applied: boolean;
@@ -325,7 +376,8 @@ export function applySystemdRuntimeUpdate(
 		: changedSystemdUnits(before.reload?.user ?? before.user, after.reload?.user ?? after.user);
 	const systemUnitsChanged = new Set([...system.added, ...system.removed]);
 	const userUnitsChanged = new Set([...user.added, ...user.removed]);
-	const committedActivated = readRuntimeAppliedState(paths)?.activated ?? {};
+	const committedState = readRuntimeAppliedState(paths);
+	const committedActivated = committedState?.activated ?? {};
 	const committedFingerprint = (scope: SystemdRuntimeScope, unit: string): string | undefined => {
 		const committed = committedActivated[unit];
 		if (
@@ -339,7 +391,52 @@ export function applySystemdRuntimeUpdate(
 			// are represented only by the full-file reload fingerprint.
 			return before[scope].get(unit);
 		}
+		if (
+			committed !== undefined &&
+			after.legacy?.some((snapshot) => snapshot[scope].get(unit) === committed)
+		) {
+			// Repairing drift can restore the exact revision in an older receipt.
+			// The candidate proves equality even when the damaged pre-mutation
+			// files cannot. A new desired revision still needs activation.
+			return after[scope].get(unit);
+		}
 		return committed;
+	};
+	const restartDiagnostics = (scope: SystemdRuntimeScope, unit: string) => {
+		const beforeFiles = before.files?.[scope].get(unit);
+		const candidateFiles = after.files?.[scope].get(unit);
+		const root = scope === "system" ? paths.systemdSystemRoot : paths.systemdUserRoot;
+		return {
+			beforeFingerprint: before[scope].get(unit) ?? null,
+			candidateFingerprint: after[scope].get(unit) ?? null,
+			committedFingerprint: committedActivated[unit] ?? null,
+			committedActivationFingerprint: committedFingerprint(scope, unit) ?? null,
+			committedGeneration: committedState?.generation,
+			committedSourceRevision: committedState?.sourceRevision,
+			committedAppliedAt: committedState?.appliedAt,
+			desiredGeneration: opts.desiredIdentity?.generation,
+			desiredSourceRevision: opts.desiredIdentity?.sourceRevision,
+			changedFiles: (["unit", "dropIn", "environment"] as const)
+				.filter((file) => (beforeFiles?.[file] ?? null) !== (candidateFiles?.[file] ?? null))
+				.map((file) =>
+					file === "unit"
+						? join(root, unit)
+						: file === "dropIn"
+							? join(root, `${unit}.d`, RUNTIME_SYSTEMD_DROP_IN_FILE)
+							: join(paths.systemdEnvRoot, `${unit}.env`),
+				),
+			changedEnvironmentKeys: [
+				...new Set([
+					...(beforeFiles?.environmentKeys.keys() ?? []),
+					...(candidateFiles?.environmentKeys.keys() ?? []),
+				]),
+			]
+				.filter(
+					(key) =>
+						beforeFiles?.environmentKeys.get(key) !== candidateFiles?.environmentKeys.get(key),
+				)
+				.sort(),
+		};
 	};
 	const pendingSystemActivation = new Set(
 		system.present.filter(
@@ -455,6 +552,7 @@ export function applySystemdRuntimeUpdate(
 					unit,
 					changed: system.changed.includes(unit),
 					pendingActivation: pendingSystemActivation.has(unit),
+					...restartDiagnostics("system", unit),
 				});
 			}
 			systemctl(["restart", ...restartSystemUnits]);
@@ -485,7 +583,9 @@ export function applySystemdRuntimeUpdate(
 		}
 		if (state.activeState !== "active") continue;
 		if (opts.adoptUserUnits?.includes(unit)) continue;
-		if (user.changed.includes(unit) || pendingUserActivation.has(unit)) {
+		// File repair is reload work. Restart only when the candidate differs
+		// from the committed activation, or native state explicitly invalidates it.
+		if (opts.invalidatedUserUnits?.includes(unit) || pendingUserActivation.has(unit)) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
 		}
@@ -543,6 +643,7 @@ export function applySystemdRuntimeUpdate(
 				changed: user.changed.includes(unit),
 				pendingActivation: pendingUserActivation.has(unit),
 				invalidated: opts.invalidatedUserUnits?.includes(unit) ?? false,
+				...restartDiagnostics("user", unit),
 			});
 		}
 		runtimeUserSystemctl(paths, ["restart", ...restartUserUnits]);

@@ -1715,6 +1715,10 @@ async function applyRuntimeDesiredState(
 								recoverFailedUnits: opts.recoverFailedSystemdUnits,
 								restartChangedUnits: load.source === "last-good-cache",
 								invalidatedUserUnits,
+								desiredIdentity: {
+									generation: load.manifest.generation,
+									sourceRevision: load.sourceRevision ?? null,
+								},
 								skipActivatedSystemUnits: egressPrerequisiteActivated
 									? [RUNTIME_SIDECAR_SYSTEM_UNIT]
 									: [],

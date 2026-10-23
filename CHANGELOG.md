@@ -80,6 +80,14 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.18
+
+- **Managed gateways:** repairing a partial or drifted Clawdi drop-in or
+  environment file to the committed activation no longer restarts a running
+  Hermes or OpenClaw gateway. Real desired changes still activate, and restart
+  diagnostics now record revision fingerprints, changed file paths, and changed
+  environment key names without values.
+
 ### CLI 0.16.17
 
 - **Managed runtime services:** official gateway base-unit refreshes no longer

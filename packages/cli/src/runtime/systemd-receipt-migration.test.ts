@@ -1,12 +1,17 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { log } from "../serve/log";
 import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
 import { gatewayOomProtectionLines } from "./oom-protection";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import { applySystemdRuntimeUpdate, readSystemdUnitSnapshot } from "./systemd-transaction";
+import {
+	applySystemdRuntimeUpdate,
+	readSystemdUnitSnapshot,
+	withoutStaleSystemdUnits,
+} from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const roots: string[] = [];
@@ -269,7 +274,9 @@ for (const gatewayUnit of ["hermes-gateway.service", "openclaw-gateway.service"]
 			const desired = readFileSync(file, "utf8");
 			writeFileSync(
 				file,
-				damaged === "environment" ? 'CLAWDI_AI_API_KEY="partial' : `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`,
+				damaged === "environment"
+					? 'CLAWDI_AI_API_KEY="partial'
+					: `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`,
 			);
 			const before = readSystemdUnitSnapshot(f.paths);
 			writeFileSync(file, desired);
@@ -299,11 +306,11 @@ for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
 		writeFileSync(f.env, 'CLAWDI_AI_API_KEY="partial');
 		const before = readSystemdUnitSnapshot(f.paths);
 		writeFileSync(f.env, environment);
-		const after = readSystemdUnitSnapshot(f.paths);
+		const after = withoutStaleSystemdUnits(readSystemdUnitSnapshot(f.paths), [], []);
 		const apply = applySystemdRuntimeUpdate(f.paths, before, after, {});
 		expect(apply).toMatchObject({ applied: true, userUnitsChanged: [] });
 		expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
-		expect(apply.activated[gateway]).toBe(after.user.get(gateway));
+		expect(apply.activated).toEqual(Object.fromEntries([...after.system, ...after.user]));
 	});
 }
 
@@ -322,6 +329,68 @@ test("a desired environment write interrupted before activation still restarts o
 	expect(applySystemdRuntimeUpdate(f.paths, recovered, recovered, {}).applied).toBe(true);
 	expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
 });
+
+for (const scope of ["system", "user"] as const) {
+	test(`${scope} restart diagnostics identify changed paths and keys without secret values`, () => {
+		const f = fixture();
+		writeFileSync(f.dropIn, dropInContents(true));
+		const unit = scope === "system" ? daemon : gateway;
+		const envPath = join(f.paths.systemdEnvRoot, `${unit}.env`);
+		writeFileSync(
+			envPath,
+			'CHANGED="old-secret"\nREMOVED="removed-secret"\nSAME="stable-secret"\n',
+		);
+		const before = readSystemdUnitSnapshot(f.paths);
+		commit(f.paths, Object.fromEntries([...before.system, ...before.user]));
+		const committed = readRuntimeAppliedState(f.paths);
+		writeFileSync(envPath, 'ADDED="added-secret"\nCHANGED="new-secret"\nSAME="stable-secret"\n');
+		const unitPath = scope === "system" ? join(f.paths.systemdSystemRoot, unit) : f.baseUnit;
+		writeFileSync(
+			unitPath,
+			`${readFileSync(unitPath, "utf8")}Environment=UNIT_TOKEN=unit-secret\n`,
+		);
+		if (scope === "user")
+			writeFileSync(f.dropIn, `${dropInContents(true)}Environment=DROP_TOKEN=drop-secret\n`);
+		const after = withoutStaleSystemdUnits(readSystemdUnitSnapshot(f.paths), [], []);
+		const logger = spyOn(log, "info").mockImplementation(() => {});
+		try {
+			applySystemdRuntimeUpdate(f.paths, before, after, {
+				desiredIdentity: { generation: 2, sourceRevision: "c".repeat(64) },
+			});
+			expect(logger).toHaveBeenCalledWith(
+				"runtime.systemd_restart",
+				expect.objectContaining({
+					scope,
+					unit,
+					beforeFingerprint: before[scope].get(unit),
+					candidateFingerprint: after[scope].get(unit),
+					committedFingerprint: committed?.activated?.[unit],
+					committedActivationFingerprint: before[scope].get(unit),
+					committedGeneration: 1,
+					committedSourceRevision: "a".repeat(64),
+					committedAppliedAt: committed?.appliedAt,
+					desiredGeneration: 2,
+					desiredSourceRevision: "c".repeat(64),
+					changedFiles: scope === "system" ? [unitPath, envPath] : [unitPath, f.dropIn, envPath],
+					changedEnvironmentKeys: ["ADDED", "CHANGED", "REMOVED"],
+				}),
+			);
+			const output = JSON.stringify(logger.mock.calls);
+			for (const value of [
+				"old-secret",
+				"removed-secret",
+				"stable-secret",
+				"added-secret",
+				"new-secret",
+				"unit-secret",
+				"drop-secret",
+			])
+				expect(output).not.toContain(value);
+		} finally {
+			logger.mockRestore();
+		}
+	});
+}
 
 test("unknown directives inside OOM markers remain activation relevant", () => {
 	const f = fixture();

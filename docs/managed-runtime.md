@@ -469,6 +469,30 @@ installer owns those bytes, so a refresh gets at most `daemon-reload`. Changes
 to a Clawdi drop-in or environment file still activate the official service;
 changes to a `clawdi-*` base unit retain normal activation rules.
 
+Repairing a Clawdi drop-in or environment file to its committed activation
+fingerprint only reloads the user manager. Filesystem drift or an interrupted
+write does not itself require restarting an active gateway. Receipt migration
+can prove this equality from either the pre-mutation files or the exact repaired
+candidate. A candidate that differs from the committed receipt, including a new
+desired environment written before an interrupted apply, still activates.
+Explicit native runtime invalidations also retain their activation behavior.
+Restart diagnostics include the pre-mutation, candidate, and committed
+fingerprints, receipt and desired source identities, changed file paths, and
+changed environment key names. They never include file content or environment
+values. Missing committed fingerprints are reported as null.
+
+Gateway environment rendering uses the loaded bundle's secret values, not
+apply-time credential refreshes. Cloud source revisions cover encrypted provider,
+channel, and runtime secret identities. Clawdi-managed provider keys use the
+transparent egress placeholder; native OAuth refreshes stay in the runtime's
+credential store. A custom provider key rendered into Hermes's environment needs
+activation when its desired value changes. OpenClaw's hot-apply path instead uses
+its native file secret references. Local runtime paths, egress CA paths, and
+OpenClaw reload mode/file-secret references can also affect rendering independently
+of the bundle identity; timestamps and discovered host IPs or ports are not
+rendered into gateway environments. The local memory budget affects only the
+reload-only OOM policy block.
+
 Hermes gets `TERMINAL_LOCAL_MEMORY_MAX_MB` at half the tightest visible cgroup-v2
 `memory.max` or physical RAM, in whole MiB (2,048 MiB on a 4 GiB instance;
 4,096 MiB on 8 GiB). Its official background-worker scopes honor this knob
