@@ -166,9 +166,9 @@ await check("OAuth inspect/seed/remove SDK: exactly one JSON document on stdout"
 		openClawContext: context,
 		workspaceRoot: home,
 	};
-	// The production helper in manifest-oauth.ts parses all stdout with JSON.parse
-	// and validates the native result. Prefix/suffix logs, multiple JSON documents,
-	// or an empty mutation response must fail here; never extract a JSON substring.
+	// The production helper in manifest-oauth.ts parses stdout with JSON.parse,
+	// defaulting empty output to {}, and validates the native result. Prefix/suffix
+	// logs or multiple JSON documents must fail; never extract a JSON substring.
 	assert.doesNotThrow(
 		() => reconcileHostedRuntimeOAuthCredentials(input),
 		"OAuth inspect/seed stdout must be exactly one JSON document",
