@@ -100,6 +100,7 @@ import {
 	writeRuntimeBootStatus,
 	writeRuntimeWatchStatus,
 } from "../runtime/state";
+import { clearSystemdActivationJournal } from "../runtime/systemd-activation-journal";
 import {
 	applySystemdRuntimeUpdate,
 	assertRuntimeUserCanRead,
@@ -1841,6 +1842,7 @@ async function applyRuntimeDesiredState(
 							persistComponentActivations(committed, paths, (scope, unit) =>
 								readComponentServiceState(paths, scope, unit),
 							);
+							clearSystemdActivationJournal(paths);
 						}
 					}
 				}

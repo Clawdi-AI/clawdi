@@ -18,6 +18,10 @@ import {
 	RUNTIME_SYSTEMD_DROP_IN_FILE,
 	systemctlPath,
 } from "./systemd";
+import {
+	readSystemdActivationJournal,
+	recordSystemdActivationIntent,
+} from "./systemd-activation-journal";
 import { runtimeUserName, runtimeUserSystemdEnvironment } from "./systemd-user";
 
 function readFileIfExists(path: string): string | null {
@@ -378,6 +382,7 @@ export function applySystemdRuntimeUpdate(
 	const userUnitsChanged = new Set([...user.added, ...user.removed]);
 	const committedState = readRuntimeAppliedState(paths);
 	const committedActivated = committedState?.activated ?? {};
+	const activationJournal = readSystemdActivationJournal(paths);
 	const committedFingerprint = (scope: SystemdRuntimeScope, unit: string): string | undefined => {
 		const committed = committedActivated[unit];
 		if (
@@ -390,15 +395,6 @@ export function applySystemdRuntimeUpdate(
 			// Clawdi-owned unit changes still activate; official base-unit refreshes
 			// are represented only by the full-file reload fingerprint.
 			return before[scope].get(unit);
-		}
-		if (
-			committed !== undefined &&
-			after.legacy?.some((snapshot) => snapshot[scope].get(unit) === committed)
-		) {
-			// Repairing drift can restore the exact revision in an older receipt.
-			// The candidate proves equality even when the damaged pre-mutation
-			// files cannot. A new desired revision still needs activation.
-			return after[scope].get(unit);
 		}
 		return committed;
 	};
@@ -416,6 +412,7 @@ export function applySystemdRuntimeUpdate(
 			committedAppliedAt: committedState?.appliedAt,
 			desiredGeneration: opts.desiredIdentity?.generation,
 			desiredSourceRevision: opts.desiredIdentity?.sourceRevision,
+			uncommittedActivationFingerprint: scope === "user" ? (activationJournal[unit] ?? null) : null,
 			changedFiles: (["unit", "dropIn", "environment"] as const)
 				.filter((file) => (beforeFiles?.[file] ?? null) !== (candidateFiles?.[file] ?? null))
 				.map((file) =>
@@ -446,7 +443,11 @@ export function applySystemdRuntimeUpdate(
 		),
 	);
 	const pendingUserActivation = new Set(
-		user.present.filter((unit) => after.user.get(unit) !== committedFingerprint("user", unit)),
+		user.present.filter(
+			(unit) =>
+				activationJournal[unit] !== undefined ||
+				after.user.get(unit) !== committedFingerprint("user", unit),
+		),
 	);
 	const recoverFailedUnits = opts.recoverFailedUnits !== false;
 	const activationChanged =
@@ -584,7 +585,8 @@ export function applySystemdRuntimeUpdate(
 		if (state.activeState !== "active") continue;
 		if (opts.adoptUserUnits?.includes(unit)) continue;
 		// File repair is reload work. Restart only when the candidate differs
-		// from the committed activation, or native state explicitly invalidates it.
+		// from the committed activation, a prior activation is uncommitted,
+		// or native state explicitly invalidates it.
 		if (opts.invalidatedUserUnits?.includes(unit) || pendingUserActivation.has(unit)) {
 			restartUserUnits.push(unit);
 			userUnitsChanged.add(unit);
@@ -606,6 +608,11 @@ export function applySystemdRuntimeUpdate(
 		startUserUnits.includes(gateway) &&
 		requiredSystemdUnitState(userStates, "user", dashboard).activeState === "inactive" &&
 		requiredSystemdUnitState(userStates, "user", gateway).activeState === "inactive";
+	const activatingUserUnits = new Set([...startUserUnits, ...restartUserUnits]);
+	recordSystemdActivationIntent(
+		paths,
+		Object.fromEntries([...after.user].filter(([unit]) => activatingUserUnits.has(unit))),
+	);
 	if (earlyDashboard) {
 		// Verified anonymous egress is already ready. Overlap the dashboard's
 		// Python imports with platform activation, then start the gateway after

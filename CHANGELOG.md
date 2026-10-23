@@ -86,7 +86,8 @@ only renames unmerged PR series and never-emitted definitions. See
   environment file to the committed activation no longer restarts a running
   Hermes or OpenClaw gateway. Real desired changes still activate, and restart
   diagnostics now record revision fingerprints, changed file paths, and changed
-  environment key names without values.
+  environment key names without values. Durable activation intent preserves
+  rollback and crash recovery when a service loaded an uncommitted candidate.
 
 ### CLI 0.16.17
 

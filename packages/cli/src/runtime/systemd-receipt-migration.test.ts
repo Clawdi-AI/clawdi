@@ -8,6 +8,10 @@ import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-sta
 import { gatewayOomProtectionLines } from "./oom-protection";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import {
+	clearSystemdActivationJournal,
+	readSystemdActivationJournal,
+} from "./systemd-activation-journal";
+import {
 	applySystemdRuntimeUpdate,
 	readSystemdUnitSnapshot,
 	withoutStaleSystemdUnits,
@@ -43,6 +47,7 @@ function fixture(
 	env: string;
 	baseUnit: string;
 	log: string;
+	activationAtCommand: string;
 } {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-receipt-migration-"));
 	roots.push(root);
@@ -73,6 +78,7 @@ function fixture(
 	);
 	writeFileSync(join(paths.systemdEnvRoot, `${daemon}.env`), 'CLI="0.14.101"\n');
 	const log = join(root, "commands.log");
+	const activationAtCommand = join(root, "activation-at-command.json");
 	const command = join(root, "systemctl");
 	writeFileSync(
 		command,
@@ -87,7 +93,11 @@ show)
   ;;
 is-enabled) printf 'enabled\\n' ;;
 daemon-reload) printf 'no' > '${needDaemonReload}' ;;
-start|restart) printf 'active' > '${activeState}' ;;
+start|restart)
+  if [ -f '${join(dirname(paths.appliedState), "systemd-activation-journal.json")}' ]; then
+    cp '${join(dirname(paths.appliedState), "systemd-activation-journal.json")}' '${activationAtCommand}'
+  fi
+  printf 'active' > '${activeState}' ;;
 stop) printf 'inactive' > '${activeState}' ;;
 esac
 `,
@@ -96,7 +106,7 @@ esac
 	process.env.CLAWDI_SYSTEMD_APPLY = "1";
 	process.env.CLAWDI_SYSTEMCTL_PATH = command;
 	process.env.CLAWDI_RUNTIME_USER = "root";
-	return { paths, gateway: gatewayUnit, dropIn, env, baseUnit, log };
+	return { paths, gateway: gatewayUnit, dropIn, env, baseUnit, log, activationAtCommand };
 }
 
 function commit(paths: RuntimePaths, activated: Record<string, string>): void {
@@ -295,7 +305,7 @@ for (const gatewayUnit of ["hermes-gateway.service", "openclaw-gateway.service"]
 }
 
 for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
-	test(`${version}: repairing environment drift can migrate the exact candidate receipt without activation`, () => {
+	test(`${version}: repairing drift with only a legacy candidate match conservatively activates once`, () => {
 		const f = fixture();
 		writeFileSync(f.dropIn, dropInContents(true));
 		const committed = readSystemdUnitSnapshot(f.paths);
@@ -308,9 +318,88 @@ for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
 		writeFileSync(f.env, environment);
 		const after = withoutStaleSystemdUnits(readSystemdUnitSnapshot(f.paths), [], []);
 		const apply = applySystemdRuntimeUpdate(f.paths, before, after, {});
-		expect(apply).toMatchObject({ applied: true, userUnitsChanged: [] });
-		expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+		expect(apply).toMatchObject({ applied: true, userUnitsChanged: [gateway] });
+		expect(readFileSync(f.log, "utf8")).toContain(`--user restart ${gateway}`);
 		expect(apply.activated).toEqual(Object.fromEntries([...after.system, ...after.user]));
+		commit(f.paths, apply.activated);
+		writeFileSync(f.log, "");
+		expect(applySystemdRuntimeUpdate(f.paths, after, after, {}).userUnitsChanged).toEqual([]);
+		expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+	});
+}
+
+for (const gatewayUnit of ["hermes-gateway.service", "openclaw-gateway.service"] as const) {
+	test(`${gatewayUnit}: a late failure replays committed A over the running uncommitted B`, () => {
+		const f = fixture({ gatewayUnit });
+		writeFileSync(f.dropIn, dropInContents(true, f.gateway));
+		const a = readSystemdUnitSnapshot(f.paths);
+		commit(f.paths, Object.fromEntries([...a.system, ...a.user]));
+		writeFileSync(f.env, 'CLAWDI_AI_API_KEY="candidate-B"\n');
+		const b = readSystemdUnitSnapshot(f.paths);
+		expect(applySystemdRuntimeUpdate(f.paths, a, b, {}).userUnitsChanged).toEqual([f.gateway]);
+		expect(readSystemdActivationJournal(f.paths)).toEqual(Object.fromEntries(b.user));
+		expect(JSON.parse(readFileSync(f.activationAtCommand, "utf8")).pending).toEqual(
+			Object.fromEntries(b.user),
+		);
+		// A readiness failure after activation leaves the receipt at A.
+		expect(readRuntimeAppliedState(f.paths)?.activated[f.gateway]).toBe(a.user.get(f.gateway));
+		writeFileSync(f.env, environment);
+		writeFileSync(f.log, "");
+		const restored = readSystemdUnitSnapshot(f.paths);
+		const replay = applySystemdRuntimeUpdate(f.paths, b, restored, {});
+		expect(replay.userUnitsChanged).toEqual([f.gateway]);
+		expect(readFileSync(f.log, "utf8")).toContain(`--user restart ${f.gateway}`);
+		// Only the successful replay proof acknowledges intent without a new receipt.
+		clearSystemdActivationJournal(f.paths);
+		writeFileSync(f.log, "");
+		expect(applySystemdRuntimeUpdate(f.paths, restored, restored, {}).userUnitsChanged).toEqual([]);
+		expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+	});
+
+	test(`${gatewayUnit}: crash after restart retains intent for a fresh process replaying A`, async () => {
+		const f = fixture({ gatewayUnit });
+		writeFileSync(f.dropIn, dropInContents(true, f.gateway));
+		const a = readSystemdUnitSnapshot(f.paths);
+		commit(f.paths, Object.fromEntries([...a.system, ...a.user]));
+		const run = async () => {
+			const child = Bun.spawn(
+				[
+					process.execPath,
+					"-e",
+					`
+import { applySystemdRuntimeUpdate, readSystemdUnitSnapshot } from ${JSON.stringify(join(import.meta.dir, "systemd-transaction.ts"))};
+const paths = JSON.parse(process.argv[1]);
+const snapshot = readSystemdUnitSnapshot(paths);
+applySystemdRuntimeUpdate(paths, snapshot, snapshot, {});
+process.exit(23);
+`,
+					JSON.stringify(f.paths),
+				],
+				{
+					env: { ...process.env },
+					stdin: "ignore",
+					stdout: "ignore",
+					stderr: "pipe",
+					timeout: 5000,
+				},
+			);
+			const [status, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+			return { status, stderr };
+		};
+		writeFileSync(f.env, 'CLAWDI_AI_API_KEY="candidate-B"\n');
+		const crashed = await run();
+		expect(crashed.status, crashed.stderr).toBe(23);
+		expect(readFileSync(f.log, "utf8")).toContain(`--user restart ${f.gateway}`);
+		const b = readSystemdUnitSnapshot(f.paths);
+		expect(readSystemdActivationJournal(f.paths)).toEqual(Object.fromEntries(b.user));
+		// The previous process and in-memory snapshots are gone; receipt still says A.
+		writeFileSync(f.env, environment);
+		writeFileSync(f.log, "");
+		const recovered = await run();
+		expect(recovered.status, recovered.stderr).toBe(23);
+		expect(readFileSync(f.log, "utf8")).toContain(`--user restart ${f.gateway}`);
+		commit(f.paths, Object.fromEntries([...a.system, ...a.user]));
+		expect(readSystemdActivationJournal(f.paths)).toEqual({});
 	});
 }
 

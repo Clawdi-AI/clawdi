@@ -471,13 +471,25 @@ changes to a `clawdi-*` base unit retain normal activation rules.
 
 Repairing a Clawdi drop-in or environment file to its committed activation
 fingerprint only reloads the user manager. Filesystem drift or an interrupted
-write does not itself require restarting an active gateway. Receipt migration
-can prove this equality from either the pre-mutation files or the exact repaired
-candidate. A candidate that differs from the committed receipt, including a new
+write does not itself require restarting an active gateway. A restored candidate
+must match a current-format receipt exactly to avoid activation; a legacy-only
+candidate match retains the conservative activation behavior. A candidate that
+differs from the committed receipt, including a new
 desired environment written before an interrupted apply, still activates.
 Explicit native runtime invalidations also retain their activation behavior.
+
+Before starting or restarting a user service, Clawdi durably records its candidate
+fingerprint in `systemd-activation-journal.json` beside the applied receipt. Until
+receipt commit or a fully verified last-good replay acknowledges that intent,
+the running process may have loaded uncommitted content. Replaying the committed
+files therefore activates again even when those files match the old receipt.
+Journal writes use the existing atomic platform writer and fail closed on invalid
+state. No wall-clock comparison is used. A crash after receipt commit but before
+journal acknowledgement can conservatively repeat activation on recovery.
+
 Restart diagnostics include the pre-mutation, candidate, and committed
-fingerprints, receipt and desired source identities, changed file paths, and
+fingerprints, any uncommitted activation fingerprint, receipt and desired source
+identities, changed file paths, and
 changed environment key names. They never include file content or environment
 values. Missing committed fingerprints are reported as null.
 
