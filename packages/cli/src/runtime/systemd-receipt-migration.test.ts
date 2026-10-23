@@ -258,6 +258,71 @@ test("invalidated active user units restart even with an unchanged fingerprint",
 	expect(readFileSync(f.log, "utf8")).toContain(`--user restart ${gateway}`);
 });
 
+for (const gatewayUnit of ["hermes-gateway.service", "openclaw-gateway.service"] as const) {
+	for (const damaged of ["environment", "drop-in"] as const) {
+		test(`${gatewayUnit}: repairing a partial ${damaged} write preserves the committed activation`, () => {
+			const f = fixture({ gatewayUnit });
+			writeFileSync(f.dropIn, dropInContents(true, f.gateway));
+			const committed = readSystemdUnitSnapshot(f.paths);
+			commit(f.paths, Object.fromEntries([...committed.system, ...committed.user]));
+			const file = damaged === "environment" ? f.env : f.dropIn;
+			const desired = readFileSync(file, "utf8");
+			writeFileSync(
+				file,
+				damaged === "environment" ? 'CLAWDI_AI_API_KEY="partial' : `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\n[Service]\n`,
+			);
+			const before = readSystemdUnitSnapshot(f.paths);
+			writeFileSync(file, desired);
+			const after = readSystemdUnitSnapshot(f.paths);
+			expect(before.user).not.toEqual(after.user);
+			expect(after.user).toEqual(committed.user);
+			const apply = applySystemdRuntimeUpdate(f.paths, before, after, {});
+			expect(apply).toMatchObject({ applied: true, userUnitsChanged: [] });
+			expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+			commit(f.paths, apply.activated);
+			writeFileSync(f.log, "");
+			expect(applySystemdRuntimeUpdate(f.paths, after, after, {}).applied).toBe(true);
+			expect(readFileSync(f.log, "utf8")).not.toMatch(/daemon-reload|\b(start|restart|stop)\b/);
+		});
+	}
+}
+
+for (const version of ["0.14.101", "0.14.102", "0.14.103"] as const) {
+	test(`${version}: repairing environment drift can migrate the exact candidate receipt without activation`, () => {
+		const f = fixture();
+		writeFileSync(f.dropIn, dropInContents(true));
+		const committed = readSystemdUnitSnapshot(f.paths);
+		commit(f.paths, {
+			...Object.fromEntries(committed.system),
+			[gateway]: releasedReceipt(version, readFileSync(f.dropIn, "utf8")),
+		});
+		writeFileSync(f.env, 'CLAWDI_AI_API_KEY="partial');
+		const before = readSystemdUnitSnapshot(f.paths);
+		writeFileSync(f.env, environment);
+		const after = readSystemdUnitSnapshot(f.paths);
+		const apply = applySystemdRuntimeUpdate(f.paths, before, after, {});
+		expect(apply).toMatchObject({ applied: true, userUnitsChanged: [] });
+		expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+		expect(apply.activated[gateway]).toBe(after.user.get(gateway));
+	});
+}
+
+test("a desired environment write interrupted before activation still restarts once", () => {
+	const f = fixture();
+	writeFileSync(f.dropIn, dropInContents(true));
+	const committed = readSystemdUnitSnapshot(f.paths);
+	commit(f.paths, Object.fromEntries([...committed.system, ...committed.user]));
+	writeFileSync(f.env, 'CLAWDI_AI_API_KEY="new-desired-value"\n');
+	const recovered = readSystemdUnitSnapshot(f.paths);
+	const apply = applySystemdRuntimeUpdate(f.paths, recovered, recovered, {});
+	expect(apply).toMatchObject({ applied: true, userUnitsChanged: [gateway] });
+	expect(readFileSync(f.log, "utf8")).toContain(`--user restart ${gateway}`);
+	commit(f.paths, apply.activated);
+	writeFileSync(f.log, "");
+	expect(applySystemdRuntimeUpdate(f.paths, recovered, recovered, {}).applied).toBe(true);
+	expect(readFileSync(f.log, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
+});
+
 test("unknown directives inside OOM markers remain activation relevant", () => {
 	const f = fixture();
 	writeFileSync(f.dropIn, dropInContents(true));
