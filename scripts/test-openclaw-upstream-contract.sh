@@ -76,6 +76,9 @@ in_container() {
 	fi
 	echo "Installed upstream OpenClaw in $((SECONDS - started))s"
 	record_identity
+	bun build packages/cli/tests/fixtures/openclaw-upstream-contract/node-sdk-probe.ts \
+		--target node --outfile "$report_dir/node-sdk-probe.mjs"
+	export CLAWDI_OPENCLAW_NODE_SDK_PROBE="$report_dir/node-sdk-probe.mjs"
 
 	local status=0
 	(
@@ -101,6 +104,7 @@ record_identity() {
 		printf 'displayVersion=%s\n' "$version"
 		printf 'commit=%s\n' "$commit"
 		printf 'nodeVersion=%s\n' "$node_version"
+		printf 'systemNodeVersion=%s\n' "$(node --version)"
 	} >>"$report_dir/identity"
 }
 
@@ -124,6 +128,7 @@ report_header() {
 		fi
 		printf '| displayVersion | `%s` |\n' "$(identity_value displayVersion)"
 		printf '| Bundled Node | `%s` |\n' "$(identity_value nodeVersion)"
+		printf '| System Node | `%s` |\n' "$(identity_value systemNodeVersion)"
 		printf '| Requested version | `%s` |\n\n' "$(identity_value requested_version)"
 	} >"$report_dir/summary.md"
 }
@@ -173,7 +178,8 @@ trap cleanup EXIT
 
 load_args=()
 if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then load_args+=(--load); fi
-docker build --quiet "${load_args[@]}" --file "$fixture_dir/Dockerfile" --tag "$image" "$fixture_dir" >/dev/null
+node_image="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image"])' "$fixture_dir/system-node.json")"
+docker build --quiet "${load_args[@]}" --build-arg "NODE_IMAGE=$node_image" --file "$fixture_dir/Dockerfile" --tag "$image" "$fixture_dir" >/dev/null
 
 status=0
 docker run --name "$container" \

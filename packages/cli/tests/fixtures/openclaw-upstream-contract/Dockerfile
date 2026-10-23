@@ -1,14 +1,11 @@
 # Clean host for the upstream OpenClaw adapter contract. OpenClaw itself is
 # installed at run time with the CLI's official installer policy, exactly like
 # a new Hosted Agent.
-ARG BUN_VERSION=1.4.0
-ARG NODE_VERSION=24.21.0
-ARG UBUNTU_VERSION=24.04
+ARG BUN_VERSION=1.4.2
+ARG NODE_IMAGE
 
 FROM oven/bun:${BUN_VERSION} AS bun
-FROM node:${NODE_VERSION}-bookworm-slim AS node
-
-FROM ubuntu:${UBUNTU_VERSION}
+FROM ${NODE_IMAGE}
 
 RUN apt-get update \
 	&& DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -24,10 +21,6 @@ RUN apt-get update \
 # installer provisions its own Node under the tenant prefix and the contract
 # verifies that the wrapper uses that bundled runtime.
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-	&& ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 RUN groupadd --gid 10001 clawdi \
 	&& useradd --uid 10001 --gid 10001 --create-home --home-dir /home/clawdi --shell /bin/bash clawdi \
