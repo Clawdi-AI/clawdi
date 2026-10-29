@@ -103,6 +103,7 @@ import {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { loadPersistedStepRevisions, persistedStepRevision } from "./persisted-step-revisions";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import { runtimeImpactRevision } from "./runtime-impact-revision";
 import {
 	installOfficialRuntimeService,
 	planOfficialRuntimeServices,
@@ -115,7 +116,7 @@ import {
 	runtimeSecretValue,
 } from "./secret-values";
 import { ensureRuntimeStateDirs } from "./state";
-import { readSystemdUnitSnapshot } from "./systemd-transaction";
+import { applySystemdRuntimeUpdate, readSystemdUnitSnapshot } from "./systemd-transaction";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const successfulPrerequisiteActivation = () => ({
@@ -6566,11 +6567,12 @@ fi
 				sources: [
 					{
 						config: {
-							rules: [{ folderPath: "/", ignoreSymlinks: true }],
+							rules: [{ folderPath: "/", ignoreSymlinks: true, viewable: true }],
 						},
 					},
 				],
 			},
+			frontend: { disableUsedPercentage: false },
 			userDefaults: {
 				sidebar: { sticky: false },
 				listing: { showHidden: true },
@@ -6596,6 +6598,7 @@ fi
 		expect(config).toContain("path: /home/clawdi");
 		expect(config).not.toContain("ignoreHidden");
 		expect(config).toContain("ignoreSymlinks: true");
+		expect(config).toContain("viewable: true");
 		expect(config).toContain("disableWebDAV: true");
 		expect(config).toContain("password:\n      enabled: false");
 		expect(config).toContain("share: false");
@@ -6646,6 +6649,106 @@ fi
 		expect(activations).toBe(2);
 		expect(authorityCommits).toBe(2);
 		expect(readFileSync(active, "utf8")).toBe(binary);
+	});
+
+	test("upgrades the indexed Files config with one Files restart and preserves other units", () => {
+		const paths = tempRuntimePaths();
+		const binary = "Files indexing upgrade fixture\n";
+		const manifest = fileBrowserManifest(paths, { generation: 1, binary });
+		const load = fileBrowserManifestLoad(manifest);
+		const options: RuntimeConvergenceOptions = {
+			fileBrowserInstallOptions: {
+				serviceIsolation: testFileBrowserServiceIsolation,
+				download: (_url, destination) => writeFileSync(destination, binary),
+				versionProbe: () => `${FILE_BROWSER_VERSION} ${FILE_BROWSER_COMMIT.slice(0, 7)}`,
+			},
+			fileBrowserReadinessProbe: () => true,
+			systemdApply: fileBrowserApplyHooks(),
+			commitAuthority: (convergence, authority) =>
+				commitTestRuntimeAuthority(load, paths, convergence, authority),
+		};
+		expect(convergeRuntimeManifest(load, paths, options).installErrors).toEqual([]);
+
+		// Reproduce the released config and manifest-only digest, with the same manifest/binary.
+		const desiredConfig = readFileSync(paths.fileBrowserConfig, "utf8");
+		const indexedConfig = desiredConfig.replace(/^ +viewable: true\n/m, "");
+		expect(indexedConfig).not.toContain("viewable: true");
+		chmodSync(paths.fileBrowserConfig, 0o640);
+		writeFileSync(paths.fileBrowserConfig, indexedConfig);
+		chmodSync(paths.fileBrowserConfig, 0o440);
+		const unit = "clawdi-files.service";
+		const environment = join(paths.systemdEnvRoot, `${unit}.env`);
+		const legacyDigest = runtimeImpactRevision({ companion: manifest.companions?.filebrowser });
+		writeFileSync(
+			environment,
+			readFileSync(environment, "utf8").replace(
+				/^CLAWDI_MANAGED_CONTENT_DIGEST=.*$/m,
+				`CLAWDI_MANAGED_CONTENT_DIGEST="${legacyDigest}"`,
+			),
+		);
+		const legacy = readSystemdUnitSnapshot(paths);
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("Files upgrade fixture has no applied state");
+		writeRuntimeAppliedState(
+			{ ...applied, activated: Object.fromEntries([...legacy.system, ...legacy.user]) },
+			paths,
+		);
+
+		const commands = join(paths.runRoot, "systemctl.log");
+		const systemctl = join(paths.runRoot, "systemctl");
+		writeFileSync(
+			systemctl,
+			`#!/bin/sh
+echo "$*" >> '${commands}'
+if [ "$1" = --user ]; then shift; fi
+command=$1
+shift
+for arg in "$@"; do
+  case "$arg" in
+  *.service)
+    case "$command" in
+    show) printf 'LoadState=loaded\\nActiveState=active\\nSubState=running\\nNeedDaemonReload=no\\nJob=\\n\\n' ;;
+    is-enabled) printf 'enabled\\n' ;;
+    esac ;;
+  esac
+done
+`,
+			{ mode: 0o755 },
+		);
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		let before = legacy;
+		options.systemdApply = {
+			activateEgressPrerequisite: successfulPrerequisiteActivation,
+			activate: (signal) => {
+				const candidate = readSystemdUnitSnapshot(paths);
+				const result = applySystemdRuntimeUpdate(paths, before, candidate, {
+					invalidatedUserUnits: signal.invalidatedUserUnits,
+				});
+				expect(result.applied).toBe(true);
+				return result;
+			},
+		};
+		expect(convergeRuntimeManifest(load, paths, options).installErrors).toEqual([]);
+		expect(readFileSync(paths.fileBrowserConfig, "utf8")).toBe(desiredConfig);
+		const upgraded = readSystemdUnitSnapshot(paths);
+		expect(upgraded.system.get(unit)).not.toBe(legacy.system.get(unit));
+		expect(upgraded.user.has("openclaw-gateway.service")).toBe(true);
+		expect(upgraded.user).toEqual(legacy.user);
+		expect([...upgraded.system].filter(([name]) => name !== unit)).toEqual(
+			[...legacy.system].filter(([name]) => name !== unit),
+		);
+		expect(
+			readFileSync(commands, "utf8").match(/^(?:--user )?(?:start|restart|stop) .*$/gm),
+		).toEqual([`restart ${unit}`]);
+
+		before = upgraded;
+		writeFileSync(commands, "");
+		expect(convergeRuntimeManifest(load, paths, options).installErrors).toEqual([]);
+		const repeated = readSystemdUnitSnapshot(paths);
+		expect(repeated.system).toEqual(upgraded.system);
+		expect(repeated.user).toEqual(upgraded.user);
+		expect(readFileSync(commands, "utf8")).not.toMatch(/\b(start|restart|stop)\b/);
 	});
 
 	test("retains only the desired Files candidate after authority commit", () => {

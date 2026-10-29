@@ -595,6 +595,23 @@ version/commit probe in `ExecStartPre=` before executing the content-addressed c
 garbage-collects older candidates only after applied authority commits. The
 candidate has no separate active/previous link state or hand-built chroot.
 
+The source root rule is `{ folderPath: "/", ignoreSymlinks: true, viewable: true }`.
+Upstream [root-rule resolution](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/config.go#L1260)
+disables source indexing, and [index initialization](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/indexing/indexingFiles.go#L408)
+skips scanner startup. This avoids synchronized full-home scans and SQLite
+index rewrites across tenants. Files search and indexed folder sizes are
+unavailable; browsing, uploading, editing, deleting, and downloading continue
+through the filesystem APIs. Sidebar disk usage remains enabled with
+`frontend.disableUsedPercentage: false`.
+
+The Files unit's `CLAWDI_MANAGED_CONTENT_DIGEST` includes the rendered config's
+SHA256 as well as the companion manifest. A config-only CLI upgrade restarts
+`clawdi-files.service` once; unchanged gateway and other service fingerprints
+remain stable. Repeated convergence with the same config does not restart Files.
+
+Done: `scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts -t 'Files'`
+passes the rendered-rule, upgrade activation, and idempotence checks.
+
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
 native read/write access to tenant-owned home content, including `0600` files,
 `0700` directories, and dotfiles. The entire tenant home, including user units

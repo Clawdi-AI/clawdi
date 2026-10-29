@@ -128,7 +128,8 @@ function renderFileBrowserConfig(
 					config: {
 						defaultEnabled: true,
 						private: true,
-						rules: [{ folderPath: "/", ignoreSymlinks: true }],
+						// Upstream root-level viewable disables indexing while retaining filesystem access.
+						rules: [{ folderPath: "/", ignoreSymlinks: true, viewable: true }],
 					},
 				},
 			],

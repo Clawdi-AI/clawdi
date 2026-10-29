@@ -80,6 +80,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.22
+
+- **Files:** disabled background indexing after synchronized full scans caused
+  shared-disk write bursts and stalled neighboring agents. Files search and
+  indexed folder sizes are unavailable; browsing, uploading, editing, deleting,
+  downloading, and sidebar disk usage remain available.
+
 ### CLI 0.16.21
 
 - **Session sync:** Hermes and OpenClaw bound retained batch content by bytes.
