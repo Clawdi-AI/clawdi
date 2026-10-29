@@ -622,8 +622,15 @@ SHA256 as well as the companion manifest. A config-only CLI upgrade restarts
 `clawdi-files.service` once; unchanged gateway and other service fingerprints
 remain stable. Repeated convergence with the same config does not restart Files.
 
+After activation, convergence retries the Files health URL with a one-second
+delay for up to 60 seconds, allowing time for startup initialization and PWA icon
+generation. Each HTTP attempt has a two-second timeout; an attempt already in
+progress may finish after the retry deadline. A 70-second process timeout bounds
+the probe. Failed readiness still throws into the existing rollback path.
+
 Done: `scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts -t 'Files'`
-passes the rendered-rule, upgrade activation, and idempotence checks.
+passes the rendered-rule, upgrade activation, idempotence, slow-start readiness,
+and readiness deadline checks.
 
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
 native read/write access to tenant-owned home content, including `0600` files,

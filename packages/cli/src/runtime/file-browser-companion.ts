@@ -407,15 +407,17 @@ export function probeFileBrowserReadiness(
 				[
 					"-fsS",
 					"--retry",
-					"5",
+					"60",
 					"--retry-connrefused",
 					"--retry-delay",
 					"1",
+					"--retry-max-time",
+					"60",
 					"--max-time",
 					"2",
 					url,
 				],
-				{ encoding: "utf8", timeout: 12_000 },
+				{ encoding: "utf8", timeout: 70_000 },
 			).status === 0;
 	if (!ready) throw new Error(`Files companion readiness failed at ${url}`);
 }

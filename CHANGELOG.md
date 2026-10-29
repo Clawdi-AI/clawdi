@@ -80,6 +80,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.23
+
+- **Files:** wait up to 60 seconds for startup readiness before failing an
+  upgrade. This fixes the 0.16.22 canary rollback when FileBrowser needed
+  6–8 seconds to initialize and generate PWA icons on a large home directory.
+
 ### CLI 0.16.22
 
 - **Files:** disabled background indexing after synchronized full scans caused
