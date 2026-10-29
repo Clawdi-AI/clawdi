@@ -286,13 +286,7 @@ export function createProfileSync(
 						const contentProtocol = await profile.reader.contentProtocol(context);
 						const scan = await scanSessionModule(profile.reader, request, knownRevisions, context);
 						if (scan.coverage !== "complete") result.coverage = "partial";
-						userActivity.complete &&= scan.userActivity?.complete ?? false;
-						const lastInput = scan.userActivity?.lastUserInputAt;
-						if (
-							lastInput &&
-							(!userActivity.lastUserInputAt || lastInput > userActivity.lastUserInputAt)
-						)
-							userActivity.lastUserInputAt = lastInput;
+
 						for await (const batch of scan.batches) {
 							context?.signal.throwIfAborted();
 							if (
@@ -340,6 +334,13 @@ export function createProfileSync(
 								),
 							};
 						}
+						userActivity.complete &&= scan.userActivity?.complete ?? false;
+						const lastInput = scan.userActivity?.lastUserInputAt;
+						if (
+							lastInput &&
+							(!userActivity.lastUserInputAt || lastInput > userActivity.lastUserInputAt)
+						)
+							userActivity.lastUserInputAt = lastInput;
 					} catch (error) {
 						context?.signal.throwIfAborted();
 						if (profile.isDefault) throw error;

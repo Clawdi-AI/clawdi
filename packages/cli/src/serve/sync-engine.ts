@@ -66,6 +66,7 @@ import {
 	persistSuppressedSession,
 	prepareSessionUpload,
 	type SelectedSessionProtocol,
+	type SessionUploadPlan,
 	sessionFence,
 	sessionPlanIsDurablyBlocked,
 	syncSessionContent,
@@ -292,6 +293,7 @@ interface StableSessionEnqueueOptions {
 	protocol: SelectedSessionProtocol;
 	fenceFor(session: RawSession): SessionFence;
 	onBlocked?(session: RawSession, message: string, hash: string): void;
+	onScanIssue?(session: RawSession, reason: string): void;
 }
 
 interface StableSessionEnqueueResult {
@@ -308,7 +310,15 @@ export async function enqueueChangedSessionsAfterStability(
 	for (const session of opts.sessions) {
 		if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
 		if (session.projectPath && opts.excluded.has(normalizeProject(session.projectPath))) continue;
-		const plan = await prepareSessionUpload(session, opts.protocol);
+		let plan: SessionUploadPlan;
+		try {
+			plan = await prepareSessionUpload(session, opts.protocol);
+		} catch (error) {
+			if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
+			if (!opts.onScanIssue) throw error;
+			opts.onScanIssue(session, toErrorMessage(error));
+			continue;
+		}
 		const hash = plan.localHash;
 		const fence = opts.fenceFor(session);
 		const sourceRevisionUpdate = session.sourceRevision
@@ -1180,6 +1190,7 @@ async function prepareSessionSync(
 							sourceSessionKey: profileSessionKey(session.profileKey, session.localSessionId),
 							profileKey: session.profileKey,
 						}),
+					onScanIssue: (session, reason) => scanIssues.push({ path: session.rawFilePath, reason }),
 					onBlocked: (session, message) => {
 						health.set(
 							"push",

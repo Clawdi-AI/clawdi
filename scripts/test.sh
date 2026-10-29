@@ -85,11 +85,9 @@ run_on_host() {
 		memory_output="$(realpath "${1:?Provide an existing empty output directory inside this checkout}")"
 		case "$memory_output/" in "$repo_root/"*) ;; *) echo "Fixture output must be inside this checkout" >&2; return 2;; esac
 		if [[ -n "$(ls -A "$memory_output")" ]]; then echo "Memory fixture output must be empty" >&2; return 2; fi
-		if [[ "$suite" == hermes-sync-memory ]]; then
-			local memory_baseline="${2:?Provide the full pre-fix commit SHA}"
-			[[ "$memory_baseline" =~ ^[0-9a-f]{40}$ ]] || return 2
-			provider_baseline_dir="$(mktemp -d "$repo_root/.hermes-memory-baseline.XXXXXX")"
-		fi
+		local memory_baseline="${2:-9fb3842f53024821c53899c60b604d7dd103ecf8}"
+		[[ "$memory_baseline" =~ ^[0-9a-f]{40}$ ]] || return 2
+		provider_baseline_dir="$(mktemp -d "$repo_root/.session-memory-baseline.XXXXXX")"
 	fi
 
 	cleanup() {
@@ -99,27 +97,35 @@ run_on_host() {
 		fi
 		if [[ -n "$provider_baseline_dir" ]]; then rm -rf "$provider_baseline_dir"; fi
 		if [[ -n "$memory_output" ]]; then
-			rm -f "$memory_output/current" "$memory_output/before"
-			rm -rf "$memory_output/home" "$memory_output/hermes" "$memory_output/opencode.db"
+			rm -rf "$memory_output/current" "$memory_output/before" "$memory_output/home" "$memory_output/hermes" "$memory_output/opencode.db"
+			rm -f "$memory_output/scenario.mjs" "$memory_output/memory-probe.mjs"
 		fi
 	}
 	trap cleanup EXIT
 	if [[ "$suite" == provider-recovery-fixture ]]; then
 		git -C "$repo_root" show "$baseline_revision:packages/cli/src/runtime/connection-provider-config.ts" > "$provider_baseline_dir/connection-provider-config.ts"
 	fi
-	if [[ "$suite" == hermes-sync-memory ]]; then
-		git -C "$repo_root" show "$memory_baseline:packages/cli/src/adapters/hermes.ts" > "$provider_baseline_dir/hermes.ts"
+	if [[ "$suite" == hermes-sync-memory || "$suite" == session-sync-memory ]]; then
+		git -C "$repo_root" archive "$memory_baseline" packages/cli/src packages/cli/bin packages/cli/package.json | tar -x -C "$provider_baseline_dir"
+		printf 'baseline_commit=%s\n' "$memory_baseline"
 	fi
 
+	# Match the supported Node runtime used by the daemon. Older Node 24.19
+	# leaks Blob.stream() backing stores (nodejs/node#63577), obscuring CLI gains.
+	local build_args=() bake_args=()
+	if [[ "$suite" == hermes-sync-memory || "$suite" == session-sync-memory ]]; then
+		build_args+=(--build-arg NODE_VERSION=24.21.0)
+		bake_args+=(--set test-runner.args.NODE_VERSION=24.21.0)
+	fi
 	if [[ "${CLAWDI_TEST_RUNNER_SKIP_BUILD:-0}" != "1" ]]; then
 		if [[ "${DOCKER_BUILD_LOAD:-0}" == "1" ]]; then
 			# Bake accepts the Compose graph and explicitly exports to the daemon.
 			(
 				cd "$repo_root"
-				docker buildx bake --file docker-compose.test.yml --load test-runner
+				docker buildx bake --file docker-compose.test.yml --load "${bake_args[@]}" test-runner
 			)
 		else
-			compose build test-runner
+			compose build "${build_args[@]}" test-runner
 		fi
 	fi
 
@@ -128,34 +134,45 @@ run_on_host() {
 	if [[ "$suite" == provider-recovery-fixture ]]; then
 		run_args+=(--volume "$provider_baseline_dir:/provider-baseline:ro" --volume "$provider_output:/provider-artifacts")
 	fi
-	if [[ "$suite" == hermes-sync-memory ]]; then
+	if [[ "$suite" == hermes-sync-memory || "$suite" == session-sync-memory ]]; then
 		run_args+=(--volume "$provider_baseline_dir:/memory-baseline:ro" --volume "$memory_output:/memory-artifacts")
-	fi
-	if [[ "$suite" == session-sync-memory ]]; then
-		run_args+=(--volume "$memory_output:/memory-artifacts")
 	fi
 	if ! needs_postgres "$suite"; then
 		run_args+=(--no-deps)
 	fi
 	compose "${run_args[@]}" test-runner bash /repo/scripts/test.sh --in-container "$suite" "$@"
-	if [[ "$suite" == hermes-sync-memory ]]; then
-		local memory_args=(--rm --network none --cpus 2 --memory 512m --memory-swap 512m --pids-limit 128 --user 1000:1000 --volume "$memory_output:/memory-artifacts" --env CLAWDI_MEMORY_FIXTURE_ROOT=/memory-artifacts)
-		docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current --seed
-		local before_exit=0
-		docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/before > "$memory_output/before.log" 2>&1 || before_exit=$?
-		printf 'baseline_exit=%s\n' "$before_exit"
-		if [[ "$before_exit" != 137 ]]; then echo "Expected baseline memory-limit kill" >&2; return 1; fi
-		docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current > "$memory_output/current.log" 2>&1
-		cat "$memory_output/current.log"
+	if [[ "$suite" == hermes-sync-memory || "$suite" == session-sync-memory ]]; then
+		local memory_args=(--rm --network none --cpus 2 --memory 4g --memory-swap 4g --pids-limit 128 --user 1000:1000 --volume "$memory_output:/memory-artifacts" --env CLAWDI_MEMORY_FIXTURE_ROOT=/memory-artifacts)
+		local adapter build
+		for adapter in hermes openclaw; do
+			docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs --many-medium --idle --seed "--adapter=$adapter"
+			for build in before current; do
+				docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs --many-medium --idle "--adapter=$adapter" "--build=$build" > "$memory_output/$adapter-$build-idle.log" 2>&1
+				cat "$memory_output/$adapter-$build-idle.log"
+			done
+			docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs --many-medium --seed "--adapter=$adapter"
+			for build in before current; do
+				docker run "${memory_args[@]}" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs --many-medium "--adapter=$adapter" "--build=$build" > "$memory_output/$adapter-$build.log" 2>&1
+				cat "$memory_output/$adapter-$build.log"
+			done
+			local policy
+			for policy in --max-old-space-size=256 --max-semi-space-size=16; do
+				local policy_name=old256
+				if [[ "$policy" == --max-semi-space-size=16 ]]; then policy_name=semi16; fi
+				docker run "${memory_args[@]}" --env "NODE_OPTIONS=$policy" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs --many-medium "--adapter=$adapter" --build=current > "$memory_output/$adapter-current-$policy_name.log" 2>&1
+				cat "$memory_output/$adapter-current-$policy_name.log"
+			done
+		done
 	fi
 	if [[ "$suite" == session-sync-memory ]]; then
+		# Preserve the existing tighter ceiling for single large-history regressions.
+		local session_memory_args=(--rm --network none --cpus 2 --memory 512m --memory-swap 512m --pids-limit 128 --user 1000:1000 --volume "$memory_output:/memory-artifacts" --env CLAWDI_MEMORY_FIXTURE_ROOT=/memory-artifacts)
 		local adapter
 		for adapter in hermes codex claude_code pi opencode openclaw; do
 			rm -rf "$memory_output/home" "$memory_output/hermes" "$memory_output/opencode.db"
-			local session_memory_args=(--rm --network none --cpus 2 --memory 512m --memory-swap 512m --pids-limit 128 --user 1000:1000 --volume "$memory_output:/memory-artifacts" --env CLAWDI_MEMORY_FIXTURE_ROOT=/memory-artifacts)
-			docker run "${session_memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current --seed "--adapter=$adapter"
-			docker run "${session_memory_args[@]}" "$TEST_RUNNER_IMAGE" /memory-artifacts/current "--adapter=$adapter" > "$memory_output/$adapter.log" 2>&1
-			cat "$memory_output/$adapter.log"
+			docker run "${session_memory_args[@]}" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs --seed "--adapter=$adapter"
+			docker run "${session_memory_args[@]}" "$TEST_RUNNER_IMAGE" node /memory-artifacts/scenario.mjs "--adapter=$adapter" > "$memory_output/$adapter-large.log" 2>&1
+			cat "$memory_output/$adapter-large.log"
 		done
 	fi
 }
@@ -172,6 +189,7 @@ copy_repo() {
 		--exclude '.git' \
 		--exclude '.paseo/' \
 		--exclude '.turbo/' \
+		--exclude 'test-results/' \
 		--exclude 'node_modules/' \
 		--exclude '**/node_modules/' \
 		--exclude 'backend/.venv/' \
@@ -422,17 +440,22 @@ run_in_container() {
 			bun run --cwd packages/cli build:native
 			CLAWDI_NATIVE_BINARY="$work_dir/packages/cli/dist-native/linux-x64/clawdi" cli_tests tests/e2e/native-installer.e2e.test.ts tests/e2e/native-daemon.e2e.test.ts
 			;;
-		hermes-sync-memory)
+		hermes-sync-memory|session-sync-memory)
 			install_js
 			cli_typecheck
-			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --compile --outfile=/memory-artifacts/current
-			cp /memory-baseline/hermes.ts packages/cli/src/adapters/hermes.ts
-			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --compile --outfile=/memory-artifacts/before
-			;;
-		session-sync-memory)
-			install_js
-			cli_typecheck
-			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --compile --outfile=/memory-artifacts/current
+			bun build packages/cli/tests/fixtures/hermes-sync-memory/scenario.ts --target=node --outfile=/memory-artifacts/scenario.mjs
+			cp packages/cli/tests/fixtures/hermes-sync-memory/memory-probe.mjs /memory-artifacts/
+			bun run --cwd packages/cli build
+			mkdir -p /memory-artifacts/current
+			cp -R packages/cli/dist packages/cli/bin packages/cli/package.json /memory-artifacts/current/
+			# Replace the complete CLI source snapshot in the disposable runner,
+			# including upload/engine changes, rather than only the Hermes adapter.
+			rm -rf packages/cli/src
+			cp -R /memory-baseline/packages/cli/src packages/cli/src
+			cp /memory-baseline/packages/cli/package.json packages/cli/package.json
+			bun run --cwd packages/cli build
+			mkdir -p /memory-artifacts/before
+			cp -R packages/cli/dist /memory-baseline/packages/cli/bin packages/cli/package.json /memory-artifacts/before/
 			;;
 		provider-recovery-fixture)
 			install_js

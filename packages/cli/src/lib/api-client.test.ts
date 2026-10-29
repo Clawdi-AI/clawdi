@@ -22,6 +22,61 @@ describe("ApiClient.uploadSkill", () => {
 	});
 });
 
+describe("multipart bytes", () => {
+	it("uploads exactly a Buffer subarray, including Unicode and binary bytes", async () => {
+		const content = Buffer.from("中😀\0\xff");
+		const backing = Buffer.concat([Buffer.from("prefix"), content, Buffer.from("suffix")]);
+		const file = backing.subarray(6, 6 + content.length);
+		let uploaded: Buffer | undefined;
+		globalThis.fetch = Object.assign(
+			async (_request: RequestInfo | URL, init?: RequestInit) => {
+				const request = _request instanceof Request ? _request : new Request(_request, init);
+				const part = (await request.formData()).get("file");
+				if (!(part instanceof Blob)) throw new Error("expected file part");
+				uploaded = Buffer.from(await part.arrayBuffer());
+				return Response.json({ status: "uploaded", content_hash: "hash" });
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		await new ApiClient({ requireAuth: false }).uploadSessionContent(
+			"session",
+			file,
+			"session.json",
+			{ environmentId: "agent", expectedContentHash: "hash" },
+		);
+		expect(uploaded?.equals(content)).toBe(true);
+	});
+	it("replays multipart PUT from the same bytes after a consumed failed attempt", async () => {
+		const bytes = Buffer.from("中😀\u0000binary");
+		const received: Buffer[] = [];
+		globalThis.fetch = Object.assign(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				const request = input instanceof Request ? input : new Request(input, init);
+				const form = await request.formData();
+				expect(form.get("content_hash")).toBe("digest");
+				expect(form.get("base_head_hash")).toBe("head");
+				const file = form.get("file");
+				if (!(file instanceof Blob)) throw new Error("expected file part");
+				received.push(Buffer.from(await file.arrayBuffer()));
+				return received.length === 1
+					? new Response("retry", { status: 503 })
+					: Response.json({ count: 1 });
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		await new ApiClient({ requireAuth: false }).uploadSessionEventGenerationChunk({
+			localSessionId: "session",
+			generation: "generation",
+			startSeq: 0,
+			baseHeadHash: "head",
+			contentHash: "digest",
+			file: bytes,
+		});
+		expect(received).toHaveLength(2);
+		for (const body of received) expect(body.equals(bytes)).toBe(true);
+	});
+});
+
 describe("multipart upload deadline", () => {
 	it.each([25 * 1024 * 1024, 1024])("allows transfer time for %i bytes", async (size) => {
 		const originalTimeout = globalThis.setTimeout;

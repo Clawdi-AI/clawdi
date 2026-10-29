@@ -177,7 +177,7 @@ export interface SessionUserActivity {
 
 export interface SessionBatchScan {
 	coverage: SessionScanResult["coverage"];
-	/** Runtime-wide aggregate from the canonical local inventory. */
+	/** Runtime-wide aggregate from the canonical inventory; final after batches are consumed. */
 	userActivity?: SessionUserActivity;
 	batches: AsyncIterable<SessionScanBatch>;
 }

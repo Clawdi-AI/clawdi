@@ -3,6 +3,7 @@ import type { RawSession, SessionEvent, SessionMessage, SessionModule } from "..
 import { type ApiClient, ApiError } from "./api-client";
 import { canonicalApiOrigin } from "./api-origin";
 import {
+	advanceCanonicalEventHead,
 	advanceEventHead,
 	canonicalJson,
 	EMPTY_EVENT_HEAD,
@@ -617,7 +618,9 @@ async function* chunkEvents(
 	let size = 0;
 	let lines: string[] = [];
 	const chunk = (): EventChunk => {
-		const bytes = Buffer.from(lines.join(""), "ascii");
+		const bytes = Buffer.allocUnsafe(size);
+		let offset = 0;
+		for (const line of lines) offset += bytes.write(line, offset, "ascii");
 		return {
 			startSeq: chunkStart,
 			count,
@@ -627,13 +630,13 @@ async function* chunkEvents(
 			resultHead: head,
 		};
 	};
-	for await (const event of readPlanEvents(plan)) {
+	for await (const { event, encoded, resultHead } of readPlanEvents(plan)) {
 		if (event.seq < startSeq) {
-			head = advanceEventHead(head, [event]);
+			head = resultHead;
 			baseHead = head;
 			continue;
 		}
-		const line = `${canonicalJson(event)}\n`;
+		const line = `${encoded}\n`;
 		const lineSize = Buffer.byteLength(line, "ascii");
 		if (lineSize > limits.maxBytes)
 			throw new EventTooLargeError(event.seq, lineSize, limits.maxBytes);
@@ -648,20 +651,23 @@ async function* chunkEvents(
 		lines.push(line);
 		size += lineSize;
 		count++;
-		head = advanceEventHead(head, [event]);
+		head = resultHead;
 	}
 	if (count) yield chunk();
 }
 
-async function* readPlanEvents(plan: SessionUploadPlan): AsyncGenerator<SessionEvent> {
+async function* readPlanEvents(
+	plan: SessionUploadPlan,
+): AsyncGenerator<{ event: SessionEvent; encoded: string; resultHead: string }> {
 	const events = plan.readEvents?.() ?? plan.events;
 	if (!events) throw new Error("events-v1 plan is missing its reader");
 	let count = 0;
 	let head = EMPTY_EVENT_HEAD;
 	for await (const event of events) {
 		assertEventIdentity(event, count++);
-		head = advanceEventHead(head, [event]);
-		yield event;
+		const encoded = canonicalJson(event);
+		head = advanceCanonicalEventHead(head, encoded);
+		yield { event, encoded, resultHead: head };
 	}
 	if (count !== plan.eventCount || head !== plan.finalEventHead) {
 		throw new Error("session source changed after upload planning; retry with a fresh plan");
@@ -672,11 +678,10 @@ async function eventPrefixHead(
 	plan: SessionUploadPlan,
 	count: number,
 ): Promise<string | undefined> {
-	let head = EMPTY_EVENT_HEAD;
+	const head = EMPTY_EVENT_HEAD;
 	let prefix = count === 0 ? head : undefined;
-	for await (const event of readPlanEvents(plan)) {
-		head = advanceEventHead(head, [event]);
-		if (event.seq + 1 === count) prefix = head;
+	for await (const { event, resultHead } of readPlanEvents(plan)) {
+		if (event.seq + 1 === count) prefix = resultHead;
 	}
 	return prefix;
 }

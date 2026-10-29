@@ -188,7 +188,7 @@ describe("Docker build workflow contract", () => {
 		}
 		const runner = readFileSync(resolve(import.meta.dir, "../../../scripts/test.sh"), "utf8");
 		expect(runner).toMatch(
-			/if \[\[ "\$\{DOCKER_BUILD_LOAD:-0\}" == "1" \]\]; then[\s\S]*?docker buildx bake[^\n]*--load test-runner[\s\S]*?else\s+compose build test-runner/,
+			/if \[\[ "\$\{DOCKER_BUILD_LOAD:-0\}" == "1" \]\]; then[\s\S]*?docker buildx bake[^\n]*--load "\$\{bake_args\[@\]\}" test-runner[\s\S]*?else\s+compose build "\$\{build_args\[@\]\}" test-runner/,
 		);
 	});
 
