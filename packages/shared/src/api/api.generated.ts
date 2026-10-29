@@ -6648,6 +6648,39 @@ export interface components {
             entries: components["schemas"]["HostedRuntimeObservedComponentV1"][];
         };
         /**
+         * HostedRuntimeObservedIntegrationV1
+         * @description Native channel state, independent of core runtime serving readiness.
+         */
+        HostedRuntimeObservedIntegrationV1: {
+            /**
+             * Kind
+             * @constant
+             */
+            kind: "channel";
+            /**
+             * Runtime
+             * @constant
+             */
+            runtime: "hermes";
+            /** Integration */
+            integration: string;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "connected" | "connecting" | "retrying" | "disconnected" | "fatal" | "paused" | "unknown";
+        };
+        /** HostedRuntimeObservedIntegrationsV1 */
+        HostedRuntimeObservedIntegrationsV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Entries */
+            entries: components["schemas"]["HostedRuntimeObservedIntegrationV1"][];
+        };
+        /**
          * HostedRuntimeObservedProviderConflictV1
          * @description A Cloud provider the runtime skipped because native configuration owns it.
          */
@@ -8034,6 +8067,7 @@ export interface components {
             convergeError?: string | null;
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
+            integrations?: components["schemas"]["HostedRuntimeObservedIntegrationsV1"] | null;
         };
         /** RuntimeDriftObservationHead */
         RuntimeDriftObservationHead: {
@@ -8265,6 +8299,7 @@ export interface components {
             userActivity?: components["schemas"]["HostedRuntimeObservedUserActivityV1"] | null;
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
+            integrations?: components["schemas"]["HostedRuntimeObservedIntegrationsV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

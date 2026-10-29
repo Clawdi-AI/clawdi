@@ -373,6 +373,76 @@ def test_service_withdrawals_are_optional_canonical_and_fixed_vocabulary() -> No
             RuntimeObservationEventV2.model_validate({**payload, "serviceWithdrawals": withdrawals})
 
 
+def test_integrations_are_optional_canonical_and_strict() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert RuntimeObservationEventV2.model_validate(payload).integrations is None
+    entries = [
+        {"kind": "channel", "runtime": "hermes", "integration": "discord", "state": "retrying"},
+        {"kind": "channel", "runtime": "hermes", "integration": "telegram", "state": "fatal"},
+    ]
+    for state in (
+        "connected",
+        "connecting",
+        "retrying",
+        "disconnected",
+        "fatal",
+        "paused",
+        "unknown",
+    ):
+        integrations = {"schemaVersion": 1, "entries": [{**entries[0], "state": state}, entries[1]]}
+        observed = RuntimeObservationEventV2.model_validate(
+            {**payload, "integrations": integrations}
+        )
+        assert observed.integrations is not None
+        assert observed.integrations.model_dump(by_alias=True) == integrations
+        assert observed.status == "ok"
+
+    # Slugs allow future integrations without expanding the current Hermes producer's scope.
+    boundary_entries = [
+        {**entries[0], "integration": f"channel-{index:02d}"} for index in range(16)
+    ]
+    RuntimeObservationEventV2.model_validate(
+        {**payload, "integrations": {"schemaVersion": 1, "entries": boundary_entries}}
+    )
+    RuntimeObservationEventV2.model_validate(
+        {
+            **payload,
+            "integrations": {
+                "schemaVersion": 1,
+                "entries": [{**entries[0], "integration": "a" * 64}],
+            },
+        }
+    )
+    for integrations in [
+        {"schemaVersion": 1, "entries": []},
+        {"schemaVersion": 2, "entries": entries},
+        {"schemaVersion": 1, "entries": list(reversed(entries))},
+        {"schemaVersion": 1, "entries": [entries[0], entries[0]]},
+        {
+            "schemaVersion": 1,
+            "entries": boundary_entries + [{**entries[0], "integration": "extra"}],
+        },
+        {"schemaVersion": 1, "entries": entries, "error": "private diagnostic"},
+        *[
+            {"schemaVersion": 1, "entries": [{**entries[0], key: value}]}
+            for key, value in (
+                ("kind", "provider"),
+                ("runtime", "openclaw"),
+                ("state", "disabled"),
+                ("state", 1),
+                ("integration", "Telegram"),
+                ("integration", ""),
+                ("integration", "a" * 65),
+                ("integration", "-channel"),
+                ("integration", "channel/path"),
+                ("error", "private diagnostic"),
+            )
+        ],
+    ]:
+        with pytest.raises(ValueError):
+            RuntimeObservationEventV2.model_validate({**payload, "integrations": integrations})
+
+
 async def retire_runtime_environment(*args, **kwargs):
     return (await _retire_runtime_environment(*args, **kwargs)).receipt
 
@@ -3077,6 +3147,7 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "components",
         "providerConflicts",
         "serviceWithdrawals",
+        "integrations",
     ):
         payload.pop(field)
     return payload

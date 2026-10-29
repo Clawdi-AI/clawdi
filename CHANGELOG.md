@@ -80,6 +80,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.20
+
+- **Managed Hermes:** messaging channel reconnects and channel failures no longer
+  make a running gateway unready. Heartbeats report each configured Telegram,
+  Discord, and WhatsApp channel's native connection state separately.
+
 ### CLI 0.16.18
 
 - **Managed gateways:** repairing a partial or drifted Clawdi drop-in or

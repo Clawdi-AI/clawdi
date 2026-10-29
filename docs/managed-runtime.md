@@ -1787,6 +1787,39 @@ official source commit
 | Base path/prefix | [`docs/web/control-ui.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/web/control-ui.md) | Configure official `gateway.controlUi.basePath`; rebind only the verified origin while preserving the official path and fragment. |
 | Service lifecycle | [`docs/cli/daemon.md`](https://github.com/openclaw/openclaw/blob/8f382a202ff1e15833394b481615dcdda99b04d7/docs/cli/daemon.md) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |
 
+### Hermes channel observations
+
+Hermes messaging health is separate from core serving readiness. For configured
+Telegram, Discord, and WhatsApp channels, the observer still requires a running
+native gateway (`/api/status` and a `gateway_state.json` record with
+`gateway_state: running` and a positive `pid`). Channel disconnects, reconnects,
+and fatal channel errors do not change that readiness decision.
+
+V2 heartbeats include optional `integrations: {schemaVersion: 1, entries: [...]}`
+with entries sorted and unique by `(kind, runtime, integration)`. Each entry has
+`kind: channel`, `runtime: hermes`, a canonical integration slug, and one of
+`connected`, `connecting`, `retrying`, `disconnected`, `fatal`, `paused`, or
+`unknown`. No configured platforms means the field is omitted. Other observation
+callers must explicitly set `includeIntegrations` to collect the field; the
+legacy observation wire model remains unchanged.
+
+Native state names and writer identity were verified against Hermes
+[`dce1e9b`](https://github.com/NousResearch/hermes-agent/tree/dce1e9b37581dd62e480a9064dc04a709c2940d3),
+in `gateway/platforms/base.py`, `gateway/run_startup.py`,
+`gateway/run_shutdown.py`, and `gateway/status.py`. Unknown values, absent
+channel state, and a channel writer PID/start-time mismatch produce `unknown`.
+Older channel records without writer identity retain their compatibility
+behavior. Native error text and credentials are never included.
+
+Roll out the tolerant Hosted consumer first, then Cloud, then publish a CLI
+that emits this field. Older Cloud versions reject unknown event fields. Cloud
+stores integrations in companion diagnostics and projects them through drift
+summaries without changing the event's core health.
+
+Done: `scripts/test.sh cli src/runtime/hermes-channel-health.test.ts src/runtime/observed-v2.test.ts src/runtime/heartbeat-observation.test.ts`
+and `scripts/test.sh backend tests/test_runtime_observation_companion.py tests/test_runtime_drift_summary.py`
+report passing tests in isolated Docker.
+
 ## Desired State Boundary
 
 The CLI consumes a desired-state document plus optional secret values. The

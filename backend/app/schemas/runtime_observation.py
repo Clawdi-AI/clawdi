@@ -294,6 +294,38 @@ class HostedRuntimeObservedServiceWithdrawalsV1(RuntimeObservationRequestModel):
         return entries
 
 
+class HostedRuntimeObservedIntegrationV1(RuntimeObservationRequestModel):
+    """Native channel state, independent of core runtime serving readiness."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    kind: Literal["channel"]
+    runtime: Literal["hermes"]
+    integration: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")
+    state: Literal[
+        "connected", "connecting", "retrying", "disconnected", "fatal", "paused", "unknown"
+    ]
+
+
+class HostedRuntimeObservedIntegrationsV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    entries: list[HostedRuntimeObservedIntegrationV1] = Field(min_length=1, max_length=16)
+
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(
+        cls, entries: list[HostedRuntimeObservedIntegrationV1]
+    ) -> list[HostedRuntimeObservedIntegrationV1]:
+        keys = [(item.kind, item.runtime, item.integration) for item in entries]
+        if keys != sorted(set(keys)):
+            raise ValueError(
+                "Integrations must be unique and sorted by kind, runtime and integration"
+            )
+        return entries
+
+
 RuntimeUserActivityClassification = Literal[
     "known_last_user_input",
     "known_no_user_input",
@@ -396,6 +428,7 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
         alias="serviceWithdrawals",
         default=None,
     )
+    integrations: HostedRuntimeObservedIntegrationsV1 | None = None
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: bool | None = None
@@ -654,6 +687,7 @@ class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
     service_withdrawals: HostedRuntimeObservedServiceWithdrawalsV1 | None = Field(
         alias="serviceWithdrawals", default=None
     )
+    integrations: HostedRuntimeObservedIntegrationsV1 | None = None
 
     @model_validator(mode="after")
     def validate_plugin_identity(self) -> RuntimeDriftObservationDiagnostics:

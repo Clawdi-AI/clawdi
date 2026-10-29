@@ -924,7 +924,7 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 						state: "connected",
 						writer_pid: 101,
 						writer_start_time: 200,
-					};
+					} as const;
 					const writePlatformState = (platforms: Record<string, unknown>) =>
 						writeFileSync(
 							nativeStatePath,
@@ -940,21 +940,69 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 							currentPlatform,
 							{ ...currentPlatform, state: "fatal" },
 							{ ...currentPlatform, state: "connecting" },
+							{ ...currentPlatform, state: "retrying" },
 							{ ...currentPlatform, writer_pid: 99 },
 							{ ...currentPlatform, writer_start_time: 100 },
 							undefined,
-						]) {
+						] as const) {
 							writePlatformState({ discord: platform });
-							expect((await readHostedRuntimeObserved(paths))?.status).toBe(
-								platform === currentPlatform ? "ok" : "unknown",
-							);
+							const observed = await readHostedRuntimeObserved(paths, {
+								includeIntegrations: true,
+							});
+							expect(observed?.status).toBe("ok");
+							expect(observed?.integrations).toEqual({
+								schemaVersion: 1,
+								entries: [
+									{
+										kind: "channel",
+										runtime: "hermes",
+										integration: "discord",
+										state:
+											platform?.writer_pid === 101 && platform.writer_start_time === 200
+												? platform.state
+												: "unknown",
+									},
+								],
+							});
 						}
 					}
+					writeHermesAuthProvider();
+					writeFileSync(
+						hermesConfigPath,
+						`${readFileSync(hermesConfigPath, "utf8")}telegram:\n  enabled: true\n`,
+					);
+					for (const state of ["retrying", "fatal"] as const) {
+						writePlatformState({ telegram: { ...currentPlatform, state } });
+						const observed = await readHostedRuntimeObserved(paths, { includeIntegrations: true });
+						expect(observed?.status).toBe("ok");
+						expect(observed?.integrations?.entries).toEqual([
+							{ kind: "channel", runtime: "hermes", integration: "telegram", state },
+						]);
+						expect(await readHostedRuntimeObserved(paths)).not.toHaveProperty("integrations");
+					}
+					// Heartbeat emission also validates the bundle ETag against its source revision.
+					writeRuntimeAppliedState({ ...parent, etag: `"sha256:${parent.sourceRevision}"` }, paths);
+					const heartbeat = new HostedRuntimeHeartbeatSession({
+						environmentId: "environment-integrations",
+						paths,
+					});
+					const buffered = await heartbeat.nextEvent();
+					expect(buffered?.event.integrations?.entries[0]?.state).toBe("fatal");
+					writeFileSync(nativeStatePath, JSON.stringify({ gateway_state: "stopped", pid: 101 }));
+					const stopped = await readHostedRuntimeObserved(paths, { includeIntegrations: true });
+					expect(stopped?.status).toBe("unknown");
+					expect(stopped?.integrations?.entries[0]?.state).toBe("unknown");
+					rmSync(nativeStatePath);
+					expect(
+						(await readHostedRuntimeObserved(paths, { includeIntegrations: true }))?.status,
+					).toBe("unknown");
 					writeHermesAuthProvider();
 					writePlatformState({
 						whatsapp: { state: "fatal", error_code: "whatsapp_not_paired", writer_pid: 99 },
 					});
-					expect((await readHostedRuntimeObserved(paths))?.status).toBe("ok");
+					const noPlatforms = await readHostedRuntimeObserved(paths, { includeIntegrations: true });
+					expect(noPlatforms?.status).toBe("ok");
+					expect(noPlatforms).not.toHaveProperty("integrations");
 					rmSync(nativeStatePath);
 					body = {
 						gateway_running: false,
