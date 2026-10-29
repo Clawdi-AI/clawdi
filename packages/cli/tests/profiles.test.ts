@@ -1111,3 +1111,44 @@ test("malformed named rename metadata does not discard other profiles", async ()
 		warn.mockRestore();
 	}
 });
+
+test("profile activity aggregates after lazy OpenClaw batches finish", async () => {
+	const root = join(home, ".openclaw");
+	const sessionsRoot = join(root, "agents", "main", "sessions");
+	mkdirSync(sessionsRoot, { recursive: true });
+	process.env.OPENCLAW_STATE_DIR = root;
+	executable(
+		join(home, "bin", "openclaw"),
+		`
+if [ "$*" = "agents list --json" ]; then
+  printf '%s\n' '[{"id":"main","workspace":"${root}/workspace"}]'
+else exit 1; fi`,
+	);
+	writeFileSync(
+		join(sessionsRoot, "sessions.json"),
+		JSON.stringify({
+			"agent:main:main": { sessionId: "one", updatedAt: 1776247200000, sessionFile: "one.jsonl" },
+		}),
+	);
+	writeFileSync(
+		join(sessionsRoot, "one.jsonl"),
+		JSON.stringify({
+			type: "message",
+			id: "row",
+			timestamp: "2026-04-15T10:00:00.000Z",
+			message: { role: "user", content: "hello" },
+		}),
+	);
+	const client = api(async () => response([]));
+	const sessions = createProfileSync(new OpenClawAdapter(), client, null, {
+		readOnly: true,
+	}).sessions;
+	if (!sessions) throw new Error("missing session module");
+	const scan = await scanSessionModule(sessions, { kind: "complete" });
+	for await (const _batch of scan.batches) {
+	}
+	expect(scan.userActivity).toEqual({
+		complete: true,
+		lastUserInputAt: "2026-04-15T10:00:00.000Z",
+	});
+});

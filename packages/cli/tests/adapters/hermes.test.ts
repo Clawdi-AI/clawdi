@@ -562,7 +562,7 @@ describe("HermesAdapter.collectSessions", () => {
 				revisions.set(session.localSessionId, session.sourceRevision);
 			}
 		}
-		expect(initialBatchSizes).toEqual([32, 9]);
+		expect(initialBatchSizes.reduce((sum, size) => sum + size, 0)).toBe(41);
 		expect(revisions.size).toBe(41);
 
 		const unchanged = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
@@ -604,6 +604,46 @@ describe("HermesAdapter.collectSessions", () => {
 			"bulk-04",
 			"bulk-05",
 		]);
+	});
+
+	it("bounds loaded Unicode content by bytes and isolates an unreadable session", async () => {
+		const db = new Database(join(tmpHome, ".hermes", "state.db"));
+		for (let index = 0; index < 40; index++) {
+			const id = `medium-${index}`;
+			db.run("INSERT INTO sessions (id, source, started_at) VALUES (?, 'discord', 1776247000)", id);
+			db.run(
+				"INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, 'user', ?, 1776247000)",
+				id,
+				"中😀éabc".repeat(20_000),
+			);
+		}
+		db.run(
+			"INSERT INTO sessions (id, source, started_at) VALUES ('bad-row', 'discord', 1776247000)",
+		);
+		db.run(
+			"INSERT INTO messages (session_id, role, content, timestamp) VALUES ('bad-row', 'user', zeroblob(9000000), 1776247000)",
+		);
+		db.close();
+		const scan = await new HermesAdapter().sessions.scan({ kind: "complete" }, new Map());
+		let batches = 0;
+		const ids: string[] = [];
+		const issues = [];
+		for await (const batch of scan.batches) {
+			batches++;
+			const bytes = batch.sessions.reduce(
+				(size, session) =>
+					size + Buffer.byteLength(JSON.stringify([session.events, session.messages])),
+				0,
+			);
+			expect(bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+			ids.push(...batch.sessions.map((session) => session.localSessionId));
+			issues.push(...(batch.scanIssues ?? []));
+		}
+		expect(batches).toBeGreaterThan(1);
+		expect(ids).toHaveLength(41);
+		expect(issues).toHaveLength(1);
+		expect(issues[0]?.path).toEndWith("state.db#bad-row");
+		expect(scan.userActivity?.complete).toBe(true);
 	});
 
 	it("streams a large history without losing sequence, summary, activity or revision fencing", async () => {

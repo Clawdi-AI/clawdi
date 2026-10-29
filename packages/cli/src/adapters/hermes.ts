@@ -21,6 +21,7 @@ import {
 	type SessionEventDisplayMetadata,
 	type SessionEventSemantics,
 	type SessionMessage,
+	type SessionScanBatch,
 	type SessionScanRequest,
 	type SessionUserActivity,
 	type SyncReadContext,
@@ -35,6 +36,7 @@ import {
 	toolResultContent,
 	visibleContentParts,
 } from "./rich-event-mapping";
+import { byteBoundedSessionBatches } from "./session-batches";
 import { EAGER_SESSION_MAX_BYTES, SESSION_RECORD_MAX_BYTES } from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
@@ -594,7 +596,9 @@ export class HermesAdapter implements AgentAdapterCore {
 			return {
 				coverage: "complete",
 				userActivity: activity,
-				batches: this.readSessionBatches(db, knownSourceRevisions, context),
+				batches: byteBoundedSessionBatches(
+					this.readSessionBatches(db, knownSourceRevisions, context),
+				),
 			};
 		} catch (error) {
 			db.close();
@@ -606,11 +610,7 @@ export class HermesAdapter implements AgentAdapterCore {
 		db: ReadonlySqliteDatabase,
 		knownSourceRevisions: ReadonlyMap<string, string>,
 		context?: SyncReadContext,
-	): AsyncGenerator<{
-		sessions: RawSession[];
-		observedLocalSessionIds: readonly string[];
-		dedupedCount: number;
-	}> {
+	): AsyncGenerator<SessionScanBatch> {
 		try {
 			const readers = this.sessionReaders(db);
 			let cursor: Pick<SessionRow, "started_at" | "id"> | null = null;
@@ -632,30 +632,44 @@ export class HermesAdapter implements AgentAdapterCore {
 					) as SessionRow[];
 				if (rows.length === 0) return;
 
-				const observedLocalSessionIds = rows.map((row) => row.id);
-				const sessions: RawSession[] = [];
 				for (const row of rows) {
-					const size = readers.size.get(row.id) as SessionSizeRow;
-					const sourceRevision = readers.revision
-						? await sessionSourceRevision(
+					const batch: SessionScanBatch = {
+						sessions: [],
+						observedLocalSessionIds: [row.id],
+						dedupedCount: 0,
+					};
+					try {
+						const size = readers.size.get(row.id) as SessionSizeRow;
+						const sourceRevision = readers.revision
+							? await sessionSourceRevision(
+									row,
+									readers.revision,
+									this.sessionModelsUsed(readers, row),
+									context,
+									size.last_id,
+								)
+							: undefined;
+						if (!sourceRevision || knownSourceRevisions.get(row.id) !== sourceRevision) {
+							const session = await this.materializeSession(
 								row,
-								readers.revision,
-								this.sessionModelsUsed(readers, row),
+								sourceRevision,
+								readers,
+								size,
 								context,
-								size.last_id,
-							)
-						: undefined;
-					if (sourceRevision && knownSourceRevisions.get(row.id) === sourceRevision) continue;
-					const session = await this.materializeSession(
-						row,
-						sourceRevision,
-						readers,
-						size,
-						context,
-					);
-					if (session) sessions.push(session);
+							);
+							if (session) batch.sessions.push(session);
+						}
+					} catch (error) {
+						context?.signal.throwIfAborted();
+						batch.scanIssues = [
+							{
+								path: `${this.stateDbPath()}#${row.id}`,
+								reason: error instanceof Error ? error.message : String(error),
+							},
+						];
+					}
+					yield batch;
 				}
-				yield { sessions, observedLocalSessionIds, dedupedCount: 0 };
 				const last = rows.at(-1);
 				if (!last || rows.length < HERMES_SESSION_SCAN_BATCH_SIZE) return;
 				cursor = last;

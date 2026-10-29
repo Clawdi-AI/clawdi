@@ -1,0 +1,370 @@
+{
+	"node": "24.21.0",
+	"bun": "1.4.2",
+	"baselineCommit": "9fb3842f53024821c53899c60b604d7dd103ecf8",
+	"cliSourceTree": "522055a056393b50872e0c6848b1db07fe3c0a84",
+	"daemonEntrypoint": "node bin/clawdi.mjs daemon run",
+	"daemonContainer": {
+		"cpus": 2,
+		"memoryMiB": 4096,
+		"swapMiB": 0
+	},
+	"seed": {
+		"hermes": {
+			"mediumSessions": 400,
+			"mediumContentBytes": 249996,
+			"largeRowContentBytes": 8387584
+		},
+		"openclaw": {
+			"transcripts": 300,
+			"mediumContentBytes": 249996
+		}
+	},
+	"notes": [
+		"maxRssKiB fields use KiB; process.memoryUsage and heap-space sizes use bytes. Sampled peaks use a 200ms timer; maxRSS comes from wait4/resource and can exceed the sampled RSS. Memory categories overlap.",
+		"Trials 1 and 2 use the memory implementation before the readiness-only #1918 rebase; trial 3 includes #1918. Every baseline is the fixed reference commit.",
+		"Node 24.19 has the upstream Blob.stream backing-store leak fixed in Node 24.20 (nodejs/node#63577); those diagnostic runs are excluded."
+	],
+	"trials": [
+		{
+			"trial": 1,
+			"adapter": "hermes",
+			"baseMaxRssKiB": 449720,
+			"branchMaxRssKiB": 422604
+		},
+		{
+			"trial": 1,
+			"adapter": "openclaw",
+			"baseMaxRssKiB": 436048,
+			"branchMaxRssKiB": 431396
+		},
+		{
+			"trial": 2,
+			"adapter": "hermes",
+			"baseMaxRssKiB": 487144,
+			"branchMaxRssKiB": 443512
+		},
+		{
+			"trial": 2,
+			"adapter": "openclaw",
+			"baseMaxRssKiB": 411188,
+			"branchMaxRssKiB": 414600
+		},
+		{
+			"trial": 3,
+			"adapter": "hermes",
+			"baseMaxRssKiB": 425840,
+			"branchMaxRssKiB": 418352
+		},
+		{
+			"trial": 3,
+			"adapter": "openclaw",
+			"baseMaxRssKiB": 426380,
+			"branchMaxRssKiB": 401200
+		}
+	],
+	"idle": [
+		{
+			"adapter": "hermes",
+			"baseMaxRssKiB": 118224,
+			"branchMaxRssKiB": 118312
+		},
+		{
+			"adapter": "openclaw",
+			"baseMaxRssKiB": 116504,
+			"branchMaxRssKiB": 116724
+		}
+	],
+	"heapFlagTrials": [
+		{
+			"adapter": "hermes",
+			"nodeOptions": "--max-old-space-size=256",
+			"maxRssKiB": 362532
+		},
+		{
+			"adapter": "hermes",
+			"nodeOptions": "--max-semi-space-size=16",
+			"maxRssKiB": 384848
+		},
+		{
+			"adapter": "openclaw",
+			"nodeOptions": "--max-old-space-size=256",
+			"maxRssKiB": 334876
+		},
+		{
+			"adapter": "openclaw",
+			"nodeOptions": "--max-semi-space-size=16",
+			"maxRssKiB": 303176
+		}
+	],
+	"sampledPeaks": [
+		{
+			"adapter": "hermes",
+			"build": "before",
+			"rss": 427900928,
+			"heapTotal": 280629248,
+			"heapUsed": 195928440,
+			"external": 40476729,
+			"arrayBuffers": 54274770,
+			"heapSpaces": [
+				{
+					"space_name": "new_space",
+					"space_size": 134217728,
+					"space_used_size": 52999248,
+					"space_available_size": 14105520,
+					"physical_space_size": 120541184
+				},
+				{
+					"space_name": "old_space",
+					"space_size": 29007872,
+					"space_used_size": 28100312,
+					"space_available_size": 794784,
+					"physical_space_size": 29097984
+				},
+				{
+					"space_name": "code_space",
+					"space_size": 2883584,
+					"space_used_size": 2756096,
+					"space_available_size": 127136,
+					"physical_space_size": 2883584
+				},
+				{
+					"space_name": "trusted_space",
+					"space_size": 4059136,
+					"space_used_size": 3026424,
+					"space_available_size": 1029976,
+					"physical_space_size": 4194304
+				},
+				{
+					"space_name": "new_large_object_space",
+					"space_size": 83070976,
+					"space_used_size": 82714392,
+					"space_available_size": 3632152,
+					"physical_space_size": 83070976
+				},
+				{
+					"space_name": "large_object_space",
+					"space_size": 27389952,
+					"space_used_size": 26333584,
+					"space_available_size": 0,
+					"physical_space_size": 27389952
+				}
+			]
+		},
+		{
+			"adapter": "hermes",
+			"build": "current",
+			"rss": 417726464,
+			"heapTotal": 241332224,
+			"heapUsed": 139907040,
+			"external": 16343112,
+			"arrayBuffers": 16629337,
+			"heapSpaces": [
+				{
+					"space_name": "new_space",
+					"space_size": 134217728,
+					"space_used_size": 40586064,
+					"space_available_size": 26518704,
+					"physical_space_size": 84570112
+				},
+				{
+					"space_name": "old_space",
+					"space_size": 20094976,
+					"space_used_size": 14363904,
+					"space_available_size": 760640,
+					"physical_space_size": 20180992
+				},
+				{
+					"space_name": "code_space",
+					"space_size": 3145728,
+					"space_used_size": 2781632,
+					"space_available_size": 363712,
+					"physical_space_size": 3145728
+				},
+				{
+					"space_name": "trusted_space",
+					"space_size": 4321280,
+					"space_used_size": 3030848,
+					"space_available_size": 1288296,
+					"physical_space_size": 4456448
+				},
+				{
+					"space_name": "new_large_object_space",
+					"space_size": 76296192,
+					"space_used_size": 75914400,
+					"space_available_size": 3392536,
+					"physical_space_size": 76296192
+				},
+				{
+					"space_name": "large_object_space",
+					"space_size": 3256320,
+					"space_used_size": 3231808,
+					"space_available_size": 0,
+					"physical_space_size": 3256320
+				}
+			]
+		},
+		{
+			"adapter": "openclaw",
+			"build": "before",
+			"rss": 411492352,
+			"heapTotal": 252354560,
+			"heapUsed": 155549664,
+			"external": 39277692,
+			"arrayBuffers": 69393095,
+			"heapSpaces": [
+				{
+					"space_name": "new_space",
+					"space_size": 134217728,
+					"space_used_size": 41298736,
+					"space_available_size": 25806032,
+					"physical_space_size": 111767552
+				},
+				{
+					"space_name": "old_space",
+					"space_size": 26386432,
+					"space_used_size": 25405640,
+					"space_available_size": 850656,
+					"physical_space_size": 26476544
+				},
+				{
+					"space_name": "code_space",
+					"space_size": 3407872,
+					"space_used_size": 2960064,
+					"space_available_size": 447392,
+					"physical_space_size": 3407872
+				},
+				{
+					"space_name": "trusted_space",
+					"space_size": 4583424,
+					"space_used_size": 3152952,
+					"space_available_size": 1429152,
+					"physical_space_size": 4718592
+				},
+				{
+					"space_name": "new_large_object_space",
+					"space_size": 55926784,
+					"space_used_size": 55730488,
+					"space_available_size": 15970672,
+					"physical_space_size": 55926784
+				},
+				{
+					"space_name": "large_object_space",
+					"space_size": 27832320,
+					"space_used_size": 27003528,
+					"space_available_size": 0,
+					"physical_space_size": 27832320
+				}
+			]
+		},
+		{
+			"adapter": "openclaw",
+			"build": "current",
+			"rss": 400867328,
+			"heapTotal": 242597888,
+			"heapUsed": 142184176,
+			"external": 33227414,
+			"arrayBuffers": 61088903,
+			"heapSpaces": [
+				{
+					"space_name": "new_space",
+					"space_size": 134217728,
+					"space_used_size": 42078304,
+					"space_available_size": 25026464,
+					"physical_space_size": 105316352
+				},
+				{
+					"space_name": "old_space",
+					"space_size": 23764992,
+					"space_used_size": 18073288,
+					"space_available_size": 5571840,
+					"physical_space_size": 23855104
+				},
+				{
+					"space_name": "code_space",
+					"space_size": 3407872,
+					"space_used_size": 2889024,
+					"space_available_size": 518432,
+					"physical_space_size": 3407872
+				},
+				{
+					"space_name": "trusted_space",
+					"space_size": 4583424,
+					"space_used_size": 3091968,
+					"space_available_size": 1490648,
+					"physical_space_size": 4718592
+				},
+				{
+					"space_name": "new_large_object_space",
+					"space_size": 66752512,
+					"space_used_size": 66467080,
+					"space_available_size": 641784,
+					"physical_space_size": 66752512
+				},
+				{
+					"space_name": "large_object_space",
+					"space_size": 9871360,
+					"space_used_size": 9586128,
+					"space_available_size": 0,
+					"physical_space_size": 9871360
+				}
+			]
+		}
+	],
+	"largeHistories": [
+		{
+			"adapter": "hermes",
+			"result": "synced",
+			"received": 114507,
+			"chunks": 179,
+			"head": "9ceda07b09c8501bea98f24f921ee851c6e8c42f8d513ec39699a8f828a33624",
+			"maxRssKiB": 145336,
+			"containerLimitMiB": 512
+		},
+		{
+			"adapter": "codex",
+			"result": "synced",
+			"received": 114507,
+			"chunks": 177,
+			"head": "9b707803d4a5149b0f9d936624b872da47c9d605839d59403f032a69543acfe2",
+			"maxRssKiB": 113148,
+			"containerLimitMiB": 512
+		},
+		{
+			"adapter": "claude_code",
+			"result": "synced",
+			"received": 114507,
+			"chunks": 177,
+			"head": "0aa8f9714b2efe2c287cef6215abceb4c6e5f8d97fd12e3767911285db5f54cf",
+			"maxRssKiB": 126832,
+			"containerLimitMiB": 512
+		},
+		{
+			"adapter": "pi",
+			"result": "synced",
+			"received": 114507,
+			"chunks": 176,
+			"head": "16c54ec2a977119a661223771636c0f1d1fd79cb4a49f1f921fd1e0bc43f731f",
+			"maxRssKiB": 141136,
+			"containerLimitMiB": 512
+		},
+		{
+			"adapter": "opencode",
+			"result": "synced",
+			"received": 114507,
+			"chunks": 176,
+			"head": "21f226b15afbb88eb6eba199a7ce40f333c5fa1731c55fc7ac155e496695afd0",
+			"maxRssKiB": 132048,
+			"containerLimitMiB": 512
+		},
+		{
+			"adapter": "openclaw",
+			"result": "synced",
+			"received": 114507,
+			"chunks": 177,
+			"head": "1a3ecf3cd5579fa97b7451aeb2afe813497a0f592b31e02f64e7ae2a3aa473b4",
+			"maxRssKiB": 125500,
+			"containerLimitMiB": 512
+		}
+	]
+}

@@ -984,6 +984,8 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		expect(readFileSync(readLog, "utf8")).toBe("read\n");
 		rmSync(currentPath);
 		const missingCurrent = await scanSessionModule(adapter.sessions, { kind: "complete" });
+		for await (const _batch of missingCurrent.batches) {
+		}
 		expect(missingCurrent.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
 			complete: true,
@@ -1019,6 +1021,58 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\nread\n");
+	});
+
+	it("bounds loaded content across many transcripts without changing inventory or activity", async () => {
+		const directory = join(tmpHome, ".openclaw", "agents", "main", "sessions");
+		rmSync(directory, { recursive: true, force: true });
+		mkdirSync(directory, { recursive: true });
+		const inventory: Record<string, unknown> = {};
+		for (let index = 0; index < 40; index++) {
+			const id = `medium-${index}`;
+			inventory[`agent:main:channel:${index}`] = {
+				sessionId: id,
+				updatedAt: 1776247200000,
+				sessionFile: `${id}.jsonl`,
+			};
+			writeFileSync(
+				join(directory, `${id}.jsonl`),
+				JSON.stringify({
+					type: "message",
+					id,
+					timestamp: "2026-04-15T10:00:00.000Z",
+					message: { role: "user", content: "中😀éabc".repeat(20_000) },
+				}),
+			);
+		}
+		writeFileSync(join(directory, "sessions.json"), JSON.stringify(inventory));
+		const scan = await new OpenClawAdapter(
+			undefined,
+			join(tmpHome, ".openclaw"),
+			async () => null,
+		).sessions.scan({ kind: "complete" }, new Map());
+		let batches = 0;
+		const observed: string[] = [];
+		const sessions = [];
+		for await (const batch of scan.batches) {
+			batches++;
+			expect(
+				batch.sessions.reduce(
+					(size, session) =>
+						size + Buffer.byteLength(JSON.stringify([session.events, session.messages])),
+					0,
+				),
+			).toBeLessThanOrEqual(8 * 1024 * 1024);
+			observed.push(...batch.observedLocalSessionIds);
+			sessions.push(...batch.sessions);
+		}
+		expect(batches).toBeGreaterThan(1);
+		expect(new Set(observed).size).toBe(40);
+		expect(sessions).toHaveLength(40);
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			complete: true,
+		});
 	});
 
 	it("scans every agents/<id>/ subdir (issue #28)", async () => {
@@ -1144,6 +1198,8 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		);
 
 		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		for await (const _batch of scan.batches) {
+		}
 
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-24T00:00:00.000Z",
@@ -1160,6 +1216,8 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		);
 
 		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		for await (const _batch of scan.batches) {
+		}
 
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-23T00:00:00.000Z",

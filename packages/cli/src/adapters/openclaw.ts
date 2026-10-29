@@ -34,9 +34,9 @@ import {
 	type SessionBatchScan,
 	type SessionEvent,
 	type SessionModule,
+	type SessionScanBatch,
 	type SessionScanIssue,
 	type SessionScanRequest,
-	type SessionScanResult,
 	type SessionUserActivity,
 	type SyncReadContext,
 } from "./base";
@@ -61,6 +61,7 @@ import {
 	SESSION_PROJECTION_REVISION,
 	stableRecordId,
 } from "./rich-event-mapping";
+import { byteBoundedSessionBatches } from "./session-batches";
 import { jsonlPathsWithin } from "./session-files";
 import {
 	addSessionModel,
@@ -788,8 +789,7 @@ function openClawEventDrafts(
 }
 
 interface SessionCollection {
-	sessions: RawSession[];
-	observedLocalSessionIds: readonly string[];
+	observedLocalSessionIds: string[];
 	dedupedCount: number;
 	matchedTranscriptPaths: Set<string>;
 	classifiedTranscriptPaths: Set<string>;
@@ -797,22 +797,30 @@ interface SessionCollection {
 	scanIssues: SessionScanIssue[];
 }
 
-function singleSessionBatch(
-	coverage: SessionScanResult["coverage"],
-	collection: SessionCollection,
-): SessionBatchScan {
+function emptySessionCollection(complete = true): SessionCollection {
 	return {
-		coverage,
-		userActivity: collection.userActivity,
-		batches: (async function* () {
-			yield {
-				sessions: collection.sessions,
-				observedLocalSessionIds: collection.observedLocalSessionIds,
-				dedupedCount: collection.dedupedCount,
-				scanIssues: collection.scanIssues,
-			};
-		})(),
+		observedLocalSessionIds: [],
+		dedupedCount: 0,
+		matchedTranscriptPaths: new Set(),
+		classifiedTranscriptPaths: new Set(),
+		userActivity: { lastUserInputAt: null, complete },
+		scanIssues: [],
 	};
+}
+
+function takeSessionBatch(
+	collection: SessionCollection,
+	session?: RawSession | null,
+): SessionScanBatch {
+	const batch = {
+		sessions: session ? [session] : [],
+		observedLocalSessionIds: collection.observedLocalSessionIds,
+		dedupedCount: collection.dedupedCount,
+		scanIssues: collection.scanIssues,
+	};
+	collection.observedLocalSessionIds = [];
+	collection.scanIssues = [];
+	return batch;
 }
 
 interface MaterializedOpenClawSession {
@@ -1006,91 +1014,77 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	): Promise<SessionBatchScan> {
 		const materializeCanonicalActivity =
 			request.kind === "complete" && knownSourceRevisions.size === 0;
-		const officialInventory = this.inventoryReader
+		const inventory = this.inventoryReader
 			? await this.inventoryReader(context)
 			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
-		if (officialInventory) {
-			const collection = await this.collectOfficialSessionsMatching(
-				officialInventory,
+		let coverage: SessionBatchScan["coverage"] = request.kind === "paths" ? "partial" : "complete";
+		let transcriptPaths: ReadonlySet<string> | undefined;
+		if (!inventory && request.kind === "paths") {
+			const paths = jsonlPathsWithin(
 				request,
-				undefined,
-				knownSourceRevisions,
-				context,
+				this.profileAgentDirs().map((dir) => resolve(dir, "sessions")),
 			);
-			if (materializeCanonicalActivity) {
-				collection.userActivity = mergeUserActivity(
-					collection.userActivity,
-					await collectCanonicalOpenClawActivity(
-						officialInventory,
-						collection.classifiedTranscriptPaths,
-						this.profileAgentDirectoryListing(),
-						context,
-					),
-				);
-			}
-			return singleSessionBatch(request.kind === "paths" ? "partial" : "complete", collection);
-		}
-
-		const collection = await this.collectLegacySessions(request, knownSourceRevisions, context);
-		if (collection.coverage === "complete" && materializeCanonicalActivity) {
-			collection.userActivity = mergeUserActivity(
-				collection.userActivity,
-				await collectCanonicalOpenClawActivity(
-					null,
-					collection.classifiedTranscriptPaths,
-					this.profileAgentDirectoryListing(),
-					context,
-				),
-			);
-		}
-		return singleSessionBatch(collection.coverage, collection);
-	}
-
-	private async collectLegacySessions(
-		request: SessionScanRequest,
-		knownSourceRevisions: ReadonlyMap<string, string>,
-		context?: SyncReadContext,
-	): Promise<SessionCollection & { coverage: SessionScanResult["coverage"] }> {
-		if (request.kind === "complete") {
-			return {
-				...(await this.collectLegacySessionsMatching(
+			if (paths) {
+				const preflight = emptySessionCollection();
+				transcriptPaths = new Set(paths);
+				// Resolve ambiguous path notifications using inventory metadata only,
+				// before any session content is materialized or yielded.
+				for await (const _batch of this.collectLegacySessionsMatching(
 					request,
-					undefined,
+					preflight,
+					transcriptPaths,
 					undefined,
 					knownSourceRevisions,
 					context,
-				)),
-				coverage: "complete",
-			};
+					true,
+				)) {
+				}
+				if (paths.some((path) => existsSync(path) && !preflight.matchedTranscriptPaths.has(path))) {
+					transcriptPaths = undefined;
+					coverage = "complete";
+				}
+			} else coverage = "complete";
 		}
-		const sessionRoots = this.profileAgentDirs().map((dir) => resolve(dir, "sessions"));
-		const paths = jsonlPathsWithin(request, sessionRoots);
-		if (!paths) {
-			return this.collectLegacySessions(
-				{ kind: "complete", projectFilter: request.projectFilter },
-				knownSourceRevisions,
-				context,
-			);
-		}
-		const transcriptPaths = new Set(paths);
-
-		const collection = await this.collectLegacySessionsMatching(
-			request,
-			transcriptPaths,
-			undefined,
-			knownSourceRevisions,
-			context,
-		);
-		for (const path of transcriptPaths) {
-			if (existsSync(path) && !collection.matchedTranscriptPaths.has(path)) {
-				return this.collectLegacySessions(
-					{ kind: "complete", projectFilter: request.projectFilter },
+		const collection = emptySessionCollection(inventory?.complete ?? true);
+		const source = inventory
+			? this.collectOfficialSessionsMatching(
+					inventory,
+					request,
+					collection,
+					undefined,
+					knownSourceRevisions,
+					context,
+				)
+			: this.collectLegacySessionsMatching(
+					request,
+					collection,
+					transcriptPaths,
+					undefined,
 					knownSourceRevisions,
 					context,
 				);
-			}
-		}
-		return { ...collection, coverage: "partial" };
+		const adapter = this;
+		return {
+			coverage,
+			userActivity: collection.userActivity,
+			batches: (async function* () {
+				yield* byteBoundedSessionBatches(source);
+				if (coverage === "complete" && materializeCanonicalActivity) {
+					Object.assign(
+						collection.userActivity,
+						mergeUserActivity(
+							collection.userActivity,
+							await collectCanonicalOpenClawActivity(
+								inventory,
+								collection.classifiedTranscriptPaths,
+								adapter.profileAgentDirectoryListing(),
+								context,
+							),
+						),
+					);
+				}
+			})(),
+		};
 	}
 
 	private async resolveSession(
@@ -1098,59 +1092,52 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		context?: SyncReadContext,
 	): Promise<RawSession | null> {
 		context?.signal.throwIfAborted();
-		const officialInventory = this.inventoryReader
+		const inventory = this.inventoryReader
 			? await this.inventoryReader(context)
 			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
-		if (officialInventory) {
-			return (
-				(
-					await this.collectOfficialSessionsMatching(
-						officialInventory,
-						{},
-						localSessionId,
-						new Map(),
-						context,
-					)
-				).sessions[0] ?? null
-			);
+		const collection = emptySessionCollection(inventory?.complete ?? true);
+		const batches = inventory
+			? this.collectOfficialSessionsMatching(
+					inventory,
+					{},
+					collection,
+					localSessionId,
+					new Map(),
+					context,
+				)
+			: this.collectLegacySessionsMatching(
+					{},
+					collection,
+					undefined,
+					localSessionId,
+					new Map(),
+					context,
+				);
+		for await (const batch of batches) {
+			if (batch.sessions[0]) return batch.sessions[0];
 		}
-		return (
-			(await this.collectLegacySessionsMatching({}, undefined, localSessionId, new Map(), context))
-				.sessions[0] ?? null
-		);
+		return null;
 	}
 
-	private async collectLegacySessionsMatching(
+	private async *collectLegacySessionsMatching(
 		opts: { projectFilter?: string },
+		collection: SessionCollection,
 		transcriptPaths?: ReadonlySet<string>,
 		localSessionId?: string,
 		knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
 		context?: SyncReadContext,
-	): Promise<SessionCollection> {
+		metadataOnly = false,
+	): AsyncGenerator<SessionScanBatch> {
 		context?.signal.throwIfAborted();
 		const agentDirectoryListing = this.profileAgentDirectoryListing();
 		const agentDirs = agentDirectoryListing.dirs;
-		if (agentDirs.length === 0) {
-			return {
-				sessions: [],
-				dedupedCount: 0,
-				observedLocalSessionIds: [],
-				matchedTranscriptPaths: new Set(),
-				classifiedTranscriptPaths: new Set(),
-				userActivity: { lastUserInputAt: null, complete: agentDirectoryListing.complete },
-				scanIssues: [],
-			};
-		}
+		collection.userActivity.complete &&= agentDirectoryListing.complete;
+		if (agentDirs.length === 0) return;
 
 		const { projectFilter } = opts;
 		const absFilter = projectFilter ? resolve(projectFilter) : null;
 
-		const sessions: RawSession[] = [];
-		const observedLocalSessionIds: string[] = [];
-		const matchedTranscriptPaths = new Set<string>();
-		const classifiedTranscriptPaths = new Set<string>();
-		const scanIssues: SessionScanIssue[] = [];
-		let userActivity: SessionUserActivity = { lastUserInputAt: null, complete: true };
+		const { matchedTranscriptPaths, classifiedTranscriptPaths, userActivity } = collection;
 
 		for (const agentRoot of agentDirs) {
 			const sourceAgentId = basename(agentRoot);
@@ -1190,13 +1177,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				const normalizedTranscriptPath = resolve(transcriptPath);
 				if (transcriptPaths && !transcriptPaths.has(normalizedTranscriptPath)) continue;
 				matchedTranscriptPaths.add(normalizedTranscriptPath);
-				observedLocalSessionIds.push(sessionId);
+				collection.observedLocalSessionIds.push(sessionId);
 				const sourceRevision = `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`;
 				const externalSession = !isInternalOpenClawSession(indexKey, entry);
 				if (externalSession && existsSync(transcriptPath)) {
 					classifiedTranscriptPaths.add(normalizedTranscriptPath);
 				}
-				if (knownSourceRevisions.get(sessionId) === sourceRevision) continue;
+				if (metadataOnly || knownSourceRevisions.get(sessionId) === sourceRevision) {
+					yield takeSessionBatch(collection);
+					continue;
+				}
 
 				const materialized = await materializeOpenClawJsonlSession({
 					entry: { ...entry, sessionId, updatedAt },
@@ -1209,42 +1199,25 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					transcriptPath,
 				});
 				if (existsSync(transcriptPath)) {
-					userActivity = mergeUserActivity(userActivity, materialized.userActivity);
+					Object.assign(userActivity, mergeUserActivity(userActivity, materialized.userActivity));
 				}
-				if (materialized.session) sessions.push(materialized.session);
-				if (materialized.scanIssue) scanIssues.push(materialized.scanIssue);
+				if (materialized.scanIssue) collection.scanIssues.push(materialized.scanIssue);
+				yield takeSessionBatch(collection, materialized.session);
 			}
 		}
-
-		// OpenClaw stores one session per ACP transcript with stable sessionIds
-		// — no resume-chain duplication to dedupe.
-		return {
-			sessions,
-			dedupedCount: 0,
-			observedLocalSessionIds,
-			matchedTranscriptPaths,
-			classifiedTranscriptPaths,
-			userActivity,
-			scanIssues,
-		};
 	}
 
-	private async collectOfficialSessionsMatching(
+	private async *collectOfficialSessionsMatching(
 		inventory: OfficialSessionInventory,
 		opts: { projectFilter?: string },
+		collection: SessionCollection,
 		localSessionId?: string,
 		knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
 		context?: SyncReadContext,
-	): Promise<SessionCollection> {
+	): AsyncGenerator<SessionScanBatch> {
 		const absFilter = opts.projectFilter ? resolve(opts.projectFilter) : null;
-		const sessions: RawSession[] = [];
-		const observedLocalSessionIds: string[] = [];
-		const classifiedTranscriptPaths = new Set<string>();
-		const scanIssues: SessionScanIssue[] = [];
-		let userActivity: SessionUserActivity = {
-			lastUserInputAt: null,
-			complete: inventory.complete,
-		};
+		const { classifiedTranscriptPaths, userActivity } = collection;
+
 		for (const entry of inventory.entries) {
 			if (this.profileAgentId && entry.agentId !== this.profileAgentId) continue;
 			if (context) await setImmediate(undefined, { signal: context.signal });
@@ -1258,11 +1231,14 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			}
 			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
 			if (!matchesProjectFilter(projectPath, absFilter)) continue;
-			if (sessionId) observedLocalSessionIds.push(sessionId);
+			if (sessionId) collection.observedLocalSessionIds.push(sessionId);
 			const sourceRevision = sessionId
 				? `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`
 				: null;
-			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) continue;
+			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) {
+				yield takeSessionBatch(collection);
+				continue;
+			}
 
 			const reader = officialTranscriptReader(entry, this.home, context);
 			const description = await describeSessionContent(reader.readEvents, !context?.streaming);
@@ -1287,10 +1263,10 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					transcriptPath,
 				});
 				if (existsSync(transcriptPath)) {
-					userActivity = mergeUserActivity(userActivity, legacy.userActivity);
+					Object.assign(userActivity, mergeUserActivity(userActivity, legacy.userActivity));
 				}
-				if (legacy.session) sessions.push(legacy.session);
-				if (legacy.scanIssue) scanIssues.push(legacy.scanIssue);
+				if (legacy.scanIssue) collection.scanIssues.push(legacy.scanIssue);
+				yield takeSessionBatch(collection, legacy.session);
 				continue;
 			}
 			if (!transcript) {
@@ -1301,7 +1277,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				continue;
 			}
 			const sessionUserActivity = reader.initial.userActivity;
-			userActivity = mergeUserActivity(userActivity, sessionUserActivity);
+			Object.assign(userActivity, mergeUserActivity(userActivity, sessionUserActivity));
 			if (entry.sessionFile && !isInternalOpenClawSession(entry.key, entry)) {
 				const sessionsDirForAgent = join(agentsRoot(this.home), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)
@@ -1317,7 +1293,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const storePath =
 				inventory.storePaths.get(entry.agentId) ??
 				join(agentsRoot(this.home), entry.agentId, "agent", "openclaw-agent.sqlite");
-			sessions.push({
+			yield takeSessionBatch(collection, {
 				localSessionId: sessionId,
 				projectPath,
 				startedAt,
@@ -1338,16 +1314,9 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				realUserInputAt: sessionUserActivity.lastUserInputAt,
 			});
 		}
-		return {
-			sessions,
-			dedupedCount: 0,
-			observedLocalSessionIds,
-			matchedTranscriptPaths: new Set(),
-			classifiedTranscriptPaths,
-			userActivity,
-			scanIssues,
-		};
+		yield takeSessionBatch(collection);
 	}
+
 	private async collectSkills(context?: SyncReadContext): Promise<RawSkill[]> {
 		context?.signal.throwIfAborted();
 		const workspace = await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal);

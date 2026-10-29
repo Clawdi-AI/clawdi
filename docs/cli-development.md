@@ -798,6 +798,51 @@ process; native systemd unit installation remains in the official installer suit
 For daemon end-to-end and manual browser verification, see
 [`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).
 
+### Session sync memory
+
+```bash
+mkdir -p test-results/session-memory
+scripts/test.sh hermes-sync-memory test-results/session-memory 9fb3842f53024821c53899c60b604d7dd103ecf8
+```
+
+Done: the command exits 0 and prints `maxRssKiB` for baseline, current and
+256 MiB old-space and 16 MiB semi-space trials on Node 24.21.0. The fixture runs
+each minified CLI through
+`node bin/clawdi.mjs daemon run`, verifies every uploaded event and chained hash,
+and reports the daemon's peak RSS separately from the mock API. It seeds 400
+Hermes sessions with about 250 KB of mixed Unicode each plus one nearly 8 MiB
+row, and 300 OpenClaw transcripts. Both builds use the same source bytes and
+Docker CPU/memory limits; receipts are reset between runs. Test-only sampling
+records RSS, heap, external/ArrayBuffer memory and V8 heap
+spaces every 200 ms, plus the sampled peak and idle startup baseline. Raw JSONL
+profiles and daemon logs remain in the output directory, which must exist and be
+empty initially. Use `test-results/`
+for artifacts so other clean runner commands omit them from their source copy.
+
+`session-sync-memory` runs the same comparison and then the existing single
+large-history fixtures for all six adapters under Node with their original
+512 MiB container ceiling. These direct pipeline fixtures complement the built
+daemon measurement. The baseline argument is an
+explicit full CLI commit; omit it to use the reference above.
+
+Hermes and OpenClaw batch retained event/message content within approximately
+8 MiB, with a separate metadata bound for lazy or revision-matched sessions.
+Daemon scans already request lazy content; this budget primarily protects eager
+adapter callers. Freshness checks still reread streamed sources rather than
+trusting cached upload plans. Canonical activity remains unknown when its own
+scan is incomplete, including unreadable OpenClaw transcripts. Isolated session
+planning failures and Hermes content failures use the session scan issue report
+without invalidating independently collected activity or other sessions' receipts.
+
+The fixture's 256 MiB trial does not install a daemon heap cap. Peak RSS also
+includes native memory and buffers, and these workloads do not establish safe
+headroom for every supported daemon workload. Node 24.19 has an upstream
+[`Blob.stream()` backing-store leak](https://github.com/nodejs/node/pull/63577)
+fixed in Node 24.20; memory suites override the test image to 24.21.0 to avoid
+confounding CLI measurements with that runtime defect.
+
+Reference: [recorded session sync measurements](benchmarks/cli-session-sync-memory-20261029.json).
+
 ### Layers
 
 | Layer | What it covers | Lives in |

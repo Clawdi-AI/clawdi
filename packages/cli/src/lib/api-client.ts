@@ -164,15 +164,14 @@ export async function retryingFetch(
 	timeoutMs: number,
 	externalSignal: AbortSignal | undefined,
 	stream = false,
+	replayRequest?: () => Request,
 ): Promise<Response> {
 	const retry = IDEMPOTENT_METHODS.has(req.method);
 	const maxAttempts = retry ? MAX_RETRIES : 1;
-	// Snapshot the request once so the body stream survives retries — the
-	// very first `fetch` drains `req.body`, after which `req.clone()` would
-	// throw `TypeError: cannot clone a disturbed body`. Keeping the base
-	// pristine lets us hand a fresh clone to every attempt including the
-	// first, even for PUT/PATCH with JSON bodies.
-	const base = req.clone();
+	// Stream bodies need a pristine clone for retries. Buffered multipart
+	// callers can rebuild a Request from their immutable FormData instead:
+	// unread clone/tee branches otherwise retain the encoded upload body.
+	const base = retry && !replayRequest ? req.clone() : null;
 	let lastErr: ApiError | undefined;
 
 	// External-signal short-circuit — stop retrying immediately
@@ -228,7 +227,10 @@ export async function retryingFetch(
 			const signal = externalSignal
 				? AbortSignal.any([controller.signal, externalSignal])
 				: controller.signal;
-			const res = await fetch(base.clone(), { signal });
+			let request = req;
+			if (base) request = base.clone();
+			else if (attempt > 0 && replayRequest) request = replayRequest();
+			const res = await fetch(request, { signal });
 			// Ordinary REST calls keep their deadline through body consumption.
 			// Streaming callers own body bounds and deadlines; the combined
 			// signal keeps caller cancellation attached after headers arrive.
@@ -237,7 +239,7 @@ export async function retryingFetch(
 			} else {
 				const body = await res.arrayBuffer();
 				const hasNullBody =
-					base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
+					req.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
 				buffered = new Response(hasNullBody ? null : body, {
 					status: res.status,
 					statusText: res.statusText,
@@ -728,10 +730,14 @@ export class ApiClient {
 		const accessToken = await this.getAccessToken();
 		const formData = new FormData();
 		for (const [k, v] of Object.entries(fields)) formData.append(k, v);
-		// Buffer → Uint8Array: Buffer's `ArrayBufferLike` doesn't satisfy
-		// `BlobPart` under strict TS (`SharedArrayBuffer` vs `ArrayBuffer`).
-		// Wrapping narrows it without a cast.
-		formData.append("file", new Blob([new Uint8Array(file)]), filename);
+		// Use a view of Buffer's exact range; Blob takes the required immutable
+		// snapshot without first copying the bytes into another Uint8Array.
+		const backing = file.buffer;
+		const view =
+			backing instanceof ArrayBuffer
+				? new Uint8Array(backing, file.byteOffset, file.byteLength)
+				: new Uint8Array(file);
+		formData.append("file", new Blob([view]), filename);
 
 		const timeoutMs = DEFAULT_TIMEOUT_MS + (file.length / (128 * 1024)) * 1000;
 		const controller = new AbortController();
@@ -754,13 +760,14 @@ export class ApiClient {
 				...(extraHeaders ?? {}),
 				...(this.machineId ? { [MACHINE_ID_HEADER]: this.machineId } : {}),
 			};
-			const request = new Request(`${this.baseUrl}${path}`, {
-				method,
-				headers,
-				body: formData,
-				signal: controller.signal,
-			});
-			const res = await retryingFetch(request, timeoutMs, controller.signal);
+			const request = () =>
+				new Request(`${this.baseUrl}${path}`, {
+					method,
+					headers,
+					body: formData,
+					signal: controller.signal,
+				});
+			const res = await retryingFetch(request(), timeoutMs, controller.signal, false, request);
 			if (!res.ok) {
 				const body = await res.text();
 				throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });

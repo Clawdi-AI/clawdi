@@ -84,8 +84,19 @@ export function advanceEventHead(baseHead: string, events: readonly SessionEvent
 	let head = Buffer.from(baseHead, "hex");
 	if (head.length !== 32) throw new Error("events-v1 base head must be a SHA-256 hex digest");
 	for (const event of events) {
-		const eventHash = createHash("sha256").update(canonicalJson(event), "ascii").digest();
-		head = createHash("sha256").update(head).update(eventHash).digest();
+		head = hashCanonicalEvent(head, canonicalJson(event));
 	}
 	return head.toString("hex");
+}
+
+/** Reuse an already canonicalized event without serializing its content again. */
+export function advanceCanonicalEventHead(baseHead: string, encodedEvent: string): string {
+	const head = Buffer.from(baseHead, "hex");
+	if (head.length !== 32) throw new Error("events-v1 base head must be a SHA-256 hex digest");
+	return hashCanonicalEvent(head, encodedEvent).toString("hex");
+}
+
+function hashCanonicalEvent(head: Buffer, encodedEvent: string): Buffer<ArrayBuffer> {
+	const eventHash = createHash("sha256").update(encodedEvent, "ascii").digest();
+	return createHash("sha256").update(head).update(eventHash).digest();
 }

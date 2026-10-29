@@ -80,6 +80,13 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.21
+
+- **Session sync:** Hermes and OpenClaw bound retained batch content by bytes.
+  Event uploads avoid redundant chunk copies while preserving the existing wire
+  format. An unreadable Hermes session or failed session upload plan is reported
+  individually, allowing other sessions to retain their incremental sync receipts.
+
 ### CLI 0.16.20
 
 - **Managed Hermes:** messaging channel reconnects and channel failures no longer

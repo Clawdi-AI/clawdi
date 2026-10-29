@@ -297,6 +297,62 @@ describe("stable session enqueue abort fence", () => {
 		expect(inFlight.size).toBe(0);
 	});
 
+	it("records a session planning failure and still confirms unaffected revisions", async () => {
+		const good: RawSession = {
+			localSessionId: "good",
+			projectPath: null,
+			startedAt: new Date(0),
+			endedAt: null,
+			messageCount: 1,
+			inputTokens: 0,
+			outputTokens: 0,
+			cacheReadTokens: 0,
+			model: null,
+			modelsUsed: [],
+			durationSeconds: null,
+			summary: null,
+			messages: [{ role: "user", content: "already synced" }],
+			rawFilePath: "/sessions/good",
+			sourceRevision: "revision-good",
+		};
+		const broken: RawSession = {
+			...good,
+			localSessionId: "broken",
+			rawFilePath: "/sessions/broken",
+			readMessages: async function* () {
+				yield { role: "user", content: "partial source" };
+				throw new Error("source changed");
+			},
+		};
+		const goodPlan = planSessionUpload(good, "snapshot-v1");
+		const issues: string[] = [];
+		const result = await enqueueChangedSessionsAfterStability({
+			abort: new AbortController().signal,
+			sessions: [broken, good],
+			excluded: new Set(),
+			queue: {
+				enqueueWhenAvailable: async () => {
+					throw new Error("unchanged session should not enqueue");
+				},
+			},
+			lastPushedHash: new Map([["good", goodPlan.localHash]]),
+			inFlightHash: new Map(),
+			protocol: "snapshot-v1",
+			fenceFor: (session) => ({
+				apiOrigin: "https://cloud.example.test",
+				environmentId: "agent-1",
+				adapter: "hermes",
+				sourceSessionKey: session.localSessionId,
+			}),
+			onScanIssue: (session, reason) => issues.push(`${session.localSessionId}: ${reason}`),
+		});
+		expect(issues).toEqual(["broken: source changed"]);
+		expect(result.confirmedSourceRevisions.map((update) => update.sourceRevision)).toEqual([
+			"revision-good",
+		]);
+		expect(result.enqueued).toBe(0);
+	});
+
 	it("backfills the source revision when the confirmed content hash still matches", async () => {
 		const root = mkdtempSync(join(tmpdir(), "session-revision-backfill-"));
 		const originalHome = process.env.HOME;
