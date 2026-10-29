@@ -600,9 +600,22 @@ Upstream [root-rule resolution](https://github.com/gtsteffaniak/filebrowser/blob
 disables source indexing, and [index initialization](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/indexing/indexingFiles.go#L408)
 skips scanner startup. This avoids synchronized full-home scans and SQLite
 index rewrites across tenants. Files search and indexed folder sizes are
-unavailable; browsing, uploading, editing, deleting, and downloading continue
-through the filesystem APIs. Sidebar disk usage remains enabled with
+unavailable; browsing, uploading, editing, deleting, and single-file downloading
+continue through the filesystem APIs. Sidebar disk usage remains enabled with
 `frontend.disableUsedPercentage: false`.
+
+The server also sets `disablePreviews: true` to mitigate
+[GHSA-g2q5-r6ch-v25f](https://github.com/gtsteffaniak/filebrowser/security/advisories/GHSA-g2q5-r6ch-v25f):
+preview requests can follow directory or file symlinks outside the source root,
+including with `ignoreSymlinks: true`. The upstream
+[preview handler](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/preview.go#L56)
+returns HTTP 501 before accessing the path when previews are disabled. Thumbnails
+use simple icons and image previews are unavailable. JWT handoff, browsing,
+opening text, editing/saving, small and chunked uploads, single-file downloads,
+folder creation, renaming, and deleting remain available. Disabling previews
+does not mitigate archive downloads following file symlinks
+([GHSA-qqf3-2wvq-q4w9](https://github.com/gtsteffaniak/filebrowser/security/advisories/GHSA-qqf3-2wvq-q4w9));
+that risk remains open pending FileBrowser 2.1 stable.
 
 The Files unit's `CLAWDI_MANAGED_CONTENT_DIGEST` includes the rendered config's
 SHA256 as well as the companion manifest. A config-only CLI upgrade restarts

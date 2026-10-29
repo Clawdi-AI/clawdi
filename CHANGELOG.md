@@ -85,7 +85,12 @@ only renames unmerged PR series and never-emitted definitions. See
 - **Files:** disabled background indexing after synchronized full scans caused
   shared-disk write bursts and stalled neighboring agents. Files search and
   indexed folder sizes are unavailable; browsing, uploading, editing, deleting,
-  downloading, and sidebar disk usage remain available.
+  single-file downloading, and sidebar disk usage remain available.
+- **Files security:** disabled previews and thumbnails to mitigate source-root
+  escapes through symlinks ([GHSA-g2q5-r6ch-v25f](https://github.com/gtsteffaniak/filebrowser/security/advisories/GHSA-g2q5-r6ch-v25f)).
+  Thumbnails become icons and image previews are unavailable. Archive downloads
+  following file symlinks ([GHSA-qqf3-2wvq-q4w9](https://github.com/gtsteffaniak/filebrowser/security/advisories/GHSA-qqf3-2wvq-q4w9))
+  remain an open risk pending FileBrowser 2.1 stable.
 
 ### CLI 0.16.21
 

@@ -6564,6 +6564,7 @@ fi
 		expect(parseYaml(config)).toMatchObject({
 			server: {
 				database: join(paths.fileBrowserStateRoot, "filebrowser.db"),
+				disablePreviews: true,
 				sources: [
 					{
 						config: {
@@ -6600,6 +6601,7 @@ fi
 		expect(config).toContain("ignoreSymlinks: true");
 		expect(config).toContain("viewable: true");
 		expect(config).toContain("disableWebDAV: true");
+		expect(config).toContain("disablePreviews: true");
 		expect(config).toContain("password:\n      enabled: false");
 		expect(config).toContain("share: false");
 		const unitPath = join(paths.systemdSystemRoot, "clawdi-files.service");
@@ -6671,8 +6673,11 @@ fi
 
 		// Reproduce the released config and manifest-only digest, with the same manifest/binary.
 		const desiredConfig = readFileSync(paths.fileBrowserConfig, "utf8");
-		const indexedConfig = desiredConfig.replace(/^ +viewable: true\n/m, "");
+		const indexedConfig = desiredConfig
+			.replace(/^ +viewable: true\n/m, "")
+			.replace(/^ +disablePreviews: true\n/m, "");
 		expect(indexedConfig).not.toContain("viewable: true");
+		expect(indexedConfig).not.toContain("disablePreviews: true");
 		chmodSync(paths.fileBrowserConfig, 0o640);
 		writeFileSync(paths.fileBrowserConfig, indexedConfig);
 		chmodSync(paths.fileBrowserConfig, 0o440);

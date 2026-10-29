@@ -121,6 +121,7 @@ function renderFileBrowserConfig(
 			cacheDir: join(paths.fileBrowserStateRoot, "cache"),
 			disableUpdateCheck: true,
 			disableWebDAV: true,
+			disablePreviews: true,
 			sources: [
 				{
 					path: companion.sourceRoot,
