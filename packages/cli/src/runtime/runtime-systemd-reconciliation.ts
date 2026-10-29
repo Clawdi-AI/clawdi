@@ -1222,6 +1222,9 @@ function writeFileBrowserSystemdUnit(input: {
 			FILEBROWSER_DATABASE: join(input.paths.fileBrowserStateRoot, "filebrowser.db"),
 			CLAWDI_MANAGED_CONTENT_DIGEST: runtimeImpactRevision({
 				companion: input.manifest.companions?.filebrowser ?? null,
+				configSha256: createHash("sha256")
+					.update(readFileSync(input.paths.fileBrowserConfig))
+					.digest("hex"),
 			}),
 		},
 		extraUnitLines: ["After=network-online.target", "Wants=network-online.target"],

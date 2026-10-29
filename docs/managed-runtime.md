@@ -595,6 +595,36 @@ version/commit probe in `ExecStartPre=` before executing the content-addressed c
 garbage-collects older candidates only after applied authority commits. The
 candidate has no separate active/previous link state or hand-built chroot.
 
+The source root rule is `{ folderPath: "/", ignoreSymlinks: true, viewable: true }`.
+Upstream [root-rule resolution](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/common/settings/config.go#L1260)
+disables source indexing, and [index initialization](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/indexing/indexingFiles.go#L408)
+skips scanner startup. This avoids synchronized full-home scans and SQLite
+index rewrites across tenants. Files search and indexed folder sizes are
+unavailable; browsing, uploading, editing, deleting, and single-file downloading
+continue through the filesystem APIs. Sidebar disk usage remains enabled with
+`frontend.disableUsedPercentage: false`.
+
+The server also sets `disablePreviews: true` to mitigate
+[GHSA-g2q5-r6ch-v25f](https://github.com/gtsteffaniak/filebrowser/security/advisories/GHSA-g2q5-r6ch-v25f):
+preview requests can follow directory or file symlinks outside the source root,
+including with `ignoreSymlinks: true`. The upstream
+[preview handler](https://github.com/gtsteffaniak/filebrowser/blob/79552f8adb27c3e29934c4001660eb98f4aab5d6/backend/http/preview.go#L56)
+returns HTTP 501 before accessing the path when previews are disabled. Thumbnails
+use simple icons and image previews are unavailable. JWT handoff, browsing,
+opening text, editing/saving, small and chunked uploads, single-file downloads,
+folder creation, renaming, and deleting remain available. Disabling previews
+does not mitigate archive downloads following file symlinks
+([GHSA-qqf3-2wvq-q4w9](https://github.com/gtsteffaniak/filebrowser/security/advisories/GHSA-qqf3-2wvq-q4w9));
+that risk remains open pending FileBrowser 2.1 stable.
+
+The Files unit's `CLAWDI_MANAGED_CONTENT_DIGEST` includes the rendered config's
+SHA256 as well as the companion manifest. A config-only CLI upgrade restarts
+`clawdi-files.service` once; unchanged gateway and other service fingerprints
+remain stable. Repeated convergence with the same config does not restart Files.
+
+Done: `scripts/test.sh cli src/runtime/manifest-reconciliation.test.ts -t 'Files'`
+passes the rendered-rule, upgrade activation, and idempotence checks.
+
 `clawdi-files.service` runs as the non-root tenant runtime UID/GID so Files has
 native read/write access to tenant-owned home content, including `0600` files,
 `0700` directories, and dotfiles. The entire tenant home, including user units

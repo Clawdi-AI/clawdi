@@ -121,6 +121,7 @@ function renderFileBrowserConfig(
 			cacheDir: join(paths.fileBrowserStateRoot, "cache"),
 			disableUpdateCheck: true,
 			disableWebDAV: true,
+			disablePreviews: true,
 			sources: [
 				{
 					path: companion.sourceRoot,
@@ -128,7 +129,8 @@ function renderFileBrowserConfig(
 					config: {
 						defaultEnabled: true,
 						private: true,
-						rules: [{ folderPath: "/", ignoreSymlinks: true }],
+						// Upstream root-level viewable disables indexing while retaining filesystem access.
+						rules: [{ folderPath: "/", ignoreSymlinks: true, viewable: true }],
 					},
 				},
 			],
