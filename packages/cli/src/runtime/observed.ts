@@ -26,7 +26,11 @@ import {
 	observeComponents,
 } from "./component-observation";
 import { egressSnapshotEnabled } from "./egress-snapshot";
-import { configuredHermesPlatforms, hermesChannelsAreReady } from "./hermes-channel-health";
+import {
+	configuredHermesPlatforms,
+	hermesChannelStates,
+	hermesGatewayIsReady,
+} from "./hermes-channel-health";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
 import { readHostedSkillsObservation } from "./hosted-skill-observation";
@@ -53,6 +57,7 @@ export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObserved
 		| "components"
 		| "providerConflicts"
 		| "serviceWithdrawals"
+		| "integrations"
 	>;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
@@ -81,6 +86,7 @@ export async function readHostedRuntimeObserved(
 		includeComponents?: boolean;
 		includeProviderConflicts?: boolean;
 		includeServiceWithdrawals?: boolean;
+		includeIntegrations?: boolean;
 	} = {},
 ): Promise<HostedRuntimeObserved | null> {
 	if (paths.mode !== "hosted") return null;
@@ -181,6 +187,8 @@ export async function readHostedRuntimeObserved(
 		for (const unit of systemd.units) {
 			if (unit.scope !== "user" || !servingSamples.has(unit.name)) continue;
 			const sample = await servingSamples.read(unit.name);
+			if (options.includeIntegrations && sample.integrations)
+				observed.integrations = sample.integrations;
 			if (!sample.serviceReady && unit.status === "ok") {
 				unit.status = "unknown";
 				unit.error = sample.error ?? "Runtime service readiness is not established";
@@ -497,6 +505,7 @@ interface ServingSample {
 	serviceReady: boolean;
 	componentReady: boolean;
 	error?: string;
+	integrations?: components["schemas"]["HostedRuntimeObservedIntegrationsV1"];
 }
 
 function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedState | null) {
@@ -530,6 +539,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 				if (!binding) return { binding, serviceReady: false, componentReady: false };
 				let componentReady: boolean | undefined;
 				let error: string | undefined;
+				let integrations: ServingSample["integrations"];
 				const serviceReady = await runtimeServiceIsReady(unit, paths, {
 					onComponentReady: (ready) => {
 						componentReady = ready;
@@ -537,8 +547,17 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 					onFailure: (reason) => {
 						error = reason;
 					},
+					onIntegrations: (value) => {
+						integrations = value;
+					},
 				});
-				return { binding, serviceReady, componentReady: componentReady ?? serviceReady, error };
+				return {
+					binding,
+					serviceReady,
+					componentReady: componentReady ?? serviceReady,
+					error,
+					integrations,
+				};
 			})();
 			samples.set(unit, pending);
 		}
@@ -551,6 +570,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 			sample.binding = null;
 			sample.serviceReady = false;
 			sample.componentReady = false;
+			sample.integrations = undefined;
 			sample.error = "Runtime readiness sample: invocation or configuration changed or unavailable";
 		}
 		return sample;
@@ -810,6 +830,9 @@ export async function runtimeServiceIsReady(
 	options: {
 		onComponentReady?: (ready: boolean) => void;
 		onFailure?: (reason: string) => void;
+		onIntegrations?: (
+			integrations: components["schemas"]["HostedRuntimeObservedIntegrationsV1"],
+		) => void;
 	} = {},
 ): Promise<boolean> {
 	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
@@ -897,23 +920,31 @@ export async function runtimeServiceIsReady(
 		const ready = /<!doctype html|<html[\s>]/i.test(page.body);
 		options.onComponentReady?.(ready);
 		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
+		const requiredPlatforms = configuredHermesPlatforms(
+			parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")),
+		);
+		const nativeState = requiredPlatforms.length
+			? readJsonRecord(join(paths.userHome, ".hermes", "gateway_state.json"))
+			: null;
+		if (requiredPlatforms.length) {
+			options.onIntegrations?.({
+				schemaVersion: 1,
+				entries: hermesChannelStates(
+					requiredPlatforms,
+					status?.gateway_running === true && status.gateway_state === "running"
+						? nativeState
+						: null,
+				),
+			});
+		}
 		if (status?.gateway_running !== true || status.gateway_state !== "running") {
 			profileRuntimeStep("observation.pending.hermes-native-gateway", () => null);
 			options.onFailure?.("Hermes service readiness: native gateway is not running");
 			return false;
 		}
-		const requiredPlatforms = configuredHermesPlatforms(
-			parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")),
-		);
-		if (
-			requiredPlatforms.length &&
-			!hermesChannelsAreReady(
-				requiredPlatforms,
-				JSON.parse(readFileSync(join(paths.userHome, ".hermes", "gateway_state.json"), "utf8")),
-			)
-		) {
+		if (requiredPlatforms.length && !hermesGatewayIsReady(nativeState)) {
 			options.onFailure?.(
-				"Hermes service readiness: configured messaging platforms are not connected in the current gateway",
+				"Hermes service readiness: native gateway state is not current or running",
 			);
 			return false;
 		}
