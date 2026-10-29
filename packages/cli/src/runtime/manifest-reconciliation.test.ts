@@ -26,6 +26,7 @@ import * as privateFile from "../lib/private-file";
 import { log } from "../serve/log";
 import { installHermesNativeFixture } from "../test-support/hermes-native-fixture";
 import { writeFakeOpenClawConfigMutationSdk } from "../test-support/openclaw-config-mutation";
+import { routeRuntimeReadinessPort } from "../test-support/runtime-readiness-port";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
@@ -894,6 +895,21 @@ function fileBrowserManifest(
 			companions: { filebrowser: companion },
 		},
 	);
+}
+
+async function runFileBrowserReadiness(manifest: RuntimeManifest) {
+	// Keep the HTTP fixture responsive while the real probe blocks in spawnSync.
+	const child = Bun.spawn(
+		[
+			process.execPath,
+			"--eval",
+			`import { probeFileBrowserReadiness } from ${JSON.stringify(new URL("./file-browser-companion.ts", import.meta.url).href)};
+probeFileBrowserReadiness(${JSON.stringify(manifest)});`,
+		],
+		{ env: process.env, stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout: 75_000 },
+	);
+	const [status, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+	return { status, stderr };
 }
 
 function writeFakeHermesCli(paths: RuntimePaths): string {
@@ -6531,6 +6547,53 @@ fi
 		expect(statSync(candidate).ino).toBe(before.ino);
 		expect(readFileSync(candidate, "utf8")).toBe(binary);
 	});
+
+	test.each([
+		{ scenario: "accepts startup after eight seconds", readyAfterMs: 8_000 },
+		{ scenario: "fails at the retry deadline when never ready", readyAfterMs: null },
+	])(
+		"Files readiness $scenario",
+		async ({ readyAfterMs }) => {
+			const paths = tempRuntimePaths();
+			const manifest = fileBrowserManifest(paths, { generation: 1, binary: "readiness fixture" });
+			const started = performance.now();
+			let healthRequests = 0;
+			const server = Bun.serve({
+				hostname: "127.0.0.1",
+				port: 0,
+				fetch(request) {
+					if (new URL(request.url).pathname !== "/health")
+						return new Response(null, { status: 404 });
+					healthRequests++;
+					const ready = readyAfterMs !== null && performance.now() - started >= readyAfterMs;
+					return new Response(null, { status: ready ? 200 : 503 });
+				},
+			});
+			const restoreReadinessPort = routeRuntimeReadinessPort(paths.userHome, 9120, server.port);
+			try {
+				const result = await runFileBrowserReadiness(manifest);
+				const elapsed = performance.now() - started;
+				expect(healthRequests).toBeGreaterThan(0);
+				if (readyAfterMs === null) {
+					expect(result.status).toBe(1);
+					expect(result.stderr).toContain(
+						"Files companion readiness failed at http://127.0.0.1:9120/health",
+					);
+					expect(elapsed).toBeGreaterThanOrEqual(59_000);
+					// curl can finish an in-flight two-second attempt after its retry deadline.
+					expect(elapsed).toBeLessThan(65_000);
+				} else {
+					expect(result).toEqual({ status: 0, stderr: "" });
+					expect(elapsed).toBeGreaterThanOrEqual(readyAfterMs);
+					expect(elapsed).toBeLessThan(60_000);
+				}
+			} finally {
+				restoreReadinessPort();
+				await server.stop(true);
+			}
+		},
+		80_000,
+	);
 
 	test("installs the pinned Files companion post-boot and reconverges idempotently", () => {
 		const paths = tempRuntimePaths();
