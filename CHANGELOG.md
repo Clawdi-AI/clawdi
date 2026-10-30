@@ -80,6 +80,12 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.24
+
+- **Hermes:** recognize fresh, requested restart drains while Hermes finishes
+  active work. Keep the gateway healthy during this bounded restart window and
+  report its restart progress separately from messaging channel health.
+
 ### CLI 0.16.23
 
 - **Files:** wait up to 60 seconds for startup readiness before failing an

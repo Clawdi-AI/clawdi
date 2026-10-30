@@ -109,6 +109,7 @@ async def observe(
     provider_conflicts=None,
     service_withdrawals=None,
     integrations=None,
+    runtime_restart=None,
     converge_error=None,
     apply_receipt_id="apply-receipt-0001",
     boot_nonce="boot-nonce-000001",
@@ -143,6 +144,7 @@ async def observe(
             **({"providerConflicts": provider_conflicts} if provider_conflicts else {}),
             **({"serviceWithdrawals": service_withdrawals} if service_withdrawals else {}),
             **({"integrations": integrations} if integrations else {}),
+            **({"runtimeRestart": runtime_restart} if runtime_restart else {}),
         }
     )
     result = await ingest_runtime_observation(
@@ -342,6 +344,17 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
             {"kind": "channel", "runtime": "hermes", "integration": "telegram", "state": "fatal"}
         ],
     }
+    runtime_restart = {
+        "schemaVersion": 1,
+        "entries": [
+            {
+                "runtime": "hermes",
+                "reason": "upstream_restart_drain",
+                "activeWork": 1,
+                "budgetSeconds": 1875,
+            }
+        ],
+    }
     first = await observe(
         db_session,
         fresh,
@@ -352,6 +365,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         provider_conflicts=conflicts,
         service_withdrawals=withdrawals,
         integrations=integrations,
+        runtime_restart=runtime_restart,
         converge_error="convergence warning",
     )
     coalesced = await observe(
@@ -365,6 +379,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         provider_conflicts=conflicts,
         service_withdrawals=withdrawals,
         integrations=integrations,
+        runtime_restart=runtime_restart,
         converge_error="convergence warning",
     )
     assert first.stream_position == coalesced.stream_position
@@ -439,6 +454,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         "providerConflicts",
         "serviceWithdrawals",
         "integrations",
+        "runtimeRestart",
     }
     assert diagnostics["components"] == components
     assert diagnostics["convergeError"] == "convergence warning"
@@ -446,10 +462,12 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     assert diagnostics["providerConflicts"] == conflicts
     assert diagnostics["serviceWithdrawals"] == withdrawals
     assert diagnostics["integrations"] == integrations
+    assert diagnostics["runtimeRestart"] == runtime_restart
     assert observations[3]["head"]["diagnostics"]["skills"] is None
     assert observations[3]["head"]["diagnostics"]["providerConflicts"] is None
     assert observations[3]["head"]["diagnostics"]["serviceWithdrawals"] is None
     assert observations[3]["head"]["diagnostics"]["integrations"] is None
+    assert observations[3]["head"]["diagnostics"]["runtimeRestart"] is None
     assert observations[1]["head"]["diagnostics"] == dict.fromkeys(diagnostics)
     assert diagnostics["activeCliVersion"] == "1.2.3"
     assert diagnostics["agentPlugins"] == {"schemaVersion": 1, "installations": []}
@@ -475,6 +493,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         {"providerConflicts": {"schemaVersion": 1, "entries": []}},
         {"serviceWithdrawals": {"schemaVersion": 1, "entries": []}},
         {"integrations": {"schemaVersion": 1, "entries": []}},
+        {"runtimeRestart": {"schemaVersion": 1, "entries": []}},
         {"rawPayload": {}},
     ):
         with pytest.raises(ValidationError):

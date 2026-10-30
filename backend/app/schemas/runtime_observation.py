@@ -4,7 +4,15 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StrictInt,
+    field_validator,
+    model_validator,
+)
 
 from app.schemas.platform import PlatformOwner
 from app.schemas.runtime_observed import (
@@ -326,6 +334,40 @@ class HostedRuntimeObservedIntegrationsV1(RuntimeObservationRequestModel):
         return entries
 
 
+class HostedRuntimeObservedRuntimeRestartEntryV1(RuntimeObservationRequestModel):
+    """A bounded, upstream-requested runtime restart drain."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    runtime: Literal["hermes"]
+    reason: Literal["upstream_restart_drain"]
+    active_work: StrictInt = Field(alias="activeWork", ge=0)
+    budget_seconds: StrictInt = Field(alias="budgetSeconds", ge=1, le=2400)
+
+
+class HostedRuntimeObservedRuntimeRestartV1(RuntimeObservationRequestModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
+
+    schema_version: Literal[1] = Field(alias="schemaVersion")
+    entries: list[HostedRuntimeObservedRuntimeRestartEntryV1] = Field(min_length=1, max_length=8)
+
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def validate_schema_version(cls, value: object) -> int:
+        if type(value) is not int or value != 1:
+            raise ValueError("Runtime restart schemaVersion must be integer 1")
+        return value
+
+    @field_validator("entries")
+    @classmethod
+    def validate_entries(
+        cls, entries: list[HostedRuntimeObservedRuntimeRestartEntryV1]
+    ) -> list[HostedRuntimeObservedRuntimeRestartEntryV1]:
+        if len({entry.runtime for entry in entries}) != len(entries):
+            raise ValueError("Runtime restart entries must be unique by runtime")
+        return entries
+
+
 RuntimeUserActivityClassification = Literal[
     "known_last_user_input",
     "known_no_user_input",
@@ -429,6 +471,9 @@ class RuntimeObservationEventV2(RuntimeObservationRequestModel):
         default=None,
     )
     integrations: HostedRuntimeObservedIntegrationsV1 | None = None
+    runtime_restart: HostedRuntimeObservedRuntimeRestartV1 | None = Field(
+        alias="runtimeRestart", default=None
+    )
     error: str | None = Field(default=None, max_length=4000)
     converge_error: str | None = Field(alias="convergeError", default=None, max_length=4000)
     truncated: bool | None = None
@@ -688,6 +733,9 @@ class RuntimeDriftObservationDiagnostics(RuntimeObservationResponseModel):
         alias="serviceWithdrawals", default=None
     )
     integrations: HostedRuntimeObservedIntegrationsV1 | None = None
+    runtime_restart: HostedRuntimeObservedRuntimeRestartV1 | None = Field(
+        alias="runtimeRestart", default=None
+    )
 
     @model_validator(mode="after")
     def validate_plugin_identity(self) -> RuntimeDriftObservationDiagnostics:
