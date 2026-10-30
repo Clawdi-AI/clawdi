@@ -204,6 +204,9 @@ async def read_runtime_drift_summaries(
                         "service_withdrawals"
                     ),
                     V2RuntimeObservationInbox.diagnostics["integrations"].label("integrations"),
+                    V2RuntimeObservationInbox.diagnostics["runtimeRestart"].label(
+                        "runtime_restart"
+                    ),
                 )
                 .outerjoin(
                     V2RuntimeObservationInbox,
@@ -251,6 +254,7 @@ async def read_runtime_drift_summaries(
                             "providerConflicts": row.provider_conflicts,
                             "serviceWithdrawals": row.service_withdrawals,
                             "integrations": row.integrations,
+                            "runtimeRestart": row.runtime_restart,
                         },
                     }
                 )

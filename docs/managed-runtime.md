@@ -1827,10 +1827,11 @@ official source commit
 ### Hermes channel observations
 
 Hermes messaging health is separate from core serving readiness. For configured
-Telegram, Discord, and WhatsApp channels, the observer still requires a running
+Telegram, Discord, and WhatsApp channels, the observer requires a running
 native gateway (`/api/status` and a `gateway_state.json` record with
 `gateway_state: running` and a positive `pid`). Channel disconnects, reconnects,
 and fatal channel errors do not change that readiness decision.
+The requested restart drain described below is also admitted.
 
 V2 heartbeats include optional `integrations: {schemaVersion: 1, entries: [...]}`
 with entries sorted and unique by `(kind, runtime, integration)`. Each entry has
@@ -1852,6 +1853,39 @@ Roll out the tolerant Hosted consumer first, then Cloud, then publish a CLI
 that emits this field. Older Cloud versions reject unknown event fields. Cloud
 stores integrations in companion diagnostics and projects them through drift
 summaries without changing the event's core health.
+
+Done: `scripts/test.sh cli src/runtime/hermes-channel-health.test.ts src/runtime/observed-v2.test.ts src/runtime/heartbeat-observation.test.ts`
+and `scripts/test.sh backend tests/test_runtime_observation_companion.py tests/test_runtime_drift_summary.py`
+report passing tests in isolated Docker.
+
+### Hermes requested restart drains
+
+The observer admits an upstream restart drain only when `/api/status` reports
+`gateway_running: true` and `gateway_state: draining`, dashboard authentication
+and login readiness pass, and the current home's `~/.hermes/gateway_state.json`
+reports `gateway_state: draining`, `restart_requested: true`, a positive PID
+matching `gateway_pid` when the dashboard exposes it, and `updated_at` within
+the last 90 seconds. Unrequested or stale drains, stopping, stopped, degraded,
+and startup failures retain their existing readiness failure.
+
+V2 heartbeats include optional `runtimeRestart: {schemaVersion: 1, entries: [...]}`
+with one entry per runtime (1–8 unique entries). The Hermes entry has
+`runtime: hermes`, `reason: upstream_restart_drain`, `activeWork` equal to the
+native `active_work` list length (zero when absent), and integer `budgetSeconds`.
+The budget is `agent.restart_after_turn_timeout` from native `config.yaml`
+(default 1800 seconds) plus 75 seconds, rounded up and clamped to 1–2400 seconds.
+Other observation callers must explicitly set `includeRuntimeRestart`.
+Channel integrations retain the native per-platform states and writer identity
+checks during an admitted drain. Cloud stores this evidence in companion
+diagnostics and projects it through drift summaries; legacy observation schemas
+are unchanged.
+
+These semantics were verified against Hermes
+[`dce1e9b375`](https://github.com/NousResearch/hermes-agent/tree/dce1e9b37581dd62e480a9064dc04a709c2940d3),
+in `gateway/run_shutdown.py`, `gateway/status.py`, `gateway/restart.py`,
+`hermes_cli/config_defaults.py`, and `hermes_cli/web_routers/status.py`.
+Deploy Cloud and the tolerant Hosted restart consumer before publishing or
+rolling out CLI 0.16.24: older Cloud versions reject unknown event fields.
 
 Done: `scripts/test.sh cli src/runtime/hermes-channel-health.test.ts src/runtime/observed-v2.test.ts src/runtime/heartbeat-observation.test.ts`
 and `scripts/test.sh backend tests/test_runtime_observation_companion.py tests/test_runtime_drift_summary.py`

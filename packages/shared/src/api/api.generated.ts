@@ -6713,6 +6713,36 @@ export interface components {
             [key: string]: components["schemas"]["JsonValue"];
         };
         /**
+         * HostedRuntimeObservedRuntimeRestartEntryV1
+         * @description A bounded, upstream-requested runtime restart drain.
+         */
+        HostedRuntimeObservedRuntimeRestartEntryV1: {
+            /**
+             * Runtime
+             * @constant
+             */
+            runtime: "hermes";
+            /**
+             * Reason
+             * @constant
+             */
+            reason: "upstream_restart_drain";
+            /** Activework */
+            activeWork: number;
+            /** Budgetseconds */
+            budgetSeconds: number;
+        };
+        /** HostedRuntimeObservedRuntimeRestartV1 */
+        HostedRuntimeObservedRuntimeRestartV1: {
+            /**
+             * Schemaversion
+             * @constant
+             */
+            schemaVersion: 1;
+            /** Entries */
+            entries: components["schemas"]["HostedRuntimeObservedRuntimeRestartEntryV1"][];
+        };
+        /**
          * HostedRuntimeObservedServiceWithdrawalV1
          * @description An optional runtime service the committed generation withdrew because it cannot run.
          */
@@ -8068,6 +8098,7 @@ export interface components {
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
             integrations?: components["schemas"]["HostedRuntimeObservedIntegrationsV1"] | null;
+            runtimeRestart?: components["schemas"]["HostedRuntimeObservedRuntimeRestartV1"] | null;
         };
         /** RuntimeDriftObservationHead */
         RuntimeDriftObservationHead: {
@@ -8300,6 +8331,7 @@ export interface components {
             providerConflicts?: components["schemas"]["HostedRuntimeObservedProviderConflictsV1"] | null;
             serviceWithdrawals?: components["schemas"]["HostedRuntimeObservedServiceWithdrawalsV1"] | null;
             integrations?: components["schemas"]["HostedRuntimeObservedIntegrationsV1"] | null;
+            runtimeRestart?: components["schemas"]["HostedRuntimeObservedRuntimeRestartV1"] | null;
             /** Error */
             error?: string | null;
             /** Convergeerror */

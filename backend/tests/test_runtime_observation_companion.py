@@ -373,6 +373,52 @@ def test_service_withdrawals_are_optional_canonical_and_fixed_vocabulary() -> No
             RuntimeObservationEventV2.model_validate({**payload, "serviceWithdrawals": withdrawals})
 
 
+def test_runtime_restart_is_optional_bounded_unique_and_strict() -> None:
+    payload = _payload().model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert RuntimeObservationEventV2.model_validate(payload).runtime_restart is None
+    entry = {
+        "runtime": "hermes",
+        "reason": "upstream_restart_drain",
+        "activeWork": 1,
+        "budgetSeconds": 1875,
+    }
+    for active_work, budget in [(0, 1), (1, 1875), (100, 2400)]:
+        restart = {
+            "schemaVersion": 1,
+            "entries": [{**entry, "activeWork": active_work, "budgetSeconds": budget}],
+        }
+        observed = RuntimeObservationEventV2.model_validate({**payload, "runtimeRestart": restart})
+        assert observed.runtime_restart is not None
+        assert observed.runtime_restart.model_dump(by_alias=True) == restart
+        assert observed.status == "ok"
+
+    invalid_entries = [
+        {**entry, "runtime": "openclaw"},
+        {**entry, "reason": "restart"},
+        {**entry, "activeWork": -1},
+        {**entry, "activeWork": True},
+        {**entry, "activeWork": "1"},
+        {**entry, "activeWork": 1.5},
+        {**entry, "budgetSeconds": 0},
+        {**entry, "budgetSeconds": 2401},
+        {**entry, "budgetSeconds": True},
+        {**entry, "budgetSeconds": "75"},
+        {**entry, "budgetSeconds": 75.5},
+        {**entry, "details": "private"},
+        {key: value for key, value in entry.items() if key != "reason"},
+    ]
+    for restart in [
+        {"schemaVersion": 2, "entries": [entry]},
+        {"schemaVersion": 1, "entries": []},
+        {"schemaVersion": 1, "entries": [entry, entry]},
+        {"schemaVersion": 1, "entries": [entry] * 9},
+        {"schemaVersion": 1, "entries": [entry], "details": "private"},
+        *({"schemaVersion": 1, "entries": [item]} for item in invalid_entries),
+    ]:
+        with pytest.raises(ValueError):
+            RuntimeObservationEventV2.model_validate({**payload, "runtimeRestart": restart})
+
+
 def test_integrations_are_optional_canonical_and_strict() -> None:
     payload = _payload().model_dump(mode="json", by_alias=True, exclude_unset=True)
     assert RuntimeObservationEventV2.model_validate(payload).integrations is None
@@ -3148,6 +3194,7 @@ def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:
         "providerConflicts",
         "serviceWithdrawals",
         "integrations",
+        "runtimeRestart",
     ):
         payload.pop(field)
     return payload

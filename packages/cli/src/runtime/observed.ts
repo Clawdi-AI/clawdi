@@ -30,6 +30,7 @@ import {
 	configuredHermesPlatforms,
 	hermesChannelStates,
 	hermesGatewayIsReady,
+	hermesRestartDrain,
 } from "./hermes-channel-health";
 import { readHostedAgentPluginsObservation } from "./hosted-agent-plugin-observation";
 import { installedOpenClawCommandPath } from "./hosted-openclaw-context";
@@ -58,6 +59,7 @@ export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObserved
 		| "providerConflicts"
 		| "serviceWithdrawals"
 		| "integrations"
+		| "runtimeRestart"
 	>;
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
@@ -87,6 +89,7 @@ export async function readHostedRuntimeObserved(
 		includeProviderConflicts?: boolean;
 		includeServiceWithdrawals?: boolean;
 		includeIntegrations?: boolean;
+		includeRuntimeRestart?: boolean;
 	} = {},
 ): Promise<HostedRuntimeObserved | null> {
 	if (paths.mode !== "hosted") return null;
@@ -189,6 +192,8 @@ export async function readHostedRuntimeObserved(
 			const sample = await servingSamples.read(unit.name);
 			if (options.includeIntegrations && sample.integrations)
 				observed.integrations = sample.integrations;
+			if (options.includeRuntimeRestart && sample.runtimeRestart)
+				observed.runtimeRestart = sample.runtimeRestart;
 			if (!sample.serviceReady && unit.status === "ok") {
 				unit.status = "unknown";
 				unit.error = sample.error ?? "Runtime service readiness is not established";
@@ -506,6 +511,7 @@ interface ServingSample {
 	componentReady: boolean;
 	error?: string;
 	integrations?: components["schemas"]["HostedRuntimeObservedIntegrationsV1"];
+	runtimeRestart?: components["schemas"]["HostedRuntimeObservedRuntimeRestartV1"];
 }
 
 function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedState | null) {
@@ -540,6 +546,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 				let componentReady: boolean | undefined;
 				let error: string | undefined;
 				let integrations: ServingSample["integrations"];
+				let runtimeRestart: ServingSample["runtimeRestart"];
 				const serviceReady = await runtimeServiceIsReady(unit, paths, {
 					onComponentReady: (ready) => {
 						componentReady = ready;
@@ -550,6 +557,9 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 					onIntegrations: (value) => {
 						integrations = value;
 					},
+					onRuntimeRestart: (value) => {
+						runtimeRestart = value;
+					},
 				});
 				return {
 					binding,
@@ -557,6 +567,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 					componentReady: componentReady ?? serviceReady,
 					error,
 					integrations,
+					runtimeRestart,
 				};
 			})();
 			samples.set(unit, pending);
@@ -571,6 +582,7 @@ function observationServingSamples(paths: RuntimePaths, applied: RuntimeAppliedS
 			sample.serviceReady = false;
 			sample.componentReady = false;
 			sample.integrations = undefined;
+			sample.runtimeRestart = undefined;
 			sample.error = "Runtime readiness sample: invocation or configuration changed or unavailable";
 		}
 		return sample;
@@ -833,6 +845,9 @@ export async function runtimeServiceIsReady(
 		onIntegrations?: (
 			integrations: components["schemas"]["HostedRuntimeObservedIntegrationsV1"],
 		) => void;
+		onRuntimeRestart?: (
+			runtimeRestart: components["schemas"]["HostedRuntimeObservedRuntimeRestartV1"],
+		) => void;
 	} = {},
 ): Promise<boolean> {
 	if (unit !== "openclaw-gateway.service" && unit !== "clawdi-hermes-dashboard.service")
@@ -920,34 +935,35 @@ export async function runtimeServiceIsReady(
 		const ready = /<!doctype html|<html[\s>]/i.test(page.body);
 		options.onComponentReady?.(ready);
 		if (!ready) options.onFailure?.("Hermes dashboard readiness: login HTML is not available");
-		const requiredPlatforms = configuredHermesPlatforms(
-			parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8")),
-		);
-		const nativeState = requiredPlatforms.length
-			? readJsonRecord(join(paths.userHome, ".hermes", "gateway_state.json"))
-			: null;
+		const config = parseYaml(readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8"));
+		const requiredPlatforms = configuredHermesPlatforms(config);
+		const nativeState = readJsonRecord(join(paths.userHome, ".hermes", "gateway_state.json"));
+		const restartDrain = ready ? hermesRestartDrain(status, nativeState, config) : null;
+		const gatewayServing =
+			(status?.gateway_running === true && status.gateway_state === "running") ||
+			restartDrain !== null;
 		if (requiredPlatforms.length) {
 			options.onIntegrations?.({
 				schemaVersion: 1,
 				entries: hermesChannelStates(
 					requiredPlatforms,
-					status?.gateway_running === true && status.gateway_state === "running"
-						? nativeState
-						: null,
+					gatewayServing ? nativeState : null,
+					restartDrain !== null,
 				),
 			});
 		}
-		if (status?.gateway_running !== true || status.gateway_state !== "running") {
+		if (!gatewayServing) {
 			profileRuntimeStep("observation.pending.hermes-native-gateway", () => null);
 			options.onFailure?.("Hermes service readiness: native gateway is not running");
 			return false;
 		}
-		if (requiredPlatforms.length && !hermesGatewayIsReady(nativeState)) {
+		if (requiredPlatforms.length && !restartDrain && !hermesGatewayIsReady(nativeState)) {
 			options.onFailure?.(
 				"Hermes service readiness: native gateway state is not current or running",
 			);
 			return false;
 		}
+		if (restartDrain) options.onRuntimeRestart?.({ schemaVersion: 1, entries: [restartDrain] });
 		return ready;
 	} catch (error) {
 		options.onFailure?.(

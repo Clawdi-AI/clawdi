@@ -20,6 +20,7 @@ import { componentConfigurationRevision } from "./component-observation";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
 import { HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE, loadRemoteRuntimeManifest } from "./manifest-source";
 import {
+	type HostedRuntimeObserved,
 	readComponentServiceState,
 	readHostedRuntimeObserved,
 	runtimeComponentIsReady,
@@ -988,6 +989,99 @@ printf '%s' '{"port":${server.port},"controlUi":{"basePath":"/control"}}'
 					});
 					const buffered = await heartbeat.nextEvent();
 					expect(buffered?.event.integrations?.entries[0]?.state).toBe("fatal");
+					expect(buffered?.event).not.toHaveProperty("runtimeRestart");
+					const drainStatus = {
+						...ready,
+						gateway_running: true,
+						gateway_state: "draining",
+						gateway_pid: 101,
+					};
+					const drainState = {
+						gateway_state: "draining",
+						pid: 101,
+						start_time: 200,
+						restart_requested: true,
+						updated_at: new Date().toISOString(),
+						active_work: [{ kind: "chat" }],
+						platforms: { telegram: { ...currentPlatform, state: "retrying" } },
+					};
+					const restart = {
+						schemaVersion: 1,
+						entries: [
+							{
+								runtime: "hermes",
+								reason: "upstream_restart_drain",
+								activeWork: 1,
+								budgetSeconds: 1875,
+							},
+						],
+					} satisfies NonNullable<HostedRuntimeObserved["runtimeRestart"]>;
+					body = drainStatus;
+					writeFileSync(nativeStatePath, JSON.stringify(drainState));
+					const draining = await readHostedRuntimeObserved(paths, {
+						includeRuntimeRestart: true,
+						includeIntegrations: true,
+					});
+					expect(draining?.status).toBe("ok");
+					expect(draining?.runtimeRestart).toEqual(restart);
+					expect(draining?.integrations?.entries[0]?.state).toBe("retrying");
+					expect(await readHostedRuntimeObserved(paths)).not.toHaveProperty("runtimeRestart");
+					if (buffered) heartbeat.acknowledge(buffered.event.eventId);
+					expect((await heartbeat.nextEvent())?.event.runtimeRestart).toEqual(restart);
+					for (const extra of [
+						{ restart_requested: false },
+						{ restart_requested: undefined },
+						{ updated_at: new Date(Date.now() - 91_000).toISOString() },
+						{ pid: 999 },
+						{ gateway_state: "stopped" },
+					]) {
+						writeFileSync(nativeStatePath, JSON.stringify({ ...drainState, ...extra }));
+						const rejected = await readHostedRuntimeObserved(paths, {
+							includeRuntimeRestart: true,
+						});
+						expect(rejected?.status).toBe("unknown");
+						expect(rejected).not.toHaveProperty("runtimeRestart");
+					}
+					writeFileSync(nativeStatePath, JSON.stringify(drainState));
+					for (const extra of [
+						{ gateway_running: false },
+						{ gateway_state: "stopping" },
+						{ gateway_state: "stopped" },
+						{ gateway_state: "degraded" },
+						{ gateway_state: "startup_failed" },
+						{ auth_required: false },
+					]) {
+						body = { ...drainStatus, ...extra };
+						const rejected = await readHostedRuntimeObserved(paths, {
+							includeRuntimeRestart: true,
+						});
+						expect(rejected?.status).toBe("unknown");
+						expect(rejected).not.toHaveProperty("runtimeRestart");
+					}
+					body = drainStatus;
+					uiStatus = 503;
+					const missingDrainLogin = await readHostedRuntimeObserved(paths, {
+						includeRuntimeRestart: true,
+					});
+					expect(missingDrainLogin?.status).toBe("unknown");
+					expect(missingDrainLogin).not.toHaveProperty("runtimeRestart");
+					uiStatus = 200;
+					writeHermesAuthProvider();
+					writeFileSync(
+						hermesConfigPath,
+						`${readFileSync(hermesConfigPath, "utf8")}agent:\n  restart_after_turn_timeout: 3000\n`,
+					);
+					const noDrainChannels = await readHostedRuntimeObserved(paths, {
+						includeRuntimeRestart: true,
+					});
+					expect(noDrainChannels?.status).toBe("ok");
+					expect(noDrainChannels?.runtimeRestart?.entries[0]?.budgetSeconds).toBe(2400);
+					body = ready;
+					writeHermesAuthProvider();
+					writeFileSync(
+						hermesConfigPath,
+						`${readFileSync(hermesConfigPath, "utf8")}telegram:\n  enabled: true\n`,
+					);
 					writeFileSync(nativeStatePath, JSON.stringify({ gateway_state: "stopped", pid: 101 }));
 					const stopped = await readHostedRuntimeObserved(paths, { includeIntegrations: true });
 					expect(stopped?.status).toBe("unknown");
