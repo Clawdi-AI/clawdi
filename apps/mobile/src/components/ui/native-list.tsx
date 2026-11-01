@@ -58,9 +58,9 @@ export function NativeList<T>({
 				if (hasMore && !loadingMore && !refreshing) onLoadMore?.();
 			}}
 			onEndReachedThreshold={0.4}
-			ListHeaderComponent={header}
-			ListEmptyComponent={empty}
-			ListFooterComponent={footer}
+			ListHeaderComponent={header ?? undefined}
+			ListEmptyComponent={empty ?? undefined}
+			ListFooterComponent={footer ?? undefined}
 		/>
 	);
 }

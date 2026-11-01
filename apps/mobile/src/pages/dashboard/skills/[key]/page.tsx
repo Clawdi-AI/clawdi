@@ -30,7 +30,7 @@ import {
 	skillRemovalTitle,
 } from "@clawdi/shared/view";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { router, Stack, useLocalSearchParams, useNavigation } from "expo-router";
+import { router, Stack, useLocalSearchParams } from "expo-router";
 import { usePreventRemove } from "expo-router/react-navigation";
 import BookOpen from "lucide-react-native/icons/book-open";
 import Bot from "lucide-react-native/icons/bot";
@@ -124,11 +124,9 @@ function SkillEditor({
 	const { skills } = useMobileApi();
 	const cache = useQueryClient();
 	const action = useAuthAction(scope);
-	const navigation = useNavigation();
 	const sheet = useSheet({ fallback: "/skills" });
 	const capture = useForegroundLease();
 	const confirmation = useRef(0);
-	const acknowledged = useRef(false);
 	const [completed, setCompleted] = useState(false);
 	const [baseline, setBaseline] = useState<SkillTextDraft | null>(null);
 	const projects = useCloudProjects();
@@ -159,28 +157,27 @@ function SkillEditor({
 				draft.description !== (baseline?.description ?? "") ||
 				draft.instructions !== (baseline?.instructions ?? "")),
 	);
-	usePreventRemove(scope.isReady && !completed && (dirty || action.busy), ({ data }) => {
-		// Redispatch the original action only after a confirmed mutation or explicit discard.
-		if (acknowledged.current) {
-			navigation.dispatch(data.action);
-			return;
-		}
-		if (action.busy) return;
-		const visible = capture();
-		const ticket = ++confirmation.current;
-		confirmationDialog.show(t("profile.unsavedTitle"), t("skills.discardWarning"), [
-			{ text: t("account.cancel"), style: "cancel" },
-			{
-				text: t("profile.discard"),
-				style: "destructive",
-				onPress: () => {
-					if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
-					confirmation.current++;
-					navigation.dispatch(data.action);
+	const disablePrevention = usePreventRemove(
+		scope.isReady && !completed && (dirty || action.busy),
+		({ repeat }) => {
+			if (action.busy) return;
+			const visible = capture();
+			const ticket = ++confirmation.current;
+			confirmationDialog.show(t("profile.unsavedTitle"), t("skills.discardWarning"), [
+				{ text: t("account.cancel"), style: "cancel" },
+				{
+					text: t("profile.discard"),
+					style: "destructive",
+					onPress: () => {
+						if (ticket !== confirmation.current || !visible() || !scope.isCurrent()) return;
+						confirmation.current++;
+						setCompleted(true);
+						repeat();
+					},
 				},
-			},
-		]);
-	});
+			]);
+		},
+	);
 	const matches =
 		detail.data?.skill_key === skillKey && (!projectId || detail.data?.project_id === projectId);
 	const canWrite = create
@@ -223,8 +220,8 @@ function SkillEditor({
 				await invalidate();
 				if (!isCurrent()) return;
 				if (create) {
-					acknowledged.current = true;
 					setCompleted(true);
+					disablePrevention();
 					if (visible()) await sheet.close();
 				} else setDraft(null);
 			} catch (error) {
@@ -253,7 +250,8 @@ function SkillEditor({
 							if (!isCurrent()) return;
 							await invalidate();
 							if (isCurrent() && visible()) {
-								acknowledged.current = true;
+								setCompleted(true);
+								disablePrevention();
 								router.replace("/skills");
 							}
 						});

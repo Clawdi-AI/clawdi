@@ -114,4 +114,4 @@ function RootLayout() {
 
 export default wrapRootLayout(RootLayout);
 
-export const unstable_settings = { initialRouteName: "(tabs)" };
+export const unstable_settings = { anchor: "(tabs)" };
