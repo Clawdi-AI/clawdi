@@ -65,6 +65,32 @@ bun run --cwd apps/web test
 validated env module. If you bypass that Bun config, seed
 `VITE_CLERK_PUBLISHABLE_KEY` yourself.
 
+## Deployment change detection
+
+`apps/web/vercel.json` uses Vercel's documented
+[custom Ignored Build Step](https://vercel.com/docs/monorepos/turborepo#custom-ignored-build-step)
+to skip preview and production builds when the `web` workspace and its
+dependencies are unaffected since `VERCEL_GIT_PREVIOUS_SHA`. A production
+deployment without a previous SHA always builds. For other deployments, when
+that SHA is empty, it fetches up to 50 commits from `origin main`
+and compares against `FETCH_HEAD` instead. Turbo compares from the merge base,
+so the shallow clone must contain a common ancestor. A previous SHA outside the
+clone's history, a fork outside the fetched depth, a fetch failure, or a query
+error allows the build. Dependabot previews follow the same check.
+Changes to shared inputs in Turbo's `globalDependencies` also trigger builds.
+Turbo checks resolved dependency changes in `bun.lock`.
+
+After installing dependencies, check changes against the parent commit:
+
+```bash
+cd apps/web
+bunx turbo query affected --base=HEAD^ --packages web --exit-code
+```
+
+Done: the query exits `0` when unaffected (skip) or `1` when affected (build),
+and reports the `web` package at `apps/web` when affected. Exit `2` indicates a
+query error and also allows a Vercel build.
+
 ## Route admission
 
 Protected routes use Clerk request middleware and a Start server function calling
