@@ -1,6 +1,7 @@
 {
 	"framework": "tanstack-start",
 	"installCommand": "bunx bun@1.4.2 install --frozen-lockfile",
+	"ignoreCommand": "[ -n \"$VERCEL_GIT_PREVIOUS_SHA\" ] && (git cat-file -e \"${VERCEL_GIT_PREVIOUS_SHA}^{commit}\" 2>/dev/null || git fetch --no-tags --depth=1 origin \"$VERCEL_GIT_PREVIOUS_SHA\") && turbo query affected --base=\"$VERCEL_GIT_PREVIOUS_SHA\" --packages web --exit-code",
 	"rewrites": [
 		{
 			"source": "/_cdi/px/static/:path*",
