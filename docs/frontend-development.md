@@ -70,8 +70,9 @@ validated env module. If you bypass that Bun config, seed
 `apps/web/vercel.json` uses Vercel's documented
 [custom Ignored Build Step](https://vercel.com/docs/monorepos/turborepo#custom-ignored-build-step)
 to skip preview and production builds when the `web` workspace and its
-dependencies are unaffected since `VERCEL_GIT_PREVIOUS_SHA`. On a branch's first
-deployment, when that SHA is empty, it fetches up to 50 commits from `origin main`
+dependencies are unaffected since `VERCEL_GIT_PREVIOUS_SHA`. A production
+deployment without a previous SHA always builds. For other deployments, when
+that SHA is empty, it fetches up to 50 commits from `origin main`
 and compares against `FETCH_HEAD` instead. Turbo compares from the merge base,
 so the shallow clone must contain a common ancestor. A previous SHA outside the
 clone's history, a fork outside the fetched depth, a fetch failure, or a query
