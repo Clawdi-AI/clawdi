@@ -126,7 +126,7 @@ jobs:
         run: bun run typecheck
 
       - name: Set up native Agent test dependencies
-        uses: astral-sh/setup-uv@v10.2.0
+        uses: astral-sh/setup-uv@v10.3.3
         with:
           version: "0.12.5"
           python-version: "3.12"
