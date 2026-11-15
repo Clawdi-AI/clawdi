@@ -1,1 +1,1 @@
-ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:3b6f3a170e4da3e2489c878fc0f54a359ae3f476e568b489c0c7120799fe15e4
+ghcr.io/clawdi-ai/postgres-pgbackrest:pg18@sha256:eecf9fc9e5437eb203cd528759610f8eae4c85ad573b41971ce7a4ecb6ae5068
