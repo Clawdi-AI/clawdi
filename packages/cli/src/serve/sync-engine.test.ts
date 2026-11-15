@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
 import { OpenClawAdapter } from "../adapters/openclaw";
 import { adapterRegistry } from "../adapters/registry";
@@ -35,6 +36,7 @@ import { computeSkillArchiveHash } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
 import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
 import { RetryQueue } from "./queue";
+import type { ServerEvent } from "./sse-client";
 import {
 	classifyHeartbeatFailure,
 	connectedProjectSkillDeliveryEnabled,
@@ -1951,7 +1953,15 @@ describe("daemon startup Agent lookup", () => {
 		}
 	}
 
-	it("reuses the OpenClaw polling workspace until the daemon's next reconcile boundary", async () => {
+	it.each([
+		{ name: "hosted", connected: false, failFirstTick: false },
+		{ name: "connected with materialized Skills", connected: true, failFirstTick: false },
+		{ name: "connected after a roster failure", connected: true, failFirstTick: true },
+	])("resolves one OpenClaw workspace per tick: $name", async ({ connected, failFirstTick }) => {
+		const desired: components["schemas"]["AgentProjectSkillDesiredItem"][] = [];
+		let projectInventories = 0;
+		let events: ReadableStreamDefaultController<Uint8Array> | undefined;
+		let holdInventory: Promise<void> | undefined;
 		await withStartupCase(
 			async (request) => {
 				const path = new URL(request.url).pathname;
@@ -1963,85 +1973,245 @@ describe("daemon startup Agent lookup", () => {
 						{ headers: { ETag: '"1:project-1"' } },
 					);
 				if (path === "/v1/sync/events")
-					return new Response(": ready\n\n", {
-						headers: { "content-type": "text/event-stream" },
-					});
+					return new Response(
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								events = controller;
+								controller.enqueue(new TextEncoder().encode(": ready\n\n"));
+							},
+							cancel() {
+								events = undefined;
+							},
+						}),
+						{
+							headers: { "content-type": "text/event-stream" },
+						},
+					);
+				if (path === "/v1/runtime/project-skill-capability")
+					return new Response(null, { status: 204 });
+				if (path === "/v1/runtime/project-skills") {
+					projectInventories++;
+					await holdInventory;
+					return Response.json({ agent_id: "agent-isolated", skills: desired });
+				}
+				if (path === "/v1/agents/agent-isolated/skills/sync/ghost")
+					return new Response(null, { status: 204 });
 				if (path.endsWith("/sync-heartbeat")) return new Response(null, { status: 204 });
 				return new Response(`unexpected ${path}`, { status: 500 });
 			},
-			async ({ abortController, root }) => {
+			async ({ abortController, root, logs }) => {
 				const originalEnv = { ...process.env };
 				const workspace = join(root, "workspace");
 				const bin = join(root, "bin");
+				const calls = join(root, "roster-calls");
+				const failure = join(root, "roster-failure");
 				mkdirSync(join(workspace, "skills"), { recursive: true });
 				mkdirSync(bin);
 				const command = join(bin, "openclaw");
 				writeFileSync(
 					command,
-					`#!/bin/sh\ntest "$*" = "agents list --json" || exit 1\nprintf '%s' '${JSON.stringify([{ id: "main", workspace }])}'\n`,
+					`#!/bin/sh
+test "$*" = "agents list --json" || exit 1
+printf '.\\n' >> '${calls}'
+test ! -f '${failure}' || exit 1
+printf '%s' '${JSON.stringify([{ id: "main", workspace }])}'
+`,
 				);
 				chmodSync(command, 0o755);
 				process.env.HOME = root;
 				process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
-				process.env.CLAWDI_RUNTIME_MODE = "hosted";
+				process.env.CLAWDI_RUNTIME_MODE = connected ? "host" : "hosted";
 				delete process.env.CLAWDI_RUNTIME_USER;
 				delete process.env.OPENCLAW_AGENT_ID;
+				if (connected) {
+					for (const key of ["project-one", "project-two"]) {
+						const directory = join(workspace, "skills", key);
+						mkdirSync(directory);
+						writeFileSync(join(directory, "SKILL.md"), `# ${key}\n`);
+						const hash = await computeSkillFolderHash(directory, undefined, key);
+						recordProjectSkillMaterialization({
+							agentType: "openclaw",
+							localSkillKey: key,
+							sourceProjectId: "source-project",
+							sourceSkillKey: key,
+							contentHash: hash,
+							reconcileAgentId: "agent-isolated",
+						});
+						desired.push({
+							project_id: "source-project",
+							skill_id: key,
+							skill_key: key,
+							content_hash: hash,
+							archive_url: `https://cloud.example.test/v1/runtime/project-skill-archives/agent-isolated/source-project/${key}/${hash}/${key}.tar.gz`,
+						});
+					}
+				}
 				const skills = new OpenClawAdapter().skills;
-				const listKeys = skills.listKeys;
-				const cycles = new Map<object, number>();
-				const pollReads = spyOn(skills, "listKeys").mockImplementation(async (context) => {
-					const cycle = context?.skillPollCycle;
-					if (cycle) cycles.set(cycle, (cycles.get(cycle) ?? 0) + 1);
-					const result = await listKeys(context);
-					if (cycles.size === 2 && cycle && (cycles.get(cycle) ?? 0) >= 3) abortController.abort();
-					return result;
-				});
+				const rosterCalls = () => readFileSync(calls, "utf8").trim().split("\n").length;
 				const originalTimeout = globalThis.setTimeout;
-				function fastTimeout(handler: TimerHandler, timeout?: number, ...args: unknown[]): number;
-				function fastTimeout<TArgs extends unknown[]>(
+				const originalClearTimeout = globalThis.clearTimeout;
+				const pending = new Map<ReturnType<typeof setTimeout>, { delay: number; fire(): void }>();
+				const random = spyOn(Math, "random").mockReturnValue(0);
+				const cleared = spyOn(SyncHealth.prototype, "clear");
+				function controlledTimeout(
+					handler: TimerHandler,
+					timeout?: number,
+					...args: unknown[]
+				): number;
+				function controlledTimeout<TArgs extends unknown[]>(
 					handler: (...args: TArgs) => void,
 					timeout?: number,
 					...args: TArgs
 				): ReturnType<typeof setTimeout>;
-				function fastTimeout(
+				function controlledTimeout(
 					handler: TimerHandler,
 					timeout?: number,
 					...args: unknown[]
 				): number | ReturnType<typeof setTimeout> {
 					if (typeof handler !== "function") throw new Error("unexpected string timer");
-					const delay =
-						timeout === 30_000
-							? 2
-							: timeout !== undefined && timeout >= 240_000 && timeout <= 360_000
-								? 100
-								: timeout;
-					return originalTimeout(() => handler(...args), delay);
+					if (timeout !== 30_000 && timeout !== 240_000 && timeout !== 300_000)
+						return originalTimeout(() => handler(...args), timeout);
+					const handle = originalTimeout(() => {}, 10_000);
+					pending.set(handle, { delay: timeout, fire: () => handler(...args) });
+					return handle;
 				}
 				const timers = spyOn(globalThis, "setTimeout").mockImplementation(
-					Object.assign(fastTimeout, { __promisify__: originalTimeout.__promisify__ }),
+					Object.assign(controlledTimeout, { __promisify__: originalTimeout.__promisify__ }),
 				);
-				const deadline = originalTimeout(() => abortController.abort(), 5000);
+				const cancellations = spyOn(globalThis, "clearTimeout").mockImplementation((handle) => {
+					for (const timer of pending.keys()) {
+						if (timer === handle) pending.delete(timer);
+					}
+					originalClearTimeout(
+						typeof handle === "object" && handle !== null ? Number(handle) : handle,
+					);
+				});
+				const countTimers = (delay: number) =>
+					[...pending.values()].filter((timer) => timer.delay === delay).length;
+				const fireTimers = (delay: number) => {
+					for (const [handle, timer] of [...pending]) {
+						if (timer.delay !== delay) continue;
+						pending.delete(handle);
+						originalClearTimeout(handle);
+						timer.fire();
+					}
+				};
+				const waitFor = async (ready: () => boolean) => {
+					for (let attempt = 0; attempt < 2000; attempt++) {
+						if (ready()) return;
+						await new Promise<void>((resolve) => originalTimeout(resolve, 2));
+					}
+					throw new Error(
+						`Daemon did not reach the expected reconcile checkpoint: ${JSON.stringify({
+							timers: [...pending.values()].map(({ delay }) => delay),
+							logs: logs.slice(-10),
+						})}`,
+					);
+				};
+				const poll = async () => {
+					// The idle queue wakeup shares the watcher's 30-second interval.
+					await waitFor(() => countTimers(30_000) === 2);
+					fireTimers(30_000);
+					await waitFor(() => countTimers(30_000) === 2);
+				};
+				const send = (event: ServerEvent) => {
+					if (!events) throw new Error("Missing SSE connection");
+					events.enqueue(
+						new TextEncoder().encode(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`),
+					);
+				};
+				const deadline = originalTimeout(() => abortController.abort(), 10_000);
+				let releaseInventory: () => void = () => {};
+				const running = runSyncEngine({
+					environmentId: "agent-isolated",
+					adapter: {
+						agentType: "openclaw",
+						detect: async () => true,
+						getVersion: async () => null,
+						skills,
+					},
+					abort: abortController.signal,
+					abortController,
+					forcePollWatcher: true,
+				});
+				void running.catch(() => {});
 				try {
-					await runSyncEngine({
-						environmentId: "agent-isolated",
-						adapter: {
-							agentType: "openclaw",
-							detect: async () => true,
-							getVersion: async () => null,
-							skills,
-						},
-						abort: abortController.signal,
-						abortController,
-						forcePollWatcher: true,
-					});
-					expect(cycles.size).toBe(2);
-					for (const reads of cycles.values()) expect(reads).toBeGreaterThanOrEqual(3);
+					await waitFor(
+						() =>
+							countTimers(240_000) === 2 &&
+							countTimers(30_000) === 2 &&
+							logs.some(
+								(line) => line.includes('"event":"watcher.mode"') && line.includes('"skill_count"'),
+							),
+					);
+					const initial = rosterCalls();
+					for (let index = 0; index < 3; index++) await poll();
+					expect(rosterCalls()).toBe(initial);
+					for (let tick = 0; tick < 2; tick++) {
+						if (tick === 0 && failFirstTick) writeFileSync(failure, "fail this tick");
+						else rmSync(failure, { force: true });
+						const before = rosterCalls();
+						const inventoriesBefore = projectInventories;
+						fireTimers(240_000);
+						await waitFor(() => countTimers(240_000) === 2);
+						expect(rosterCalls()).toBe(before + 1);
+						const failed = tick === 0 && failFirstTick;
+						expect(projectInventories).toBe(inventoriesBefore + (connected && !failed ? 1 : 0));
+						if (!failed) {
+							for (let index = 0; index < 3; index++) await poll();
+							expect(rosterCalls()).toBe(before + 1);
+						}
+					}
+					for (let event = 0; event < 2; event++) {
+						const before = rosterCalls();
+						const scans = cleared.mock.calls.filter(
+							([area, resource]) => area === "push" && resource === "skill_scan:ghost",
+						).length;
+						send({
+							type: "skill_deleted",
+							project_id: "project-1",
+							skill_key: "ghost",
+							skills_revision: 2,
+						});
+						await waitFor(
+							() =>
+								cleared.mock.calls.filter(
+									([area, resource]) => area === "push" && resource === "skill_scan:ghost",
+								).length > scans,
+						);
+						expect(rosterCalls()).toBe(before + 1);
+					}
+					if (connected) {
+						holdInventory = new Promise<void>((resolve) => {
+							releaseInventory = resolve;
+						});
+						const before = rosterCalls();
+						const inventoriesBefore = projectInventories;
+						send({ type: "runtime_manifest_changed", environment_id: "agent-isolated" });
+						await waitFor(() => projectInventories === inventoriesBefore + 1);
+						expect(rosterCalls()).toBe(before + 1);
+						fireTimers(240_000);
+						await waitFor(() => rosterCalls() === before + 2);
+						expect(projectInventories).toBe(inventoriesBefore + 1);
+						holdInventory = undefined;
+						releaseInventory();
+						await waitFor(() => countTimers(240_000) === 2);
+						expect(rosterCalls()).toBe(before + 2);
+						expect(projectInventories).toBe(inventoriesBefore + 2);
+					}
 				} finally {
 					abortController.abort();
-					clearTimeout(deadline);
-					timers.mockRestore();
-					pollReads.mockRestore();
-					process.env = originalEnv;
+					releaseInventory();
+					events?.close();
+					await running.finally(() => {
+						originalClearTimeout(deadline);
+						for (const handle of pending.keys()) originalClearTimeout(handle);
+						cancellations.mockRestore();
+						timers.mockRestore();
+						random.mockRestore();
+						cleared.mockRestore();
+						process.env = originalEnv;
+					});
 				}
 			},
 		);

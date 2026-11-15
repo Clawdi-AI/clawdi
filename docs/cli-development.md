@@ -285,16 +285,18 @@ complete discovery can mark a missing profile removed. OpenClaw shares one
 official all-agents session inventory per scan and attributes only newly
 observed IDs.
 
-OpenClaw Skills polling reuses its last successful workspace resolution within
-the daemon's existing five-minute reconcile cycle (with one-minute jitter).
-Each poll still enumerates current Skill directories. Reconcile starts a new
-workspace lifetime; a missing or unreadable reused workspace also forces a fresh
-official roster read. Failed reads retry on the next poll. This applies to both
-hosted and self-managed daemons using forced polling or the filesystem-watch
-fallback. One-shot commands, profile discovery, authoritative Skill projection
-and Project Skill installation continue resolving fresh. A workspace move may
-wait until the next reconcile; a polling snapshot never authorizes Cloud deletion
-without the existing fresh projection scan.
+Each OpenClaw Skills reconcile resolves the official workspace once and binds
+both projection passes, Project Skill checks and the following read-only polls
+to that workspace. Event-driven authoritative operations bind their own fresh
+workspace. Polls still enumerate current Skill directories; a missing or unreadable
+reused workspace forces fresh resolution, and failed reads retry on the next poll.
+Native installs retain their fresh pre/post workspace guards and reject a changed
+target before mutation. One-shot commands and profile discovery remain fresh.
+This applies to hosted and self-managed daemons using forced polling or the
+filesystem-watch fallback. Reuse lasts until the next existing reconcile: its
+five-minute sleep (with one-minute jitter) plus reconcile duration. The cycle
+has no total deadline; OAuth response-body and Retry-After bounds are separate
+follow-ups. A polling snapshot never directly authorizes Cloud deletion.
 
 The CLI release must wait for the web profile list and filter PR. The backend
 expand release retains the legacy Session unique constraint; repeated local IDs

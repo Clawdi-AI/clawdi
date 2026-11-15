@@ -748,11 +748,7 @@ async function prepareSkillSync(
 	const rootDir = skills.rootDir();
 	log.info("engine.skills_start", { root_dir: rootDir });
 	let skillPollCycle = {};
-	let skillPolling = false;
-	const listPolledSkillKeys = () => {
-		skillPolling = true;
-		return skills.listKeys({ signal: opts.abort, skillPollCycle });
-	};
+	const listPolledSkillKeys = () => skills.listKeys({ signal: opts.abort, skillPollCycle });
 
 	// Fetch this Agent's default_project_id at boot. Projection requests are
 	// Agent-scoped, while the durable claim and absence report are additionally
@@ -792,24 +788,39 @@ async function prepareSkillSync(
 
 	let projectSkillReconcileRunning: Promise<void> | null = null;
 	let projectSkillReconcileRequested = false;
-	const reconcileProjectSkills = (): Promise<void> => {
+	const runProjectSkillReconcile = async (operationSkills: SkillModule): Promise<void> => {
+		const resolved =
+			(await operationSkills.forOperation?.({ signal: opts.abort })) ?? operationSkills;
+		await reconcileConnectedProjectSkills({
+			api,
+			agentId: opts.environmentId,
+			agentType: opts.adapter.agentType,
+			skills: resolved,
+		});
+	};
+	const reconcileProjectSkills = (operationSkills?: SkillModule): Promise<void> => {
 		if (!connectedProjectSkillDelivery) return Promise.resolve();
-		projectSkillReconcileRequested = true;
-		if (projectSkillReconcileRunning) return projectSkillReconcileRunning;
-		projectSkillReconcileRunning = (async () => {
+		if (!operationSkills) {
+			projectSkillReconcileRequested = true;
+			if (projectSkillReconcileRunning) return projectSkillReconcileRunning;
+		}
+		const previous = projectSkillReconcileRunning;
+		const running = (async () => {
+			// A periodic binding waits its turn; event requests retain their own fresh binding.
+			// The previous caller reports its failure; this operation still gets its own attempt.
+			if (previous) await previous.catch(() => {});
+			if (operationSkills && !opts.abort.aborted) {
+				await runProjectSkillReconcile(operationSkills);
+			}
 			while (projectSkillReconcileRequested && !opts.abort.aborted) {
 				projectSkillReconcileRequested = false;
-				await reconcileConnectedProjectSkills({
-					api,
-					agentId: opts.environmentId,
-					agentType: opts.adapter.agentType,
-					skills,
-				});
+				await runProjectSkillReconcile(skills);
 			}
 		})().finally(() => {
-			projectSkillReconcileRunning = null;
+			if (projectSkillReconcileRunning === running) projectSkillReconcileRunning = null;
 		});
-		return projectSkillReconcileRunning;
+		projectSkillReconcileRunning = running;
+		return running;
 	};
 	if (connectedProjectSkillDelivery) {
 		try {
@@ -1081,14 +1092,13 @@ async function prepareSkillSync(
 						if (opts.abort.aborted) return;
 						skillPollCycle = {};
 						try {
-							if (skillPolling && opts.adapter.agentType === "openclaw") {
-								await listPolledSkillKeys();
-							}
-							await reconcileProjectSkills();
+							const operationSkills =
+								(await skills.forOperation?.({ signal: opts.abort, skillPollCycle })) ?? skills;
+							await reconcileProjectSkills(operationSkills);
 							syncHealth.clear("projection", "project_skills");
 							await reconcileAgentSkillProjection({
 								opts,
-								skills,
+								skills: operationSkills,
 								queue,
 								claims: lastPushedHash,
 								projectId: defaultProjectId,
@@ -1097,7 +1107,7 @@ async function prepareSkillSync(
 							const catchUp = await reconcileAgentSkillProjectionListing({
 								api,
 								opts,
-								skills,
+								skills: operationSkills,
 								queue,
 								claims: lastPushedHash,
 								projectId: defaultProjectId,
@@ -2450,7 +2460,10 @@ export async function reconcileAgentSkillProjection(input: {
 	 * migration evidence for removing unclaimed legacy Agent-Project rows. */
 	trustedLegacyRemoteKeys?: ReadonlySet<string>;
 }): Promise<void> {
-	const { opts, skills, queue, claims, projectId } = input;
+	const { opts, queue, claims, projectId } = input;
+	const skills =
+		(await input.skills.forOperation?.(opts.abort ? { signal: opts.abort } : undefined)) ??
+		input.skills;
 	const rootDir = skills.rootDir();
 	const localKeys = new Set(
 		filterValidSkillKeysForSync(

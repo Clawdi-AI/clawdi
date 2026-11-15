@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
 	chmodSync,
 	existsSync,
@@ -12,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import * as managedSkillDelivery from "../runtime/managed-skill-delivery";
+import * as managedSkillReservation from "../runtime/managed-skill-reservation";
 import { OpenClawAdapter } from "./openclaw";
 import {
 	listOpenClawAgentWorkspaces,
@@ -140,6 +142,64 @@ test("one-shot Skills reads always resolve fresh even after a daemon poll", asyn
 		join(nextWorkspace, "skills", "demo", "SKILL.md"),
 	]);
 	expect(rosterCalls()).toBe(4);
+});
+
+test("a fresh operation binds paths and reads once and seeds only the following polls", async () => {
+	const roster = installRosterCommand();
+	const workspace = join(root, "workspace");
+	const nextWorkspace = join(root, "next-workspace");
+	for (const path of [workspace, nextWorkspace]) {
+		mkdirSync(join(path, "skills", "demo"), { recursive: true });
+		writeFileSync(join(path, "skills", "demo", "SKILL.md"), "# Demo\n");
+	}
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+	const skills = new OpenClawAdapter().skills;
+	const context = { signal: new AbortController().signal, skillPollCycle: {} };
+	const operation = await skills.forOperation(context);
+	expect(operation.rootDir()).toBe(join(workspace, "skills"));
+	expect(operation.path("demo")).toBe(join(workspace, "skills", "demo", "SKILL.md"));
+	expect(await operation.listKeys()).toEqual(["demo"]);
+	expect((await operation.collect()).map((skill) => skill.skillKey)).toEqual(["demo"]);
+	expect(await skills.listKeys(context)).toEqual(["demo"]);
+	expect(rosterCalls()).toBe(1);
+
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+	const nextOperation = await skills.forOperation(context);
+	expect(nextOperation.rootDir()).toBe(join(nextWorkspace, "skills"));
+	expect(operation.rootDir()).toBe(join(workspace, "skills"));
+	expect(await skills.listKeys(context)).toEqual(["demo"]);
+	expect(rosterCalls()).toBe(2);
+});
+
+test("a moved native install target fails before touching the operation's old target", async () => {
+	const roster = installRosterCommand();
+	const workspace = join(root, "workspace");
+	const nextWorkspace = join(root, "next-workspace");
+	const oldSkill = join(workspace, "skills", "demo", "SKILL.md");
+	mkdirSync(join(workspace, "skills", "demo"), { recursive: true });
+	writeFileSync(oldSkill, "# Keep the old target\n");
+	mkdirSync(nextWorkspace);
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+	const operation = await new OpenClawAdapter().skills.forOperation();
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+	const mutation = spyOn(managedSkillReservation, "mutateUserSkillTarget");
+	const verification = spyOn(managedSkillDelivery, "collectManagedSkillTree");
+	const rollback = spyOn(managedSkillDelivery, "withManagedTargetRollback");
+	try {
+		await expect(operation.writeArchive("demo", Buffer.from("not an archive"))).rejects.toThrow(
+			"OpenClaw agent workspace changed before Skill install",
+		);
+		expect(mutation).not.toHaveBeenCalled();
+		expect(verification).not.toHaveBeenCalled();
+		expect(rollback).not.toHaveBeenCalled();
+		expect(readFileSync(oldSkill, "utf8")).toBe("# Keep the old target\n");
+		expect(existsSync(join(nextWorkspace, "skills"))).toBe(false);
+		expect(rosterCalls()).toBe(2);
+	} finally {
+		mutation.mockRestore();
+		verification.mockRestore();
+		rollback.mockRestore();
+	}
 });
 
 test("resolves Skills from the official agent workspace roster", async () => {

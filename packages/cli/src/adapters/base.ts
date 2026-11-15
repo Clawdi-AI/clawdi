@@ -188,7 +188,7 @@ export interface SyncReadContext {
 	streaming?: boolean;
 	/** Shared inventory lifetime for one multi-profile scan. */
 	profileScanToken?: object;
-	/** Daemon-only workspace reuse for read-only Skills polls until the next reconcile. */
+	/** Daemon polling lifetime, seeded by its fresh reconcile operation. */
 	skillPollCycle?: object;
 }
 
@@ -290,6 +290,8 @@ export interface RawSkill {
 }
 
 export interface SkillModule {
+	/** Resolve a fresh target once for a sequential operation; the returned module is already bound. */
+	forOperation?(context?: SyncReadContext): Promise<SkillModule>;
 	collect(context?: SyncReadContext): Promise<RawSkill[]>;
 	listKeys(context?: SyncReadContext): Promise<string[]>;
 	path(key: string): string;

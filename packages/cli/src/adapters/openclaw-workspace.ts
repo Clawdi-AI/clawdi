@@ -69,6 +69,7 @@ export async function resolveOpenClawAgentWorkspaceAsync(
 	agentId = openClawAgentId(),
 	signal?: AbortSignal,
 	pollCycle?: object,
+	fresh = false,
 ): Promise<string> {
 	signal?.throwIfAborted();
 	if (pollCycle) {
@@ -77,7 +78,7 @@ export async function resolveOpenClawAgentWorkspaceAsync(
 			workspaces = new Map();
 			pollWorkspaces.set(pollCycle, workspaces);
 		}
-		const cached = workspaces.get(agentId);
+		const cached = fresh ? undefined : workspaces.get(agentId);
 		if (cached) {
 			const workspace = await cached;
 			signal?.throwIfAborted();
