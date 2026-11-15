@@ -7,6 +7,7 @@ import {
 	navigateToAcceptedDeployment,
 	navigateToAcceptedDeploymentRequest,
 } from "@/hosted/billing/deploy/accepted-deployment-navigation";
+import { BillingApiError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -133,6 +134,61 @@ describe("accepted deployment navigation", () => {
 			1,
 		);
 
+		queryClient.clear();
+	});
+
+	test("retries a busy deployment read before opening the accepted Agent route", async () => {
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, retryDelay: 0 } },
+		});
+		const authoritative = hostedDeploymentFixture({ id: "hdep_busy_handoff" });
+		const navigations: Parameters<AcceptedDeploymentNavigate>[0][] = [];
+		let reads = 0;
+
+		await navigateToAcceptedDeployment({
+			deploymentId: authoritative.resource.id,
+			getDeployment: async () => {
+				reads += 1;
+				if (reads === 1) throw new BillingApiError(503, "request_temporarily_busy");
+				return authoritative;
+			},
+			navigate: (options) => {
+				navigations.push(options);
+			},
+			queryClient,
+		});
+
+		expect(reads).toBe(2);
+		expect(navigations).toEqual([{ href: `/agents/${authoritative.agent_id}`, replace: false }]);
+		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toEqual([
+			authoritative,
+		]);
+		queryClient.clear();
+	});
+
+	test("does not retry a deterministic deployment read rejection", async () => {
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
+		const failure = new BillingApiError(403, "forbidden");
+		let reads = 0;
+		let navigated = false;
+
+		await expect(
+			navigateToAcceptedDeployment({
+				deploymentId: "hdep_forbidden",
+				getDeployment: async () => {
+					reads += 1;
+					throw failure;
+				},
+				navigate: () => {
+					navigated = true;
+				},
+				queryClient,
+			}),
+		).rejects.toBe(failure);
+
+		expect(reads).toBe(1);
+		expect(navigated).toBe(false);
+		expect(queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments)).toBeUndefined();
 		queryClient.clear();
 	});
 
