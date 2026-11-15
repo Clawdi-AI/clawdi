@@ -1,9 +1,10 @@
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
 	HERMES_OIDC_BROWSER_SESSION_REFRESH_MS,
 	hermesOidcAuthorityIdentity,
-	primeHermesOidcBrowserSession,
+	primeHermesOidcBrowserSessionWithRefetch,
 } from "@/hosted/agents/hermes-oidc-browser-session";
 import { primeOpenClawBrowserSession } from "@/hosted/agents/openclaw-browser-session";
 import {
@@ -22,6 +23,7 @@ const HERMES_OIDC_BROWSER_SESSION_RETRY_MS = 60_000;
 /** Credentials and OIDC priming belong to the mounted console, never to a cross-route cache. */
 export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: string | null) {
 	const client = useBillingClient();
+	const queryClient = useQueryClient();
 	const { id, metadata, spec } = deployment.resource;
 	const identity = useSessionIdentity();
 	const { getToken } = useAuthToken();
@@ -62,8 +64,10 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 	const mountedAuthorityIdentity = useRef(authorityIdentity);
 	const currentResourceVersion = useRef(metadata.resourceVersion);
 	const currentGetToken = useRef(getToken);
+	const currentClient = useRef(client);
 	currentResourceVersion.current = metadata.resourceVersion;
 	currentGetToken.current = getToken;
+	currentClient.current = client;
 
 	useLayoutEffect(() => {
 		active.current = true;
@@ -119,15 +123,25 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 					if (hermesOidcBrowserSessionUrl) {
 						const token = await getToken();
 						if (!current()) return null;
-						await primeHermesOidcBrowserSession(
-							hermesOidcBrowserSessionUrl,
-							id,
-							BILLING_API_ORIGIN,
+						const resourceVersion = await primeHermesOidcBrowserSessionWithRefetch({
+							url: hermesOidcBrowserSessionUrl,
+							deploymentId: id,
+							trustedApiOrigin: BILLING_API_ORIGIN,
 							token,
-							metadata.resourceVersion,
-							abort.signal,
-						);
+							resourceVersion: currentResourceVersion.current,
+							signal: abort.signal,
+							getDeployment: async (deploymentId) => {
+								const freshDeployment = await client.getDeployment(deploymentId);
+								if (current()) {
+									// Keep a failed retry from triggering another load after the cache update.
+									requestedVersion.current = freshDeployment.resource.metadata.resourceVersion;
+								}
+								return freshDeployment;
+							},
+							queryClient,
+						});
 						if (!current()) return null;
+						currentResourceVersion.current = resourceVersion;
 						setHermesOidcPrimedAuthority(authorityIdentity);
 						return null;
 					}
@@ -187,6 +201,7 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 		},
 		[
 			client,
+			queryClient,
 			id,
 			metadata.resourceVersion,
 			metadata.generation,
@@ -218,14 +233,19 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			try {
 				const token = await currentGetToken.current();
 				if (cancelled || mountedAuthorityIdentity.current !== authorityIdentity) return;
-				await primeHermesOidcBrowserSession(
-					hermesOidcBrowserSessionUrl,
-					id,
-					BILLING_API_ORIGIN,
+				const resourceVersion = await primeHermesOidcBrowserSessionWithRefetch({
+					url: hermesOidcBrowserSessionUrl,
+					deploymentId: id,
+					trustedApiOrigin: BILLING_API_ORIGIN,
 					token,
-					currentResourceVersion.current,
-					abort.signal,
-				);
+					resourceVersion: currentResourceVersion.current,
+					signal: abort.signal,
+					getDeployment: (deploymentId) => currentClient.current.getDeployment(deploymentId),
+					queryClient,
+				});
+				if (!cancelled && mountedAuthorityIdentity.current === authorityIdentity) {
+					currentResourceVersion.current = resourceVersion;
+				}
 			} catch {
 				nextDelay = HERMES_OIDC_BROWSER_SESSION_RETRY_MS;
 			} finally {
@@ -242,7 +262,14 @@ export function useRuntimeUiCredentials(deployment: HostedDeployment, endpoint: 
 			if (timer) clearTimeout(timer);
 			abort?.abort();
 		};
-	}, [isHermesOidc, hermesOidcPrimed, hermesOidcBrowserSessionUrl, authorityIdentity, id]);
+	}, [
+		isHermesOidc,
+		hermesOidcPrimed,
+		hermesOidcBrowserSessionUrl,
+		authorityIdentity,
+		id,
+		queryClient,
+	]);
 
 	useEffect(() => {
 		const shouldPrimeOpenClaw = spec.runtime === "openclaw" && !nativeHandoffLoaded;
