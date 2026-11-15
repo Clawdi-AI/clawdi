@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from hashlib import md5
 from itertools import batched
 from typing import Literal, Protocol
 from uuid import UUID
@@ -13,6 +14,7 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    and_,
     bindparam,
     case,
     cast,
@@ -24,6 +26,7 @@ from sqlalchemy import (
     literal_column,
     or_,
     select,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -53,6 +56,8 @@ from app.services.session_content import load_session_events, load_session_messa
 from app.services.session_events import project_visible_messages
 
 type SearchRole = Literal["user", "assistant"]
+
+SNAPSHOT_DOCUMENT_REVISION = "snapshot"
 
 _UUID_PREFIX_RE = re.compile(r"^[0-9a-f]{8,32}$", re.IGNORECASE)
 
@@ -101,7 +106,7 @@ def current_document_revision(session: Session) -> str | None:
     if session.content_protocol == "events-v1" and session.event_generation_id is not None:
         return event_document_revision(session.event_generation_id)
     if session.content_protocol == "snapshot-v1" and session.content_hash is not None:
-        return snapshot_search_revision(session.content_hash)
+        return SNAPSHOT_DOCUMENT_REVISION
     return None
 
 
@@ -201,7 +206,7 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
             Session.content_protocol == "events-v1",
             func.concat("events:", Session.event_generation_id),
         ),
-        else_=func.concat("snapshot:", Session.content_hash),
+        else_=literal(SNAPSHOT_DOCUMENT_REVISION),
     )
     active_search_revision = case(
         (
@@ -248,7 +253,13 @@ def best_session_message_matches(user_id: UUID, query: str) -> Subquery:
         .join(Session, Session.id == candidates.c.session_id)
         .where(
             Session.user_id == user_id,
-            candidates.c.content_revision == active_document_revision,
+            or_(
+                candidates.c.content_revision == active_document_revision,
+                and_(
+                    Session.content_protocol == "snapshot-v1",
+                    candidates.c.content_revision == active_search_revision,
+                ),
+            ),
             Session.search_index_revision == active_search_revision,
         )
         .distinct(candidates.c.session_id)
@@ -330,12 +341,22 @@ async def session_message_search_navigation(
     ):
         return None
 
+    document_revisions = [document_revision]
+    if session.content_protocol == "snapshot-v1" and session.content_hash is not None:
+        document_revisions.append(snapshot_search_revision(session.content_hash))
     message_match = _message_match_expression(query)
-    matching_positions_query = select(SessionMessageSearch.position.label("position")).where(
-        SessionMessageSearch.user_id == session.user_id,
-        SessionMessageSearch.session_id == session.id,
-        SessionMessageSearch.content_revision == document_revision,
-        message_match,
+    matching_positions_query = (
+        select(SessionMessageSearch.position.label("position"))
+        .join(Session, Session.id == SessionMessageSearch.session_id)
+        .where(
+            SessionMessageSearch.user_id == session.user_id,
+            SessionMessageSearch.session_id == session.id,
+            SessionMessageSearch.content_revision.in_(document_revisions),
+            # The caller may have released its transaction while loading content.
+            # Match documents only if that loaded revision is still published.
+            Session.search_index_revision == current_search_revision(session),
+            message_match,
+        )
     )
     if roles is not None:
         matching_positions_query = matching_positions_query.where(
@@ -463,11 +484,13 @@ async def _add_documents(
     generation_id: UUID | None,
     content_revision: str,
     messages: Sequence[SearchableSessionMessage],
+    unchanged_keys: set[tuple[int, int]] | None = None,
 ) -> None:
     documents = (
         (message.position, chunk_index, message.role, content)
         for message in messages
         for chunk_index, content in enumerate(session_search_chunks(message.content))
+        if unchanged_keys is None or (message.position, chunk_index) not in unchanged_keys
     )
     # Bound Python work and send one statement per batch, avoiding per-row
     # PostgreSQL executor setup. All arrays describe the same ordered rows.
@@ -536,16 +559,52 @@ async def replace_snapshot_search_index(
     messages: Sequence[SearchableSessionMessage],
 ) -> None:
     revision = snapshot_search_revision(content_hash)
+    # The caller holds the Session row lock until content and projection commit.
     await db.execute(
-        delete(SessionMessageSearch).where(SessionMessageSearch.session_id == session.id)
+        delete(SessionMessageSearch).where(
+            SessionMessageSearch.session_id == session.id,
+            SessionMessageSearch.content_revision != SNAPSHOT_DOCUMENT_REVISION,
+        )
     )
+    existing = {
+        (position, chunk_index): (role, content_digest)
+        for position, chunk_index, role, content_digest in (
+            await db.execute(
+                select(
+                    SessionMessageSearch.position,
+                    SessionMessageSearch.chunk_index,
+                    SessionMessageSearch.role,
+                    func.md5(SessionMessageSearch.content),
+                ).where(
+                    SessionMessageSearch.session_id == session.id,
+                    SessionMessageSearch.content_revision == SNAPSHOT_DOCUMENT_REVISION,
+                )
+            )
+        ).all()
+    }
+    unchanged_keys = {
+        (message.position, chunk_index)
+        for message in messages
+        for chunk_index, content in enumerate(session_search_chunks(message.content))
+        if existing.get((message.position, chunk_index))
+        == (message.role, md5(content.encode("utf-8"), usedforsecurity=False).hexdigest())
+    }
+    for batch in batched(existing.keys() - unchanged_keys, 500):
+        await db.execute(
+            delete(SessionMessageSearch).where(
+                SessionMessageSearch.session_id == session.id,
+                SessionMessageSearch.content_revision == SNAPSHOT_DOCUMENT_REVISION,
+                tuple_(SessionMessageSearch.position, SessionMessageSearch.chunk_index).in_(batch),
+            )
+        )
     await _add_documents(
         db,
         user_id=session.user_id,
         session_id=session.id,
         generation_id=None,
-        content_revision=revision,
+        content_revision=SNAPSHOT_DOCUMENT_REVISION,
         messages=messages,
+        unchanged_keys=unchanged_keys,
     )
     session.search_index_revision = revision
 
@@ -570,7 +629,7 @@ async def rebuild_session_search_index(
         snapshot = await load_session_messages(session, file_store, db)
         messages = searchable_snapshot_messages(snapshot)
         generation_id = None
-        document_revision = search_revision
+        document_revision = SNAPSHOT_DOCUMENT_REVISION
 
     current = (
         await db.execute(
