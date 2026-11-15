@@ -236,7 +236,7 @@ describe.skipIf(!enabled)("upstream OpenClaw adapter contract", () => {
 			maxBufferBytes: 4 * 1024 * 1024,
 		});
 		console.log(result.stdout);
-		expect(result.stdout.match(/^PASS /gm)).toHaveLength(9);
+		expect(result.stdout.match(/^PASS /gm)).toHaveLength(10);
 	}, 200_000);
 
 	test("reports the installed version to the runtime revision probe", () => {

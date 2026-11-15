@@ -834,6 +834,35 @@ scan is incomplete, including unreadable OpenClaw transcripts. Isolated session
 planning failures and Hermes content failures use the session scan issue report
 without invalidating independently collected activity or other sessions' receipts.
 
+OpenClaw baseline activity scans also read retained `.jsonl.deleted.*.zst` and
+`.jsonl.reset.*.zst` archives with the built-in `node:zlib` streaming decoder,
+then use the same bounded JSONL reader and real user classifier as plain
+transcripts. Files are read sequentially: each record is limited to 8 MiB,
+the decoder history window is limited to 8 MiB, and stream chunks are 64 KiB.
+Parsing still needs transient strings and JSON objects for the current record;
+neither the complete archive nor all archives are retained in memory. The
+OpenClaw store remains read-only.
+
+`createZstdDecompress` is available in Node 22.15.0, 23.8.0 and later releases
+(the CLI requires Node >=24). On the first compressed candidate, a process-wide
+self-check confirms the streaming decoder reads a known valid frame correctly
+and rejects its truncated counterpart. The result is memoized. Missing or
+broken decoding reports `transcript_zstd_unavailable`; a decoder that accepts
+the truncated frame reports `transcript_zstd_unverified_runtime`. These cases
+keep activity unknown, as do corrupt archives on a validating decoder. No
+runtime version or name is used to decide support. Node 24.20 adds incomplete
+frame rejection; older self-managed Node runtimes retain unknown activity for
+compressed archives and now log the reason.
+`engine.user_activity_incomplete` reports a `reasons` array of `{reason, count}`
+entries, without paths, session keys or transcript content. The warning is
+emitted when the reason set changes, including across adapter recreation;
+count changes alone do not repeat it. A complete baseline clears the warning
+state so a later recurrence is reported. Partial or revision-matched scans
+cannot clear an incomplete baseline's warning state.
+
+Done: `scripts/test.sh cli tests/adapters/openclaw.test.ts src/adapters/session-source.test.ts`
+passes, including archive classification, fail-safe runtime handling and warning deduplication.
+
 The fixture's 256 MiB trial does not install a daemon heap cap. Peak RSS also
 includes native memory and buffers, and these workloads do not establish safe
 headroom for every supported daemon workload. Node 24.19 has an upstream

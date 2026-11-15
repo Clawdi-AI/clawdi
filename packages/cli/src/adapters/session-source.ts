@@ -47,6 +47,11 @@ export interface JsonlRecord {
 	length: number;
 }
 
+export type SessionSourceDecoder = (
+	chunks: AsyncIterable<Buffer>,
+	signal?: AbortSignal,
+) => AsyncIterable<Buffer>;
+
 const SESSION_SOURCE_BLOCK_REASON = `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`;
 
 export class SessionSourceBlockedError extends Error {
@@ -129,14 +134,33 @@ export class JsonlSessionSource {
 		return current;
 	}
 
-	async *records(): AsyncGenerator<JsonlRecord> {
+	private async *chunks(file: FileHandle, copy = false): AsyncGenerator<Buffer> {
+		const buffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
+		let position = 0;
+		while (position < Number(this.stat.size)) {
+			this.context?.signal.throwIfAborted();
+			const { bytesRead } = await file.read(
+				buffer,
+				0,
+				Math.min(buffer.length, Number(this.stat.size) - position),
+				position,
+			);
+			if (!bytesRead) throw new Error("session source changed while reading");
+			const bytes = buffer.subarray(0, bytesRead);
+			// A streaming decoder may retain its input after requesting the next chunk.
+			yield copy ? Buffer.from(bytes) : bytes;
+			position += bytesRead;
+		}
+	}
+
+	/** Decoded offsets are for sequential classification only, never readRecord(). */
+	async *records(decode?: SessionSourceDecoder): AsyncGenerator<JsonlRecord> {
 		this.context?.signal.throwIfAborted();
 		if (this.blockedReason) return;
 		const file = await open(this.path, "r");
 		try {
 			const before = await this.verifyIdentity(file);
 			const digest = createHash("sha256");
-			const buffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
 			let position = 0;
 			let lineOffset = 0;
 			let recordSeq = 0;
@@ -165,16 +189,11 @@ export class JsonlSessionSource {
 				return null;
 			};
 			try {
-				while (position < Number(this.stat.size)) {
+				const chunks = decode
+					? decode(this.chunks(file, true), this.context?.signal)
+					: this.chunks(file);
+				for await (const bytes of chunks) {
 					this.context?.signal.throwIfAborted();
-					const { bytesRead } = await file.read(
-						buffer,
-						0,
-						Math.min(buffer.length, Number(this.stat.size) - position),
-						position,
-					);
-					if (!bytesRead) throw new Error("session source changed while reading");
-					const bytes = buffer.subarray(0, bytesRead);
 					digest.update(bytes);
 					let start = 0;
 					for (let end = bytes.indexOf(10); end >= 0; end = bytes.indexOf(10, start)) {
@@ -190,7 +209,7 @@ export class JsonlSessionSource {
 							await setImmediate(undefined, this.context ? { signal: this.context.signal } : {});
 					}
 					append(bytes.subarray(start));
-					position += bytesRead;
+					position += bytes.length;
 				}
 				if (lineBytes) {
 					this.context?.signal.throwIfAborted();

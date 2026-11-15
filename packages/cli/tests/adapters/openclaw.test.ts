@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
 import { type SessionScanBatch, scanSessionModule } from "../../src/adapters/base";
 import { OpenClawAdapter } from "../../src/adapters/openclaw";
 import { SESSION_PROJECTION_REVISION } from "../../src/adapters/rich-event-mapping";
@@ -1220,6 +1221,151 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			lastUserInputAt: "2026-08-24T00:00:00.000Z",
 			complete: true,
 		});
+	});
+
+	it("classifies real user input in a streamed zstd deleted transcript archive", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sessionsDir = join(stateRoot, "agents", "main", "sessions");
+		rmSync(sessionsDir, { recursive: true });
+		mkdirSync(sessionsDir);
+		writeFileSync(join(sessionsDir, "sessions.json"), "{}");
+		const archivePath = join(
+			sessionsDir,
+			"orphan.jsonl.deleted.2026-09-03T00-00-00.000Z.0123456789abcdef0123456789abcdef.zst",
+		);
+		const bytes = zstdCompressSync(
+			[
+				JSON.stringify({
+					type: "message",
+					timestamp: "2026-08-23T00:00:00Z",
+					message: { role: "user", content: "archived input 中😀é".repeat(10_000) },
+				}),
+				JSON.stringify({
+					role: "user",
+					content: "[OpenClaw heartbeat poll]",
+					timestamp: "2026-09-01T00:00:00Z",
+				}),
+			].join("\n"),
+		);
+		writeFileSync(archivePath, bytes);
+		const scan = await new OpenClawAdapter(
+			undefined,
+			stateRoot,
+			async () => null,
+			async () => "verified",
+		).sessions.scan({ kind: "complete" }, new Map());
+		for await (const _batch of scan.batches) {
+		}
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-08-23T00:00:00.000Z",
+			complete: true,
+		});
+		expect(readFileSync(archivePath)).toEqual(bytes);
+	});
+
+	it("keeps corrupt zstd archives incomplete and warns only when the reason set changes", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sessionsDir = join(stateRoot, "agents", "main", "sessions");
+		rmSync(sessionsDir, { recursive: true });
+		mkdirSync(sessionsDir);
+		writeFileSync(join(sessionsDir, "sessions.json"), "{}");
+		const archivePath = join(
+			sessionsDir,
+			"orphan.jsonl.deleted.2026-09-03T00-00-00.000Z.0123456789abcdef0123456789abcdef.zst",
+		);
+		const anotherArchive = join(
+			sessionsDir,
+			"orphan.jsonl.reset.2026-09-04T00-00-00.000Z.0123456789abcdef0123456789abcdef.zst",
+		);
+		const malformedArchive = join(sessionsDir, "orphan.jsonl.reset.2026-09-05");
+		const corrupt = Buffer.from("invalid zstd frame");
+		writeFileSync(archivePath, corrupt);
+		const warning = spyOn(log, "warn").mockImplementation(() => {});
+		const scan = async () => {
+			// Reconcile can replace the adapter while the same failure persists.
+			const result = await new OpenClawAdapter(
+				undefined,
+				stateRoot,
+				async () => null,
+				async () => "verified",
+			).sessions.scan({ kind: "complete" }, new Map());
+			for await (const _batch of result.batches) {
+			}
+			return result.userActivity;
+		};
+		try {
+			expect(await scan()).toEqual({ lastUserInputAt: null, complete: false });
+			expect(warning.mock.calls).toEqual([
+				[
+					"engine.user_activity_incomplete",
+					{ reasons: [{ reason: "transcript_zstd_read_failed", count: 1 }] },
+				],
+			]);
+			await scan();
+			writeFileSync(anotherArchive, corrupt);
+			await scan();
+			expect(warning).toHaveBeenCalledTimes(1);
+			writeFileSync(malformedArchive, "{");
+			await scan();
+			expect(warning).toHaveBeenLastCalledWith("engine.user_activity_incomplete", {
+				reasons: [
+					{ reason: "transcript_record_invalid", count: 1 },
+					{ reason: "transcript_zstd_read_failed", count: 2 },
+				],
+			});
+			await scan();
+			expect(warning).toHaveBeenCalledTimes(2);
+			rmSync(archivePath);
+			rmSync(anotherArchive);
+			await scan();
+			expect(warning).toHaveBeenLastCalledWith("engine.user_activity_incomplete", {
+				reasons: [{ reason: "transcript_record_invalid", count: 1 }],
+			});
+			await scan();
+			expect(warning).toHaveBeenCalledTimes(3);
+			rmSync(malformedArchive);
+			expect((await scan())?.complete).toBe(true);
+			expect(warning).toHaveBeenCalledTimes(3);
+			writeFileSync(archivePath, corrupt);
+			await scan();
+			expect(warning).toHaveBeenCalledTimes(4);
+		} finally {
+			warning.mockRestore();
+		}
+	});
+
+	it("does not count archives on a decoder that cannot reject incomplete frames", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sessionsDir = join(stateRoot, "agents", "main", "sessions");
+		rmSync(sessionsDir, { recursive: true });
+		mkdirSync(sessionsDir);
+		writeFileSync(join(sessionsDir, "sessions.json"), "{}");
+		writeFileSync(
+			join(sessionsDir, "orphan.jsonl.deleted.2026-09-03T00-00-00.000Z.zst"),
+			zstdCompressSync(
+				JSON.stringify({ role: "user", content: "input", timestamp: "2026-08-23T00:00:00Z" }),
+			),
+		);
+		const warning = spyOn(log, "warn").mockImplementation(() => {});
+		try {
+			const scan = await new OpenClawAdapter(
+				undefined,
+				stateRoot,
+				async () => null,
+				async () => "unverified",
+			).sessions.scan({ kind: "complete" }, new Map());
+			for await (const _batch of scan.batches) {
+			}
+			expect(scan.userActivity).toEqual({ lastUserInputAt: null, complete: false });
+			expect(warning.mock.calls).toEqual([
+				[
+					"engine.user_activity_incomplete",
+					{ reasons: [{ reason: "transcript_zstd_unverified_runtime", count: 1 }] },
+				],
+			]);
+		} finally {
+			warning.mockRestore();
+		}
 	});
 
 	it("keeps a trustworthy OpenClaw timestamp while an archive tail is incomplete", async () => {
