@@ -5376,6 +5376,24 @@ export interface operations {
                     "application/json": components["schemas"]["V2CheckoutResponse"];
                 };
             };
+            /** @description An ineligible Wallet upgrade target returns a typed problem with code upgrade_target_unavailable before dispatch placement. Other invalid requests retain the existing detail envelope. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description An expired Wallet quote returns a typed problem with code wallet_quote_expired before dispatch placement. Other conflicts retain the existing detail envelope. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
