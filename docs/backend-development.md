@@ -101,6 +101,20 @@ message-page, and Markdown export reads load authorized metadata first and
 release their database transaction before fetching snapshot bytes or event
 chunks. Search navigation reacquires a short transaction after storage.
 
+Snapshot search documents use the stable `snapshot` revision and diff by
+message position, chunk index, role, and content checksum. Re-uploads preserve
+unchanged rows; the published search revision remains `snapshot:<content_hash>`
+and commits with the content metadata and projection. Readers accept both the
+stable document revision and legacy hash-qualified rows, which convert on the
+next upload. Navigation checks the live published revision against the loaded
+content in the same SQL statement. During a rolling deploy, older readers may
+temporarily miss converted snapshots; older writers remain readable by the new
+backend. No migration or client update is required.
+
+Done: `scripts/test.sh backend tests/test_session_search.py` exits 0 using
+throwaway PostgreSQL, including row preservation, legacy conversion, rollback,
+cancellation, and navigation fencing checks.
+
 All S3 operations, including body reads and sweep listings/deletes, have a
 30-second caller deadline including admission. Botocore uses a five-second
 connect timeout, ten-second read timeout, and standard retries with two total

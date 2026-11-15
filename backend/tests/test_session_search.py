@@ -17,7 +17,7 @@ from uuid import UUID
 
 import httpx
 import pytest
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -32,9 +32,11 @@ from app.models.session import (
 )
 from app.routes import search as search_routes
 from app.services.session_search import (
+    SNAPSHOT_DOCUMENT_REVISION,
     SearchableSessionMessage,
     rebuild_session_search_index,
     replace_snapshot_search_index,
+    session_message_search_navigation,
 )
 from tests.db_lock_helpers import wait_for_lock_wait
 
@@ -131,6 +133,32 @@ async def _push_session(
 
     listing = (await client.get(f"/v1/sessions?q={local_session_id}")).json()
     return next(s["id"] for s in listing["items"] if s["local_session_id"] == local_session_id)
+
+
+async def _snapshot_search_documents(
+    db: AsyncSession,
+    session_id: str,
+) -> dict[tuple[int, int], tuple[str, str, str, UUID | None, str, str]]:
+    rows = (
+        await db.execute(
+            select(
+                SessionMessageSearch.position,
+                SessionMessageSearch.chunk_index,
+                SessionMessageSearch.role,
+                SessionMessageSearch.content,
+                SessionMessageSearch.content_revision,
+                SessionMessageSearch.generation_id,
+                text("xmin::text"),
+                text("ctid::text"),
+            ).where(SessionMessageSearch.session_id == UUID(session_id))
+        )
+    ).all()
+    documents = {
+        (position, chunk_index): (role, content, revision, generation_id, xmin, ctid)
+        for position, chunk_index, role, content, revision, generation_id, xmin, ctid in rows
+    }
+    assert len(documents) == len(rows)
+    return documents
 
 
 @pytest.mark.asyncio
@@ -419,6 +447,231 @@ async def test_snapshot_message_search_tracks_current_content_and_escapes_wildca
 
 
 @pytest.mark.asyncio
+async def test_snapshot_search_append_preserves_prefix_documents(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "incremental-snapshot-append"
+    long_content = "prefixneedle 界🙂 " + "x" * SESSION_SEARCH_CHUNK_MAX_CHARACTERS
+    original = [
+        {"role": "system", "content": "not indexed"},
+        {"role": "user", "content": long_content},
+        {"role": "assistant", "content": "unchanged response"},
+    ]
+    session_id = await _push_session(
+        client, env_id, local_session_id=local_id, messages=original, upload=True
+    )
+    before = await _snapshot_search_documents(db_session, session_id)
+    assert set(before) == {(1, 0), (1, 1), (2, 0)}
+    assert all(row[2:4] == (SNAPSHOT_DOCUMENT_REVISION, None) for row in before.values())
+
+    appended = [*original, {"role": "user", "content": "newtailneedle"}]
+    await _push_session(client, env_id, local_session_id=local_id, messages=appended, upload=True)
+    after = await _snapshot_search_documents(db_session, session_id)
+    assert set(after) - set(before) == {(3, 0)}
+    assert all(after[key] == row for key, row in before.items())
+    search = (await client.get("/v1/sessions", params={"q": "newtailneedle"})).json()
+    assert [item["id"] for item in search["items"]] == [session_id]
+    assert search["items"][0]["search_match"]["anchor"] == {
+        "kind": "snapshot_offset",
+        "position": 3,
+        "revision": "snapshot:" + hashlib.sha256(json.dumps(appended).encode()).hexdigest(),
+    }
+
+    await _push_session(client, env_id, local_session_id=local_id, messages=appended, upload=True)
+    assert await _snapshot_search_documents(db_session, session_id) == after
+
+    # Extending one oversized message preserves its complete prefix chunk;
+    # its partial last chunk grows and later chunks get new indices.
+    extended = [
+        original[0],
+        {"role": "user", "content": long_content + " y" * SESSION_SEARCH_CHUNK_MAX_CHARACTERS},
+        *appended[2:],
+    ]
+    await _push_session(client, env_id, local_session_id=local_id, messages=extended, upload=True)
+    grown = await _snapshot_search_documents(db_session, session_id)
+    assert all(grown[key] == after[key] for key in ((1, 0), (2, 0), (3, 0)))
+    assert grown[(1, 1)] != after[(1, 1)]
+    assert set(grown) - set(after) == {(1, 2), (1, 3)}
+
+
+@pytest.mark.asyncio
+async def test_snapshot_search_edit_and_truncation_change_only_affected_documents(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "incremental-snapshot-edit"
+    prefix = "m" * SESSION_SEARCH_CHUNK_MAX_CHARACTERS
+    original = [
+        {"role": "user", "content": "prefixneedle stays"},
+        {"role": "user", "content": prefix + " oldmiddle"},
+        {"role": "user", "content": "rolechangeneedle"},
+        {"role": "assistant", "content": "removedtailneedle"},
+    ]
+    session_id = await _push_session(
+        client, env_id, local_session_id=local_id, messages=original, upload=True
+    )
+    before = await _snapshot_search_documents(db_session, session_id)
+    edited = [
+        original[0],
+        {"role": "user", "content": prefix + " newmiddle"},
+        {"role": "assistant", "content": original[2]["content"]},
+        original[3],
+    ]
+    await _push_session(client, env_id, local_session_id=local_id, messages=edited, upload=True)
+    after = await _snapshot_search_documents(db_session, session_id)
+    assert set(after) == set(before)
+    assert all(after[key] == before[key] for key in ((0, 0), (1, 0), (3, 0)))
+    assert all(after[key] != before[key] for key in ((1, 1), (2, 0)))
+    assert after[(2, 0)][0] == "assistant"
+    current = (await client.get("/v1/sessions", params={"q": "newmiddle"})).json()
+    assert [item["id"] for item in current["items"]] == [session_id]
+    assert current["items"][0]["search_match"]["anchor"]["position"] == 1
+    assert (await client.get("/v1/sessions", params={"q": "oldmiddle"})).json()["items"] == []
+
+    truncated = [original[0], {"role": "user", "content": "newmiddle"}]
+    await _push_session(client, env_id, local_session_id=local_id, messages=truncated, upload=True)
+    remaining = await _snapshot_search_documents(db_session, session_id)
+    assert set(remaining) == {(0, 0), (1, 0)}
+    assert remaining[(0, 0)] == after[(0, 0)]
+    assert remaining[(1, 0)][1] == "newmiddle"
+    for query in ("oldmiddle", "rolechangeneedle", "removedtailneedle"):
+        assert (await client.get("/v1/sessions", params={"q": query})).json()["items"] == []
+        page = await client.get(
+            f"/v1/sessions/{session_id}/messages", params={"search_query": query}
+        )
+        assert page.status_code == 200, page.text
+        assert page.json().get("search_navigation") is None
+    navigation = await client.get(
+        f"/v1/sessions/{session_id}/messages", params={"search_query": "newmiddle"}
+    )
+    assert navigation.status_code == 200, navigation.text
+    assert navigation.json()["search_navigation"]["total"] == 1
+    assert navigation.json()["search_navigation"]["current"]["position"] == 1
+
+    empty = await client.post(
+        f"/v1/sessions/{local_id}/upload",
+        files={"file": (f"{local_id}.json", b"[]", "application/json")},
+    )
+    assert empty.status_code == 200, empty.text
+    assert await _snapshot_search_documents(db_session, session_id) == {}
+    assert (await client.get("/v1/sessions", params={"q": "newmiddle"})).json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_snapshot_search_is_readable_and_converted_on_upload(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "legacy-snapshot-projection"
+    messages = [
+        {"role": "user", "content": "legacyneedle first"},
+        {"role": "assistant", "content": "legacyneedle second"},
+    ]
+    session_id = await _push_session(
+        client, env_id, local_session_id=local_id, messages=messages, upload=True
+    )
+    revision = "snapshot:" + hashlib.sha256(json.dumps(messages).encode()).hexdigest()
+    await db_session.execute(
+        update(SessionMessageSearch)
+        .where(SessionMessageSearch.session_id == UUID(session_id))
+        .values(content_revision=revision)
+    )
+    db_session.add(
+        SessionMessageSearch(
+            user_id=(
+                await db_session.execute(
+                    select(Session.user_id).where(Session.id == UUID(session_id))
+                )
+            ).scalar_one(),
+            session_id=UUID(session_id),
+            content_revision="snapshot:" + "0" * 64,
+            position=0,
+            role="user",
+            content="stalelegacyneedle",
+        )
+    )
+    await db_session.commit()
+
+    for converted in (False, True):
+        if converted:
+            await _push_session(
+                client, env_id, local_session_id=local_id, messages=messages, upload=True
+            )
+            documents = await _snapshot_search_documents(db_session, session_id)
+            assert set(documents) == {(0, 0), (1, 0)}
+            assert all(row[2] == SNAPSHOT_DOCUMENT_REVISION for row in documents.values())
+        search = (await client.get("/v1/sessions", params={"q": "legacyneedle"})).json()
+        assert [item["id"] for item in search["items"]] == [session_id]
+        assert search["items"][0]["search_match"]["anchor"]["revision"] == revision
+        global_search = (await client.get("/v1/search", params={"q": "legacyneedle"})).json()
+        assert [hit["id"] for hit in global_search["results"] if hit["type"] == "session"] == [
+            session_id
+        ]
+        navigation = await client.get(
+            f"/v1/sessions/{session_id}/messages", params={"search_query": "legacyneedle"}
+        )
+        assert navigation.status_code == 200, navigation.text
+        assert navigation.json()["search_navigation"]["total"] == 2
+        assert navigation.json()["search_navigation"]["next"] == {
+            "kind": "snapshot_offset",
+            "position": 1,
+            "revision": revision,
+        }
+        assert (await client.get("/v1/sessions", params={"q": "stalelegacyneedle"})).json()[
+            "items"
+        ] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_snapshot_search_navigation_rejects_a_concurrently_replaced_revision(
+    client: httpx.AsyncClient,
+    engine,
+) -> None:
+    env_id = await _register_env(client)
+    local_id = "snapshot-navigation-race"
+    session_id = await _push_session(
+        client,
+        env_id,
+        local_session_id=local_id,
+        messages=[{"role": "user", "content": "original unrelated content"}],
+        upload=True,
+    )
+    readers = async_sessionmaker(engine, expire_on_commit=False)
+    async with readers() as reader:
+        stale = await reader.get(Session, UUID(session_id))
+        assert stale is not None
+        # Match the route's transaction release before its object-store read.
+        await reader.close()
+        await _push_session(
+            client,
+            env_id,
+            local_session_id=local_id,
+            messages=[{"role": "assistant", "content": "concurrentnavigationneedle"}],
+            upload=True,
+        )
+        assert (
+            await session_message_search_navigation(
+                reader, stale, query="concurrentnavigationneedle"
+            )
+            is None
+        )
+        current = await reader.get(Session, UUID(session_id))
+        assert current is not None
+        assert current.search_index_revision != stale.search_index_revision
+        navigation = await session_message_search_navigation(
+            reader, current, query="concurrentnavigationneedle"
+        )
+        assert navigation is not None
+        assert navigation.current_position == 0
+        assert navigation.total == 1
+
+
+@pytest.mark.asyncio
 async def test_snapshot_search_batches_preserve_rows_and_rollback_together(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -440,13 +693,21 @@ async def test_snapshot_search_batches_preserve_rows_and_rollback_together(
     await replace_snapshot_search_index(db_session, session, original_hash, messages)
     await db_session.commit()
 
+    replacement = [
+        SearchableSessionMessage(
+            position=message.position,
+            role=message.role,
+            content=f"replacement message {message.position}",
+        )
+        for message in messages
+    ]
     # A duplicate in the last batch must roll back both the earlier inserts
-    # and deletion of the previously active revision.
+    # and deletion of changed documents from the active revision.
     with pytest.raises(IntegrityError):
         async with db_session.begin_nested():
             session.content_hash = replacement_hash
             await replace_snapshot_search_index(
-                db_session, session, replacement_hash, [*messages, messages[0]]
+                db_session, session, replacement_hash, [*replacement, replacement[0]]
             )
     await db_session.refresh(session)
     assert session.content_hash == original_hash
@@ -466,7 +727,7 @@ async def test_snapshot_search_batches_preserve_rows_and_rollback_together(
         )
     ).all()
     assert rows == [
-        (message.position, message.role, message.content, 0, None, session.search_index_revision)
+        (message.position, message.role, message.content, 0, None, SNAPSHOT_DOCUMENT_REVISION)
         for message in messages
     ]
 
@@ -483,6 +744,7 @@ async def test_cancelled_snapshot_search_insert_restores_committed_revision(
     session = await db_session.get(Session, session_id)
     assert session is not None
     original = [SearchableSessionMessage(position=0, role="user", content="committed search")]
+    replacement = [SearchableSessionMessage(position=0, role="user", content="replacement search")]
     original_hash, replacement_hash = "a" * 64, "b" * 64
     session.content_hash = original_hash
     await replace_snapshot_search_index(db_session, session, session.content_hash, original)
@@ -502,7 +764,7 @@ async def test_cancelled_snapshot_search_insert_restores_committed_revision(
             assert current is not None
             writer_pid = await writer.scalar(text("SELECT pg_backend_pid()"))
             started.set()
-            await replace_snapshot_search_index(writer, current, replacement_hash, original)
+            await replace_snapshot_search_index(writer, current, replacement_hash, replacement)
             current.content_hash = replacement_hash
             await writer.commit()
 
@@ -556,7 +818,7 @@ async def test_cancelled_snapshot_search_insert_restores_committed_revision(
                     ).where(SessionMessageSearch.session_id == session_id)
                 )
             ).all()
-            assert documents == [("committed search", f"snapshot:{original_hash}")]
+            assert documents == [("committed search", SNAPSHOT_DOCUMENT_REVISION)]
         async with writer_engine.connect() as connection:
             assert await connection.scalar(text("SELECT 1")) == 1
         assert pool.checkedout() == 0
