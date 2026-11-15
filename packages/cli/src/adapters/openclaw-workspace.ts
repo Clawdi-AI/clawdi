@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute } from "node:path";
 import { spawnRuntimeUserCommand } from "../runtime/runtime-user-command";
@@ -10,6 +11,7 @@ import {
 
 const WORKSPACE_RESOLUTION_ERROR =
 	"OpenClaw workspace resolution requires `openclaw agents list --json`";
+const pollWorkspaces = new WeakMap<object, Map<string, Promise<string>>>();
 
 export interface OpenClawAgentWorkspace {
 	id: string;
@@ -66,7 +68,38 @@ export function resolveOpenClawAgentWorkspace(agentId = openClawAgentId()): stri
 export async function resolveOpenClawAgentWorkspaceAsync(
 	agentId = openClawAgentId(),
 	signal?: AbortSignal,
+	pollCycle?: object,
 ): Promise<string> {
+	signal?.throwIfAborted();
+	if (pollCycle) {
+		let workspaces = pollWorkspaces.get(pollCycle);
+		if (!workspaces) {
+			workspaces = new Map();
+			pollWorkspaces.set(pollCycle, workspaces);
+		}
+		const cached = workspaces.get(agentId);
+		if (cached) {
+			const workspace = await cached;
+			signal?.throwIfAborted();
+			try {
+				// Re-resolve a disappeared or unreadable workspace before polling its Skills.
+				await readdir(workspace);
+				signal?.throwIfAborted();
+				return workspace;
+			} catch {
+				signal?.throwIfAborted();
+				workspaces.delete(agentId);
+			}
+		}
+		const reading = resolveOpenClawAgentWorkspaceAsync(agentId, signal);
+		workspaces.set(agentId, reading);
+		try {
+			return await reading;
+		} catch (error) {
+			if (workspaces.get(agentId) === reading) workspaces.delete(agentId);
+			throw error;
+		}
+	}
 	let stdout: string;
 	try {
 		stdout = await runOpenClawCommand(["agents", "list", "--json"], {

@@ -38,6 +38,7 @@ function installRosterCommand(status = 0): string {
 		command,
 		`#!/bin/sh
 test "$*" = "agents list --json" || exit 1
+printf '.\\n' >> "${join(root, "calls")}"
 cat "${roster}"
 exit ${status}
 `,
@@ -46,6 +47,100 @@ exit ${status}
 	process.env.PATH = `${bin}:${originalPath ?? ""}`;
 	return roster;
 }
+
+function rosterCalls(): number {
+	return readFileSync(join(root, "calls"), "utf8").trim().split("\n").length;
+}
+
+test("Skills polls reuse a workspace within a reconcile cycle while reading current Skill keys", async () => {
+	const roster = installRosterCommand();
+	const workspace = join(root, "workspace");
+	mkdirSync(join(workspace, "skills", "demo"), { recursive: true });
+	writeFileSync(join(workspace, "skills", "demo", "SKILL.md"), "# Demo\n");
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+	const skills = new OpenClawAdapter().skills;
+	const context = { signal: new AbortController().signal, skillPollCycle: {} };
+	expect(await skills.listKeys(context)).toEqual(["demo"]);
+	for (let poll = 0; poll < 3; poll++) expect(await skills.listKeys(context)).toEqual(["demo"]);
+	mkdirSync(join(workspace, "skills", "new"));
+	writeFileSync(join(workspace, "skills", "new", "SKILL.md"), "# New\n");
+	expect((await skills.listKeys(context)).sort()).toEqual(["demo", "new"]);
+	expect(rosterCalls()).toBe(1);
+
+	const nextWorkspace = join(root, "next-workspace");
+	mkdirSync(nextWorkspace);
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+	const nextCycle = { ...context, skillPollCycle: {} };
+	expect(await skills.listKeys(nextCycle)).toEqual([]);
+	expect(await skills.listKeys(nextCycle)).toEqual([]);
+	expect(rosterCalls()).toBe(2);
+});
+
+test("a failed polling resolution is retried on the next poll", async () => {
+	const roster = installRosterCommand(1);
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace: root }]));
+	const skills = new OpenClawAdapter().skills;
+	const context = { signal: new AbortController().signal, skillPollCycle: {} };
+	await expect(skills.listKeys(context)).rejects.toThrow("OpenClaw workspace resolution requires");
+	expect(rosterCalls()).toBe(1);
+	const command = join(root, "bin", "openclaw");
+	writeFileSync(command, readFileSync(command, "utf8").replace(/\nexit 1\n$/, "\nexit 0\n"));
+	expect(await skills.listKeys(context)).toEqual([]);
+	expect(await skills.listKeys(context)).toEqual([]);
+	expect(rosterCalls()).toBe(2);
+});
+
+test.each(["missing", "unreadable", "not a directory"])(
+	"a %s cached workspace triggers fresh resolution",
+	async (condition) => {
+		const roster = installRosterCommand();
+		const workspace = join(root, "workspace");
+		const nextWorkspace = join(root, "next-workspace");
+		mkdirSync(workspace);
+		mkdirSync(nextWorkspace);
+		writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+		const cycle = {};
+		expect(await resolveOpenClawAgentWorkspaceAsync("main", undefined, cycle)).toBe(workspace);
+		if (condition === "unreadable") chmodSync(workspace, 0o000);
+		else rmSync(workspace, { recursive: true });
+		if (condition === "not a directory") writeFileSync(workspace, "unreadable as a directory");
+		writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+		try {
+			expect(await resolveOpenClawAgentWorkspaceAsync("main", undefined, cycle)).toBe(
+				nextWorkspace,
+			);
+			expect(await resolveOpenClawAgentWorkspaceAsync("main", undefined, cycle)).toBe(
+				nextWorkspace,
+			);
+			expect(rosterCalls()).toBe(2);
+		} finally {
+			if (condition === "unreadable") chmodSync(workspace, 0o755);
+		}
+	},
+);
+
+test("one-shot Skills reads always resolve fresh even after a daemon poll", async () => {
+	const roster = installRosterCommand();
+	const workspace = join(root, "workspace");
+	const nextWorkspace = join(root, "next-workspace");
+	for (const path of [workspace, nextWorkspace]) {
+		mkdirSync(join(path, "skills", "demo"), { recursive: true });
+		writeFileSync(join(path, "skills", "demo", "SKILL.md"), "# Demo\n");
+	}
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+	const skills = new OpenClawAdapter().skills;
+	const context = { signal: new AbortController().signal, skillPollCycle: {} };
+	expect(await skills.listKeys(context)).toEqual(["demo"]);
+	rmSync(join(workspace, "skills"), { recursive: true });
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+	expect(await skills.listKeys(context)).toEqual([]);
+	expect(await skills.listKeys()).toEqual(["demo"]);
+	expect(await skills.listKeys()).toEqual(["demo"]);
+	expect((await skills.collect(context)).map((skill) => skill.filePath)).toEqual([
+		join(nextWorkspace, "skills", "demo", "SKILL.md"),
+	]);
+	expect(rosterCalls()).toBe(4);
+});
 
 test("resolves Skills from the official agent workspace roster", async () => {
 	const roster = installRosterCommand();

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -12,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
+import { OpenClawAdapter } from "../adapters/openclaw";
 import { adapterRegistry } from "../adapters/registry";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
 import { setAuth } from "../lib/config";
@@ -1948,6 +1950,102 @@ describe("daemon startup Agent lookup", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
+
+	it("reuses the OpenClaw polling workspace until the daemon's next reconcile boundary", async () => {
+		await withStartupCase(
+			async (request) => {
+				const path = new URL(request.url).pathname;
+				if (path === "/v1/agents/agent-isolated")
+					return Response.json({ id: "agent-isolated", default_project_id: "project-1" });
+				if (path === "/v1/skills")
+					return Response.json(
+						{ items: [], total: 0, page: 1, page_size: 200 },
+						{ headers: { ETag: '"1:project-1"' } },
+					);
+				if (path === "/v1/sync/events")
+					return new Response(": ready\n\n", {
+						headers: { "content-type": "text/event-stream" },
+					});
+				if (path.endsWith("/sync-heartbeat")) return new Response(null, { status: 204 });
+				return new Response(`unexpected ${path}`, { status: 500 });
+			},
+			async ({ abortController, root }) => {
+				const originalEnv = { ...process.env };
+				const workspace = join(root, "workspace");
+				const bin = join(root, "bin");
+				mkdirSync(join(workspace, "skills"), { recursive: true });
+				mkdirSync(bin);
+				const command = join(bin, "openclaw");
+				writeFileSync(
+					command,
+					`#!/bin/sh\ntest "$*" = "agents list --json" || exit 1\nprintf '%s' '${JSON.stringify([{ id: "main", workspace }])}'\n`,
+				);
+				chmodSync(command, 0o755);
+				process.env.HOME = root;
+				process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+				process.env.CLAWDI_RUNTIME_MODE = "hosted";
+				delete process.env.CLAWDI_RUNTIME_USER;
+				delete process.env.OPENCLAW_AGENT_ID;
+				const skills = new OpenClawAdapter().skills;
+				const listKeys = skills.listKeys;
+				const cycles = new Map<object, number>();
+				const pollReads = spyOn(skills, "listKeys").mockImplementation(async (context) => {
+					const cycle = context?.skillPollCycle;
+					if (cycle) cycles.set(cycle, (cycles.get(cycle) ?? 0) + 1);
+					const result = await listKeys(context);
+					if (cycles.size === 2 && cycle && (cycles.get(cycle) ?? 0) >= 3) abortController.abort();
+					return result;
+				});
+				const originalTimeout = globalThis.setTimeout;
+				function fastTimeout(handler: TimerHandler, timeout?: number, ...args: unknown[]): number;
+				function fastTimeout<TArgs extends unknown[]>(
+					handler: (...args: TArgs) => void,
+					timeout?: number,
+					...args: TArgs
+				): ReturnType<typeof setTimeout>;
+				function fastTimeout(
+					handler: TimerHandler,
+					timeout?: number,
+					...args: unknown[]
+				): number | ReturnType<typeof setTimeout> {
+					if (typeof handler !== "function") throw new Error("unexpected string timer");
+					const delay =
+						timeout === 30_000
+							? 2
+							: timeout !== undefined && timeout >= 240_000 && timeout <= 360_000
+								? 100
+								: timeout;
+					return originalTimeout(() => handler(...args), delay);
+				}
+				const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+					Object.assign(fastTimeout, { __promisify__: originalTimeout.__promisify__ }),
+				);
+				const deadline = originalTimeout(() => abortController.abort(), 5000);
+				try {
+					await runSyncEngine({
+						environmentId: "agent-isolated",
+						adapter: {
+							agentType: "openclaw",
+							detect: async () => true,
+							getVersion: async () => null,
+							skills,
+						},
+						abort: abortController.signal,
+						abortController,
+						forcePollWatcher: true,
+					});
+					expect(cycles.size).toBe(2);
+					for (const reads of cycles.values()) expect(reads).toBeGreaterThanOrEqual(3);
+				} finally {
+					abortController.abort();
+					clearTimeout(deadline);
+					timers.mockRestore();
+					pollReads.mockRestore();
+					process.env = originalEnv;
+				}
+			},
+		);
+	});
 
 	it.each([false, true])(
 		"reports drop deltas after failed heartbeats with bounded health text (long error=%s)",

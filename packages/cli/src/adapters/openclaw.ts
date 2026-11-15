@@ -1181,7 +1181,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			// Collection and reconciliation use the same default agent workspace.
 			const root = join(
-				await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal),
+				await resolveOpenClawAgentWorkspaceAsync(
+					agentId(),
+					context?.signal,
+					context?.skillPollCycle,
+				),
 				"skills",
 			);
 			return enumerateSkillDirs(root).map(({ key }) => key);

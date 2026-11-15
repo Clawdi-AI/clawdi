@@ -188,6 +188,8 @@ export interface SyncReadContext {
 	streaming?: boolean;
 	/** Shared inventory lifetime for one multi-profile scan. */
 	profileScanToken?: object;
+	/** Daemon-only workspace reuse for read-only Skills polls until the next reconcile. */
+	skillPollCycle?: object;
 }
 
 export interface SessionModule {

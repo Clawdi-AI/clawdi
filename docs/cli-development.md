@@ -285,6 +285,17 @@ complete discovery can mark a missing profile removed. OpenClaw shares one
 official all-agents session inventory per scan and attributes only newly
 observed IDs.
 
+OpenClaw Skills polling reuses its last successful workspace resolution within
+the daemon's existing five-minute reconcile cycle (with one-minute jitter).
+Each poll still enumerates current Skill directories. Reconcile starts a new
+workspace lifetime; a missing or unreadable reused workspace also forces a fresh
+official roster read. Failed reads retry on the next poll. This applies to both
+hosted and self-managed daemons using forced polling or the filesystem-watch
+fallback. One-shot commands, profile discovery, authoritative Skill projection
+and Project Skill installation continue resolving fresh. A workspace move may
+wait until the next reconcile; a polling snapshot never authorizes Cloud deletion
+without the existing fresh projection scan.
+
 The CLI release must wait for the web profile list and filter PR. The backend
 expand release retains the legacy Session unique constraint; repeated local IDs
 across profiles require the later contract release and are rejected meanwhile.

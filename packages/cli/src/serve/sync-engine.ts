@@ -747,6 +747,12 @@ async function prepareSkillSync(
 
 	const rootDir = skills.rootDir();
 	log.info("engine.skills_start", { root_dir: rootDir });
+	let skillPollCycle = {};
+	let skillPolling = false;
+	const listPolledSkillKeys = () => {
+		skillPolling = true;
+		return skills.listKeys({ signal: opts.abort, skillPollCycle });
+	};
 
 	// Fetch this Agent's default_project_id at boot. Projection requests are
 	// Agent-scoped, while the durable claim and absence report are additionally
@@ -1058,7 +1064,7 @@ async function prepareSkillSync(
 					// without its own SKILL.md) and any nested edit
 					// either reports the wrong key OR is missed entirely
 					// because the dir's own mtime didn't change.
-					listSkillKeys: () => skills.listKeys({ signal: opts.abort }),
+					listSkillKeys: listPolledSkillKeys,
 					onInventoryChanged: onSkillInventoryChanged,
 				}),
 
@@ -1073,7 +1079,11 @@ async function prepareSkillSync(
 					while (!opts.abort.aborted) {
 						await sleep(reconcileDelayMs(), opts.abort);
 						if (opts.abort.aborted) return;
+						skillPollCycle = {};
 						try {
+							if (skillPolling && opts.adapter.agentType === "openclaw") {
+								await listPolledSkillKeys();
+							}
 							await reconcileProjectSkills();
 							syncHealth.clear("projection", "project_skills");
 							await reconcileAgentSkillProjection({
