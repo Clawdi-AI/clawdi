@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# A parallel Bun command can leave CI's shared stdout pipe nonblocking.
+# Reopening a Linux pipe gives this shell independent, blocking status flags;
+# leave regular files (and their offsets) and platforms without /proc alone.
+if [[ "$OSTYPE" == linux* && -p /proc/self/fd/1 ]]; then
+	exec > /proc/self/fd/1
+fi
+
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 package_root="$(cd -- "$script_dir/.." && pwd)"
 cd "$package_root"
