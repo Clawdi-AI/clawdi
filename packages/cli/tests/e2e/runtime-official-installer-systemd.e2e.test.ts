@@ -132,7 +132,9 @@ for (const [index, target] of targets.entries()) {
       );
     }
   } else if (action === "inspect") {
-    const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
+    const store = typeof sdk.ensureAuthProfileStoreForLocalUpdateAsync === "function"
+      ? await sdk.ensureAuthProfileStoreForLocalUpdateAsync(agentDir)
+      : sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
     observations.push({
       profiles: store.profiles,
       order: store.order,

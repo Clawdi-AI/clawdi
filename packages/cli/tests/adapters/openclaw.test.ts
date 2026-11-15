@@ -735,7 +735,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		},
 	);
 
-	it("reads SQLite sessions through OpenClaw's public transcript SDK", async () => {
+	it.each([false, true])("reads SQLite transcripts (config prep: %s)", async (prepareConfig) => {
 		const stateRoot = join(tmpHome, ".openclaw");
 		const sqlitePath = join(stateRoot, "agents", "main", "agent", "openclaw-agent.sqlite");
 		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
@@ -750,12 +750,27 @@ describe("OpenClawAdapter.collectSessions", () => {
 				type: "module",
 				exports: {
 					"./plugin-sdk/session-transcript-runtime": "./session-transcript-runtime.js",
+					...(prepareConfig
+						? { "./plugin-sdk/runtime-config-snapshot": "./runtime-config-snapshot.js" }
+						: {}),
 				},
 			}),
 		);
+		if (prepareConfig) {
+			writeFileSync(
+				join(packageRoot, "runtime-config-snapshot.js"),
+				`export const captureRuntimeConfigAsyncReader = () => async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  globalThis.runtimeConfigPrepared = true;
+  return {};
+};
+`,
+			);
+		}
 		writeFileSync(
 			join(packageRoot, "session-transcript-runtime.js"),
 			`export async function readVisibleSessionTranscriptMessageEntries() {
+  if (${prepareConfig} && !globalThis.runtimeConfigPrepared) throw new Error("runtime config is not prepared");
   console.log("[state/agent-db] agent database integrity gate");
   return [
     { entryId: "sdk-user", createdAt: "2026-04-15T10:00:00.000Z", message: { role: "user", content: "SDK question" } },

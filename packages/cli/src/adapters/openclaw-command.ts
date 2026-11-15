@@ -46,10 +46,21 @@ export function runOpenClawSdkCommand(
 ): Promise<string> {
 	const source = `
 		import { writeFileSync } from 'node:fs';
+		import { createRequire } from 'node:module';
 		import { pathToFileURL } from 'node:url';
 		const sdk = await import(pathToFileURL(process.argv[1]).href);
 		const read = sdk.readVisibleSessionTranscriptMessageEntries;
 		if (typeof read !== 'function') process.exit(2);
+		let runtimeConfigPath;
+		try {
+			runtimeConfigPath = createRequire(pathToFileURL(process.argv[1])).resolve('openclaw/plugin-sdk/runtime-config-snapshot');
+		} catch (error) {
+			if (error.code !== 'ERR_PACKAGE_PATH_NOT_EXPORTED' && error.code !== 'MODULE_NOT_FOUND') throw error;
+		}
+		if (runtimeConfigPath) {
+			const { captureRuntimeConfigAsyncReader } = await import(pathToFileURL(runtimeConfigPath).href);
+			if (typeof captureRuntimeConfigAsyncReader === 'function') await captureRuntimeConfigAsyncReader()();
+		}
 		const entries = await read(JSON.parse(process.argv[2]));
 		writeFileSync(3, JSON.stringify(entries));
 	`;
@@ -61,7 +72,7 @@ export function runOpenClawSdkCommand(
 				const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
 				const home = process.env.HOME ?? homedir();
 				const child = resolveRuntimeUserCommand(
-					runtimeUser && runtimeUser !== "root" ? process.execPath : "node",
+					"node",
 					[
 						"--max-old-space-size=256",
 						"--input-type=module",
