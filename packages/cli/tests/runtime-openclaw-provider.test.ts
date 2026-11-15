@@ -248,7 +248,7 @@ describe("runtime manifest datasource", () => {
 		expect(createOpenClawHostedContext(loaded.manifest, home).managedApiKeyProjection).toBe(false);
 	});
 
-	it("removes reserved OpenClaw provider auth from every store only for managed env projection", () => {
+	it.each([false, true])("cleans managed OpenClaw auth (async: %s)", (asyncLocalUpdate) => {
 		const home = join(root, "model-switch", "home", "clawdi");
 		const state = join(root, "model-switch", "var", "lib", "clawdi");
 		const run = join(root, "model-switch", "run", "clawdi");
@@ -310,6 +310,7 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
 			join(root, "model-switch", "provider-auth"),
 			providerAuthCalls,
+			{ asyncLocalUpdate },
 		);
 
 		const activeStore = join(activeAgentDir, "openclaw-agent.sqlite");
@@ -1324,7 +1325,7 @@ describe("runtime manifest datasource", () => {
 		expect(existsSync(ledgerPath)).toBe(false);
 	}, 30_000);
 
-	it("uses OpenClaw provider-auth SQLite ownership without reviving logout", () => {
+	it.each([false, true])("reconciles OpenClaw OAuth (async: %s)", (asyncLocalUpdate) => {
 		const home = join(root, "oauth-openclaw", "home", "clawdi");
 		const state = join(root, "oauth-openclaw", "var", "lib", "clawdi");
 		const run = join(root, "oauth-openclaw", "run", "clawdi");
@@ -1338,6 +1339,7 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
 			join(root, "oauth-openclaw"),
 			sdkCalls,
+			{ asyncLocalUpdate },
 		);
 		seedOpenClawBinary(home);
 		const paths = getRuntimePaths();

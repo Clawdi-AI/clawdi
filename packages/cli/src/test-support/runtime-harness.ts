@@ -1868,7 +1868,11 @@ export function writeHermesDashboardPython(home: string, compatible: boolean): s
 	return python;
 }
 
-export function writeFakeOpenClawProviderAuthSdk(directory: string, callsPath: string): string {
+export function writeFakeOpenClawProviderAuthSdk(
+	directory: string,
+	callsPath: string,
+	options: { asyncLocalUpdate?: boolean } = {},
+): string {
 	const sdkPath = join(directory, "fake-openclaw-provider-auth.mjs");
 	mkdirSync(directory, { recursive: true });
 	writeFileSync(
@@ -1892,8 +1896,15 @@ const readStore = (agentDir) => {
     : { profiles: {}, order: {}, lastGood: {}, usageStats: {} };
 };
 export function ensureAuthProfileStoreForLocalUpdate(agentDir) {
+  ${options.asyncLocalUpdate ? 'throw new Error("auth store is not prepared");' : 'appendFileSync(callsPath, "ensure " + agentDir + "\\n");\n  return readStore(agentDir);'}
+}
+${
+	options.asyncLocalUpdate
+		? `export async function ensureAuthProfileStoreForLocalUpdateAsync(agentDir) {
   appendFileSync(callsPath, "ensure " + agentDir + "\\n");
   return readStore(agentDir);
+}`
+		: ""
 }
 export function listProfilesForProvider(store, provider) {
   appendFileSync(callsPath, "list " + provider + "\\n");

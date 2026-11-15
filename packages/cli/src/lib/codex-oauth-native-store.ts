@@ -320,7 +320,9 @@ const fingerprint = (credential, revision) => valid(credential)
   ? digest(["clawdi.runtimeOAuthCredential.v1", revision, credential.access, credential.refresh])
   : digest(["clawdi.nativeOAuthCredentialEvidence.v1", credential]);
 if (action === "inspect") {
-  const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
+  const store = typeof sdk.ensureAuthProfileStoreForLocalUpdateAsync === "function"
+    ? await sdk.ensureAuthProfileStoreForLocalUpdateAsync(agentDir)
+    : sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
   const present = Object.prototype.hasOwnProperty.call(store.profiles, profileId);
   const credential = present ? store.profiles[profileId] : undefined;
   const credentialFingerprint = present ? fingerprint(credential, credentialRevision) : undefined;
@@ -521,7 +523,9 @@ if (cleanupConfigAuth(snapshot.sourceConfig, false)) {
 let cleanedStores = 0;
 for (const discoveredAgentDir of discoveredAgentDirs) {
   const agentDir = discoveredAgentDir === defaultAgentDir ? undefined : discoveredAgentDir;
-  const store = providerAuth.ensureAuthProfileStoreForLocalUpdate(agentDir);
+  const store = typeof providerAuth.ensureAuthProfileStoreForLocalUpdateAsync === "function"
+    ? await providerAuth.ensureAuthProfileStoreForLocalUpdateAsync(agentDir)
+    : providerAuth.ensureAuthProfileStoreForLocalUpdate(agentDir);
   if (!isRecord(store) || !isRecord(store.profiles)) {
     throw new Error("OpenClaw provider-auth store is invalid");
   }

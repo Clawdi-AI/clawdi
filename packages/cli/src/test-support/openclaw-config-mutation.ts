@@ -64,7 +64,8 @@ export async function mutateConfigFile(options) {
 	);
 	writeFileSync(
 		join(packageRoot, "provider-auth.mjs"),
-		`${logImport("provider-auth")}export const ensureAuthProfileStoreForLocalUpdate = () => ({ profiles: {} });
+		`${logImport("provider-auth")}export const ensureAuthProfileStoreForLocalUpdate = () => { throw new Error("auth store is not prepared"); };
+export const ensureAuthProfileStoreForLocalUpdateAsync = async () => ({ profiles: {} });
 export const updateAuthProfileStoreWithLock = async () => ({});
 export const listProfilesForProvider = () => [];
 export const removeProviderAuthProfilesWithLock = async () => ({});
