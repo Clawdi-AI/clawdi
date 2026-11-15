@@ -195,6 +195,7 @@ jobs:
         env:
           CLAWDI_CLI_TEST_JOBS: "4"
         run: |
+          set -o pipefail
           package_dirs=()
           [[ "$RUN_MOBILE" == "true" ]] && package_dirs+=(apps/mobile)
           [[ "$RUN_WEB" == "true" ]] && package_dirs+=(apps/web)
@@ -216,13 +217,14 @@ jobs:
             exit
           fi
 
+          # Keep Bun's native stdout flags off the step's shared log pipe.
           (
             set -e
             printf '\n==> Native CLI lifecycle\n'
             sh -n install.sh
             packages/cli/dist-native/linux-x64/clawdi --version
             bun run --cwd packages/cli test:native-linux-lifecycle:internal
-          ) &
+          ) | cat &
           native_pid=$!
           test_packages &
           packages_pid=$!
