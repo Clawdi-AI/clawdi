@@ -215,6 +215,14 @@ export async function reconcileConnectedProjectSkills(input: {
 			await downloadDesiredArchive(input.api, input.agentId, desired),
 		);
 	}
+	if (
+		ownedReceipts.some(
+			(receipt) =>
+				!skippedKeys.has(receipt.local_skill_key) && missingOwnedKeys.has(receipt.local_skill_key),
+		)
+	) {
+		await input.skills.confirmCurrent?.();
+	}
 	for (const receipt of ownedReceipts) {
 		if (skippedKeys.has(receipt.local_skill_key) || !missingOwnedKeys.has(receipt.local_skill_key))
 			continue;
@@ -233,6 +241,7 @@ export async function reconcileConnectedProjectSkills(input: {
 			if (!desired) throw new Error("Project Skill inventory changed during reconcile");
 			const next = desiredInput(input.agentType, input.agentId, desired);
 			const prior = priorByKey.get(skillKey);
+			await input.skills.confirmCurrent?.();
 			await commitProjectSkillMaterialization(next, () =>
 				input.skills.writeArchive(skillKey, archive),
 			);

@@ -41,6 +41,7 @@ import {
 	type SessionScanIssue,
 	type SessionScanRequest,
 	type SessionUserActivity,
+	type SkillModule,
 	type SyncReadContext,
 } from "./base";
 import {
@@ -1176,12 +1177,17 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					this.installOfficialSkillArchive(key, `${key}__${owner}`, bytes),
 			},
 		}),
+		forOperation: (context?: SyncReadContext) => this.skillsForOperation(context),
 		collect: (context?: SyncReadContext) => this.collectSkills(context),
 		listKeys: async (context?: SyncReadContext) => {
 			context?.signal.throwIfAborted();
 			// Collection and reconciliation use the same default agent workspace.
 			const root = join(
-				await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal),
+				await resolveOpenClawAgentWorkspaceAsync(
+					agentId(),
+					context?.signal,
+					context?.skillPollCycle,
+				),
 				"skills",
 			);
 			return enumerateSkillDirs(root).map(({ key }) => key);
@@ -1558,6 +1564,37 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		return collectSkillsFromDir(join(workspace, "skills"));
 	}
 
+	private async skillsForOperation(context?: SyncReadContext): Promise<SkillModule> {
+		// Authoritative operations seed polling, but never reuse its earlier workspace.
+		const workspace = await resolveOpenClawAgentWorkspaceAsync(
+			agentId(),
+			context?.signal,
+			context?.skillPollCycle,
+			true,
+		);
+		const bound = flatSkillModule({
+			root: () => join(workspace, "skills"),
+			write: {
+				writeArchive: (key, bytes) => this.installOfficialSkillArchive(key, key, bytes, workspace),
+				writeSharedArchive: (key, owner, bytes) =>
+					this.installOfficialSkillArchive(key, `${key}__${owner}`, bytes, workspace),
+			},
+		});
+		const confirmCurrent = async (): Promise<void> => {
+			if ((await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal)) !== workspace) {
+				throw new Error("OpenClaw agent workspace changed during Skill operation");
+			}
+		};
+		return {
+			...bound,
+			confirmCurrent,
+			remove: async (key) => {
+				await confirmCurrent();
+				await bound.remove(key);
+			},
+		};
+	}
+
 	private getSessionsWatchPaths(): string[] {
 		const paths = this.profileAgentDirs().flatMap((dir) => {
 			const sessionRoot = join(dir, "sessions");
@@ -1576,9 +1613,13 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		archiveKey: string,
 		installedSlug: string,
 		tarGzBytes: Buffer,
+		expectedWorkspace?: string,
 	): Promise<void> {
 		const home = process.env.HOME ?? homedir();
 		const workspace = activeAgentWorkspace();
+		if (expectedWorkspace !== undefined && workspace !== expectedWorkspace) {
+			throw new Error("OpenClaw agent workspace changed before Skill install");
+		}
 		const targetDir = join(workspace, "skills", installedSlug);
 		const stagingRoot = mkdtempSync(join(tmpdir(), "clawdi-openclaw-install-"));
 		try {
