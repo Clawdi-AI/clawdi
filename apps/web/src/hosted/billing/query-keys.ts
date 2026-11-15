@@ -17,6 +17,7 @@ export const billingKeys = {
 	includedBasicAvailability: ["billing", "included-basic-availability"] as const,
 	reusableSubscriptions: ["billing", "reusable-subscriptions"] as const,
 	deployments: ["billing", "deployments"] as const,
+	deployment: (deploymentId: string) => ["billing", "deployment", deploymentId] as const,
 	workspaceSkills: (deploymentId: string) =>
 		["hosted", "deployments", deploymentId, "skills"] as const,
 	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,

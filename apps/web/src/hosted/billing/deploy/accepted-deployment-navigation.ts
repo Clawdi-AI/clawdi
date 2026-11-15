@@ -1,6 +1,7 @@
 import { upsertAuthoritativeDeployment } from "@clawdi/shared/view";
 import type { QueryClient } from "@tanstack/react-query";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
+import { billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { agentSectionHref, isAgentRouteId } from "@/lib/agent-routes";
 
@@ -22,7 +23,13 @@ async function hydrateAcceptedDeployment({
 	getDeployment: (deploymentId: string) => Promise<HostedDeployment>;
 	queryClient: QueryClient;
 }): Promise<HostedDeployment> {
-	const authoritative = await getDeployment(deploymentId);
+	const authoritative = await queryClient.fetchQuery({
+		queryKey: billingKeys.deployment(deploymentId),
+		queryFn: () => getDeployment(deploymentId),
+		retry: billingQueryRetry,
+		staleTime: 0,
+		gcTime: 0,
+	});
 	if (authoritative.resource.id !== deploymentId) {
 		throw new Error("Clawdi returned a different agent.");
 	}
