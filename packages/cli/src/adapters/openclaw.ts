@@ -1572,7 +1572,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			context?.skillPollCycle,
 			true,
 		);
-		return flatSkillModule({
+		const bound = flatSkillModule({
 			root: () => join(workspace, "skills"),
 			write: {
 				writeArchive: (key, bytes) => this.installOfficialSkillArchive(key, key, bytes, workspace),
@@ -1580,6 +1580,19 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					this.installOfficialSkillArchive(key, `${key}__${owner}`, bytes, workspace),
 			},
 		});
+		const confirmCurrent = async (): Promise<void> => {
+			if ((await resolveOpenClawAgentWorkspaceAsync(agentId(), context?.signal)) !== workspace) {
+				throw new Error("OpenClaw agent workspace changed during Skill operation");
+			}
+		};
+		return {
+			...bound,
+			confirmCurrent,
+			remove: async (key) => {
+				await confirmCurrent();
+				await bound.remove(key);
+			},
+		};
 	}
 
 	private getSessionsWatchPaths(): string[] {

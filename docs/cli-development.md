@@ -291,7 +291,12 @@ to that workspace. Event-driven authoritative operations bind their own fresh
 workspace. Polls still enumerate current Skill directories; a missing or unreadable
 reused workspace forces fresh resolution, and failed reads retry on the next poll.
 Native installs retain their fresh pre/post workspace guards and reject a changed
-target before mutation. One-shot commands and profile discovery remain fresh.
+target before mutation. Before enqueueing any Cloud deletion, a projection pass
+confirms that its bound workspace still matches a fresh official roster. A changed
+or unavailable target fails the pass's deletions closed. Local removal (including
+rollback) and missing Project materialization receipt cleanup also confirm fresh.
+Idle ticks need no confirmation; a pass with absences adds one roster read for
+the batch. One-shot commands and profile discovery remain fresh.
 This applies to hosted and self-managed daemons using forced polling or the
 filesystem-watch fallback. Reuse lasts until the next existing reconcile: its
 five-minute sleep (with one-minute jitter) plus reconcile duration. The cycle

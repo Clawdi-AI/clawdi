@@ -2487,7 +2487,9 @@ export async function reconcileAgentSkillProjection(input: {
 		...exactClaimKeys,
 		...(input.trustedLegacyRemoteKeys ?? []),
 	]);
-	const enqueueAbsentSkill = (skillKey: string): void => {
+	const absentSkills: string[] = [];
+	const materializedClaimCleanups: string[] = [];
+	const collectAbsentSkill = (skillKey: string): void => {
 		if (
 			claims.has(skillKey) ||
 			exactClaimKeys.has(skillKey) ||
@@ -2503,14 +2505,7 @@ export async function reconcileAgentSkillProjection(input: {
 						item.project_id === projectId,
 				);
 			if (!pendingDelete) {
-				queue.enqueue({
-					kind: "skill_delete",
-					skill_key: skillKey,
-					agent_id: opts.environmentId,
-					project_id: projectId,
-					enqueued_at: new Date().toISOString(),
-					attempts: 0,
-				});
+				absentSkills.push(skillKey);
 			}
 		}
 	};
@@ -2523,12 +2518,24 @@ export async function reconcileAgentSkillProjection(input: {
 				localSkillKey: skillKey,
 			})
 		) {
-			enqueueMaterializedSkillClaimCleanup(opts, queue, skillKey);
+			if (
+				exactClaimKeys.has(skillKey) &&
+				!queue
+					.all()
+					.some(
+						(item) =>
+							item.kind === "skill_delete" &&
+							item.skill_key === skillKey &&
+							item.agent_id === opts.environmentId,
+					)
+			) {
+				materializedClaimCleanups.push(skillKey);
+			}
 			continue;
 		}
 		const reserved = shouldIgnoreUserSkill(join(rootDir, skillKey), skillKey);
 		if (reserved || !localKeys.has(skillKey)) {
-			enqueueAbsentSkill(skillKey);
+			collectAbsentSkill(skillKey);
 			continue;
 		}
 
@@ -2537,7 +2544,7 @@ export async function reconcileAgentSkillProjection(input: {
 			hash = await computeSkillFolderHash(join(rootDir, skillKey), undefined, skillKey);
 		} catch (error) {
 			if (!existsSync(join(rootDir, skillKey))) {
-				enqueueAbsentSkill(skillKey);
+				collectAbsentSkill(skillKey);
 				continue;
 			}
 			throw error;
@@ -2571,6 +2578,25 @@ export async function reconcileAgentSkillProjection(input: {
 			enqueued_at: new Date().toISOString(),
 			attempts: 0,
 		});
+	}
+	if (absentSkills.length > 0 || materializedClaimCleanups.length > 0) {
+		// A tick may have awaited network work since binding. Never let that old
+		// inventory authorize absence unless the official target still agrees.
+		await skills.confirmCurrent?.();
+		opts.abort?.throwIfAborted();
+		for (const skillKey of materializedClaimCleanups) {
+			enqueueMaterializedSkillClaimCleanup(opts, queue, skillKey);
+		}
+		for (const skillKey of absentSkills) {
+			queue.enqueue({
+				kind: "skill_delete",
+				skill_key: skillKey,
+				agent_id: opts.environmentId,
+				project_id: projectId,
+				enqueued_at: new Date().toISOString(),
+				attempts: 0,
+			});
+		}
 	}
 }
 

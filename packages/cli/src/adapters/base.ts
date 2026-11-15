@@ -292,6 +292,8 @@ export interface RawSkill {
 export interface SkillModule {
 	/** Resolve a fresh target once for a sequential operation; the returned module is already bound. */
 	forOperation?(context?: SyncReadContext): Promise<SkillModule>;
+	/** Confirm a bound target is still current immediately before authorizing absence. */
+	confirmCurrent?(): Promise<void>;
 	collect(context?: SyncReadContext): Promise<RawSkill[]>;
 	listKeys(context?: SyncReadContext): Promise<string[]>;
 	path(key: string): string;

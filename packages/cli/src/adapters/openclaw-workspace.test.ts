@@ -12,8 +12,22 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { ApiClient } from "../lib/api-client";
+import {
+	computeSkillFolderHash,
+	readProjectSkillMaterialization,
+	recordProjectSkillMaterialization,
+	recordSkillProjectionClaim,
+} from "../lib/skills-lock";
+import { computeSkillArchiveHash, tarSingleFile } from "../lib/tar";
 import * as managedSkillDelivery from "../runtime/managed-skill-delivery";
 import * as managedSkillReservation from "../runtime/managed-skill-reservation";
+import { reconcileConnectedProjectSkills } from "../serve/project-skill-reconcile";
+import { RetryQueue } from "../serve/queue";
+import {
+	reconcileAgentSkillProjection,
+	reconcileAgentSkillProjectionListing,
+} from "../serve/sync-engine";
 import { OpenClawAdapter } from "./openclaw";
 import {
 	listOpenClawAgentWorkspaces,
@@ -201,6 +215,236 @@ test("a moved native install target fails before touching the operation's old ta
 		rollback.mockRestore();
 	}
 });
+
+test.each(["moved", "unavailable", "unchanged"])(
+	"confirms all absences once after the Cloud listing wait: workspace %s",
+	async (condition) => {
+		const roster = installRosterCommand();
+		process.env.HOME = root;
+		process.env.CLAWDI_HOME = join(root, ".clawdi");
+		process.env.CLAWDI_STATE_DIR = join(root, "serve");
+		delete process.env.CLAWDI_RUNTIME_USER;
+		delete process.env.OPENCLAW_AGENT_ID;
+		const workspace = join(root, "workspace");
+		const nextWorkspace = join(root, "next-workspace");
+		const claims = new Map<string, string>();
+		for (const skillKey of ["alpha", "beta"]) {
+			const directory = join(workspace, "skills", skillKey);
+			mkdirSync(directory, { recursive: true });
+			writeFileSync(join(directory, "SKILL.md"), `# ${skillKey}\n`);
+			const hash = await computeSkillFolderHash(directory, undefined, skillKey);
+			claims.set(skillKey, hash);
+			recordSkillProjectionClaim({
+				agentType: "openclaw",
+				agentId: "agent-test",
+				projectId: "project-test",
+				skillKey,
+				hash,
+			});
+		}
+		writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+		const skills = await new OpenClawAdapter().skills.forOperation();
+		const queue = new RetryQueue({ agentType: "openclaw" });
+		const input = {
+			opts: { environmentId: "agent-test", adapter: { agentType: "openclaw" as const } },
+			skills,
+			queue,
+			claims,
+			projectId: "project-test",
+		};
+		let listingStarted: () => void = () => {};
+		const started = new Promise<void>((resolve) => {
+			listingStarted = resolve;
+		});
+		let releaseListing: () => void = () => {};
+		const listingWait = new Promise<void>((resolve) => {
+			releaseListing = resolve;
+		});
+		const api = new ApiClient({
+			requireAuth: false,
+			baseUrl: "https://cloud.example.test",
+			fetch: async () => {
+				listingStarted();
+				await listingWait;
+				return Response.json(
+					{ items: [...claims.keys()].map((skill_key) => ({ skill_key })), total: 2 },
+					{ headers: { ETag: '"1:project-test"' } },
+				);
+			},
+		});
+		try {
+			// The first pass is idle, so it uses only the tick's initial roster read.
+			await reconcileAgentSkillProjection(input);
+			expect(queue.all()).toEqual([]);
+			expect(rosterCalls()).toBe(1);
+			const listing = reconcileAgentSkillProjectionListing({
+				...input,
+				api,
+				previousEtag: null,
+				forceComplete: true,
+			});
+			void listing.catch(() => {});
+			await started;
+			if (condition === "moved") {
+				renameSync(workspace, nextWorkspace);
+				writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+			} else {
+				rmSync(join(workspace, "skills"), { recursive: true });
+				if (condition === "unavailable") writeFileSync(roster, "[]");
+			}
+			releaseListing();
+			if (condition === "unchanged") {
+				await listing;
+				expect(
+					queue.all().map((item) => [item.kind, "skill_key" in item && item.skill_key]),
+				).toEqual([
+					["skill_delete", "alpha"],
+					["skill_delete", "beta"],
+				]);
+			} else {
+				await expect(listing).rejects.toThrow("OpenClaw");
+				expect(queue.all()).toEqual([]);
+			}
+			expect(rosterCalls()).toBe(2);
+		} finally {
+			releaseListing();
+			await queue.flushPersist();
+		}
+	},
+);
+
+test("a workspace move during Project download cannot fence a materialization receipt", async () => {
+	const roster = installRosterCommand();
+	process.env.HOME = root;
+	process.env.CLAWDI_HOME = join(root, ".clawdi");
+	delete process.env.CLAWDI_RUNTIME_USER;
+	delete process.env.OPENCLAW_AGENT_ID;
+	const workspace = join(root, "workspace");
+	const nextWorkspace = join(root, "next-workspace");
+	mkdirSync(workspace);
+	mkdirSync(nextWorkspace);
+	writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+	const skills = await new OpenClawAdapter().skills.forOperation();
+	const archive = await tarSingleFile("alpha", "# Desired Skill\n");
+	const hash = await computeSkillArchiveHash(archive, "alpha");
+	const archiveUrl = `https://cloud.example.test/v1/runtime/project-skill-archives/agent-test/project-test/skill-test/${hash}/alpha.tar.gz`;
+	const api = new ApiClient({
+		requireAuth: false,
+		baseUrl: "https://cloud.example.test",
+		fetch: async (request) =>
+			request.method === "PUT"
+				? new Response(null, { status: 204 })
+				: Response.json({
+						agent_id: "agent-test",
+						skills: [
+							{
+								project_id: "project-test",
+								skill_id: "skill-test",
+								skill_key: "alpha",
+								content_hash: hash,
+								archive_url: archiveUrl,
+							},
+						],
+					}),
+	});
+	const download = spyOn(api, "requestStream").mockImplementation(async () => {
+		writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+		return new Response(Uint8Array.from(archive));
+	});
+	const lock = await import("../lib/skills-lock");
+	const fence = spyOn(lock, "commitProjectSkillMaterialization");
+	try {
+		await expect(
+			reconcileConnectedProjectSkills({
+				api,
+				agentId: "agent-test",
+				agentType: "openclaw",
+				skills,
+			}),
+		).rejects.toThrow("workspace changed during Skill operation");
+		expect(download).toHaveBeenCalledTimes(1);
+		expect(fence).not.toHaveBeenCalled();
+		expect(
+			readProjectSkillMaterialization({ agentType: "openclaw", localSkillKey: "alpha" }),
+		).toBeNull();
+		expect(existsSync(join(workspace, "skills"))).toBe(false);
+		expect(existsSync(join(nextWorkspace, "skills"))).toBe(false);
+		expect(rosterCalls()).toBe(2);
+	} finally {
+		fence.mockRestore();
+		download.mockRestore();
+	}
+});
+
+test.each(["moved", "unavailable", "missing old target", "unchanged"])(
+	"confirms Project removal after its inventory wait: workspace %s",
+	async (condition) => {
+		const roster = installRosterCommand();
+		process.env.HOME = root;
+		process.env.CLAWDI_HOME = join(root, ".clawdi");
+		delete process.env.CLAWDI_RUNTIME_USER;
+		delete process.env.OPENCLAW_AGENT_ID;
+		const workspace = join(root, "workspace");
+		const nextWorkspace = join(root, "next-workspace");
+		const directory = join(workspace, "skills", "alpha");
+		mkdirSync(directory, { recursive: true });
+		writeFileSync(join(directory, "SKILL.md"), "# Keep old target\n");
+		recordProjectSkillMaterialization({
+			agentType: "openclaw",
+			localSkillKey: "alpha",
+			sourceProjectId: "project-test",
+			sourceSkillKey: "alpha",
+			contentHash: await computeSkillFolderHash(directory, undefined, "alpha"),
+			reconcileAgentId: "agent-test",
+		});
+		writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
+		const skills = await new OpenClawAdapter().skills.forOperation();
+		const mutation = spyOn(managedSkillReservation, "mutateUserSkillTarget");
+		const api = new ApiClient({
+			requireAuth: false,
+			baseUrl: "https://cloud.example.test",
+			fetch: async (request) => {
+				if (request.method === "PUT") return new Response(null, { status: 204 });
+				// Config changes while the tick is awaiting its Project inventory.
+				if (condition === "missing old target") renameSync(workspace, nextWorkspace);
+				if (condition === "moved" || condition === "missing old target") {
+					mkdirSync(nextWorkspace, { recursive: true });
+					writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+				} else if (condition === "unavailable") writeFileSync(roster, "[]");
+				return Response.json({ agent_id: "agent-test", skills: [] });
+			},
+		});
+		try {
+			const reconcile = reconcileConnectedProjectSkills({
+				api,
+				agentId: "agent-test",
+				agentType: "openclaw",
+				skills,
+			});
+			if (condition === "unchanged") {
+				await reconcile;
+				expect(existsSync(directory)).toBe(false);
+				expect(mutation).toHaveBeenCalledTimes(1);
+				expect(
+					readProjectSkillMaterialization({ agentType: "openclaw", localSkillKey: "alpha" }),
+				).toBeNull();
+			} else {
+				await expect(reconcile).rejects.toThrow("OpenClaw");
+				expect(mutation).not.toHaveBeenCalled();
+				expect(
+					readProjectSkillMaterialization({ agentType: "openclaw", localSkillKey: "alpha" }),
+				).not.toBeNull();
+				const retained = condition === "missing old target" ? nextWorkspace : workspace;
+				expect(readFileSync(join(retained, "skills", "alpha", "SKILL.md"), "utf8")).toBe(
+					"# Keep old target\n",
+				);
+			}
+			expect(rosterCalls()).toBe(2);
+		} finally {
+			mutation.mockRestore();
+		}
+	},
+);
 
 test("resolves Skills from the official agent workspace roster", async () => {
 	const roster = installRosterCommand();

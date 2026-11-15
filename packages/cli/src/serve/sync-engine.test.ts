@@ -857,8 +857,9 @@ describe("Agent filesystem projection reconcile", () => {
 			expect(
 				queue
 					.all()
-					.map((item) => ("skill_key" in item ? `${item.kind}:${item.skill_key}` : item.kind)),
-			).toEqual(["skill_push:a/one", "skill_delete:b/two", "skill_push:c/three"]);
+					.map((item) => ("skill_key" in item ? `${item.kind}:${item.skill_key}` : item.kind))
+					.sort(),
+			).toEqual(["skill_delete:b/two", "skill_push:a/one", "skill_push:c/three"]);
 		});
 	});
 
@@ -2005,8 +2006,10 @@ describe("daemon startup Agent lookup", () => {
 				const bin = join(root, "bin");
 				const calls = join(root, "roster-calls");
 				const failure = join(root, "roster-failure");
+				const roster = join(root, "roster.json");
 				mkdirSync(join(workspace, "skills"), { recursive: true });
 				mkdirSync(bin);
+				writeFileSync(roster, JSON.stringify([{ id: "main", workspace }]));
 				const command = join(bin, "openclaw");
 				writeFileSync(
 					command,
@@ -2014,7 +2017,7 @@ describe("daemon startup Agent lookup", () => {
 test "$*" = "agents list --json" || exit 1
 printf '.\\n' >> '${calls}'
 test ! -f '${failure}' || exit 1
-printf '%s' '${JSON.stringify([{ id: "main", workspace }])}'
+cat '${roster}'
 `,
 				);
 				chmodSync(command, 0o755);
@@ -2053,6 +2056,7 @@ printf '%s' '${JSON.stringify([{ id: "main", workspace }])}'
 				const pending = new Map<ReturnType<typeof setTimeout>, { delay: number; fire(): void }>();
 				const random = spyOn(Math, "random").mockReturnValue(0);
 				const cleared = spyOn(SyncHealth.prototype, "clear");
+				const enqueued = spyOn(RetryQueue.prototype, "enqueue");
 				function controlledTimeout(
 					handler: TimerHandler,
 					timeout?: number,
@@ -2179,7 +2183,8 @@ printf '%s' '${JSON.stringify([{ id: "main", workspace }])}'
 									([area, resource]) => area === "push" && resource === "skill_scan:ghost",
 								).length > scans,
 						);
-						expect(rosterCalls()).toBe(before + 1);
+						// This authoritative absence needs its own fresh target confirmation.
+						expect(rosterCalls()).toBe(before + 2);
 					}
 					if (connected) {
 						holdInventory = new Promise<void>((resolve) => {
@@ -2198,6 +2203,36 @@ printf '%s' '${JSON.stringify([{ id: "main", workspace }])}'
 						await waitFor(() => countTimers(240_000) === 2);
 						expect(rosterCalls()).toBe(before + 2);
 						expect(projectInventories).toBe(inventoriesBefore + 2);
+
+						// A later tick must not remove old Project bytes or authorize Cloud
+						// absences when config moves during the Project inventory request.
+						desired.length = 0;
+						holdInventory = new Promise<void>((resolve) => {
+							releaseInventory = resolve;
+						});
+						const moveCallsBefore = rosterCalls();
+						const moveInventoriesBefore = projectInventories;
+						const deletions = () =>
+							enqueued.mock.calls.filter(([item]) => item.kind === "skill_delete").length;
+						const deletesBefore = deletions();
+						fireTimers(240_000);
+						await waitFor(() => projectInventories === moveInventoriesBefore + 1);
+						const nextWorkspace = join(root, "next-workspace");
+						mkdirSync(nextWorkspace);
+						writeFileSync(roster, JSON.stringify([{ id: "main", workspace: nextWorkspace }]));
+						holdInventory = undefined;
+						releaseInventory();
+						await waitFor(() => countTimers(240_000) === 2);
+						expect(rosterCalls()).toBe(moveCallsBefore + 2);
+						expect(deletions()).toBe(deletesBefore);
+						for (const key of ["project-one", "project-two"]) {
+							expect(readFileSync(join(workspace, "skills", key, "SKILL.md"), "utf8")).toBe(
+								`# ${key}\n`,
+							);
+						}
+						expect(
+							logs.some((line) => line.includes("workspace changed during Skill operation")),
+						).toBe(true);
 					}
 				} finally {
 					abortController.abort();
@@ -2210,6 +2245,7 @@ printf '%s' '${JSON.stringify([{ id: "main", workspace }])}'
 						timers.mockRestore();
 						random.mockRestore();
 						cleared.mockRestore();
+						enqueued.mockRestore();
 						process.env = originalEnv;
 					});
 				}
