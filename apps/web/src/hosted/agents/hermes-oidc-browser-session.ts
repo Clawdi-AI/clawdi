@@ -1,3 +1,9 @@
+import { upsertAuthoritativeDeployment } from "@clawdi/shared/view";
+import type { QueryClient } from "@tanstack/react-query";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
+import { BillingApiError } from "@/hosted/billing/errors";
+import { billingKeys } from "@/hosted/billing/query-keys";
+
 export function hermesOidcAuthorityIdentity(
 	principalIdentity: string | null,
 	deploymentId: string,
@@ -59,5 +65,48 @@ export async function primeHermesOidcBrowserSession(
 			"If-Match": strongResourceEtag(resourceVersion),
 		},
 	});
-	if (response.status !== 204) throw new Error("Hermes browser session could not be established.");
+	if (response.status !== 204) {
+		throw new BillingApiError(response.status, "Hermes browser session could not be established.");
+	}
+}
+
+export async function primeHermesOidcBrowserSessionWithRefetch({
+	url,
+	deploymentId,
+	trustedApiOrigin,
+	token,
+	resourceVersion,
+	signal,
+	getDeployment,
+	queryClient,
+}: {
+	url: string;
+	deploymentId: string;
+	trustedApiOrigin: string;
+	token: string;
+	resourceVersion: string;
+	signal: AbortSignal;
+	getDeployment: (id: string) => Promise<HostedDeployment>;
+	queryClient: QueryClient;
+}): Promise<string> {
+	const prime = (version: string) =>
+		primeHermesOidcBrowserSession(url, deploymentId, trustedApiOrigin, token, version, signal);
+	try {
+		await prime(resourceVersion);
+		return resourceVersion;
+	} catch (error) {
+		if (!(error instanceof BillingApiError) || error.status !== 412) throw error;
+	}
+
+	signal.throwIfAborted();
+	const deployment = await getDeployment(deploymentId);
+	signal.throwIfAborted();
+	await queryClient.cancelQueries({ queryKey: billingKeys.deployments, exact: true });
+	signal.throwIfAborted();
+	queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
+		upsertAuthoritativeDeployment(deployments, deployment),
+	);
+	const freshVersion = deployment.resource.metadata.resourceVersion;
+	await prime(freshVersion);
+	return freshVersion;
 }
