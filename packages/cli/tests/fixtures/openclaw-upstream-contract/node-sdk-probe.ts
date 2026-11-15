@@ -1,8 +1,10 @@
 /** Bundled with --target=node: process.execPath must be the Hosted system Node. */
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
+import { zstdCompressSync } from "node:zlib";
+import { OpenClawAdapter } from "../../../src/adapters/openclaw";
 import { runOpenClawSdkCommand } from "../../../src/adapters/openclaw-command";
 import {
 	OPENCLAW_SDK_EXPORT_PATHS,
@@ -76,6 +78,32 @@ async function check(name: string, run: () => unknown | Promise<unknown>) {
 	}
 }
 console.log(`system Node: ${process.version}; executable: ${process.execPath}`);
+await check("streamed zstd activity and truncated-frame rejection", async () => {
+	const activityHome = join(home, ".contract-node", "zstd-activity");
+	const sessions = join(activityHome, "agents", "main", "sessions");
+	mkdirSync(sessions, { recursive: true });
+	const archive = join(sessions, "probe.jsonl.deleted.2026-09-03T00-00-00.000Z.zst");
+	const bytes = zstdCompressSync(
+		`${JSON.stringify({ role: "user", content: "probe input", timestamp: "2026-08-23T00:00:00Z" })}\n`,
+	);
+	const read = async () => {
+		const scan = await new OpenClawAdapter(null, activityHome, async () => null).sessions.scan(
+			{ kind: "complete" },
+			new Map(),
+		);
+		for await (const _batch of scan.batches) {
+		}
+		return scan.userActivity;
+	};
+	try {
+		writeFileSync(archive, bytes);
+		assert.deepEqual(await read(), { lastUserInputAt: "2026-08-23T00:00:00.000Z", complete: true });
+		writeFileSync(archive, bytes.subarray(0, -1));
+		assert.equal((await read())?.complete, false);
+	} finally {
+		rmSync(activityHome, { recursive: true, force: true });
+	}
+});
 await check("config merge SDK (openclaw-provider-config.ts:204)", () => {
 	applyOpenClawConfigMergePatch(sdk, JSON.stringify({ gateway: { mode: "local" } }), home, home);
 });

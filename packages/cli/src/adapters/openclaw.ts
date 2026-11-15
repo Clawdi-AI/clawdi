@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
+import zlib from "node:zlib";
 import {
 	OPENCLAW_SDK_EXPORT_PATHS,
 	resolveOpenClawSdkExport,
@@ -113,14 +116,11 @@ function listAgentDirsWithCompleteness(
 			.filter((d) => !override || d.name === override)
 			.map((d) => join(root, d.name));
 		return { dirs, complete: true };
-	} catch (e) {
+	} catch {
 		// `agents/` is present but unreadable (perm bits, encrypted-at-rest,
 		// stale fuse mount, …). Silently treating that as "no agents" hides
-		// the fact that we actively skipped data — surface it on stderr so
-		// `clawdi push` doesn't appear to succeed with 0 sessions.
-		console.warn(
-			`[openclaw] could not enumerate ${root}: ${e instanceof Error ? e.message : String(e)}`,
-		);
+		// the fact that we actively skipped data. The scan reports the reason
+		// through its deduplicated activity warning.
 		return { dirs: [], complete: false };
 	}
 }
@@ -196,6 +196,94 @@ interface TranscriptReference {
 	requiredExternal: boolean;
 }
 
+type ActivityIncompleteReason =
+	| "agent_directory_unreadable"
+	| "session_directory_unreadable"
+	| "transcript_reference_invalid"
+	| "session_index_unreadable"
+	| "transcript_missing"
+	| "agent_directory_missing"
+	| "transcript_zstd_unavailable"
+	| "transcript_zstd_unverified_runtime"
+	| "transcript_zstd_read_failed"
+	| "transcript_read_failed"
+	| "transcript_record_invalid"
+	| "transcript_record_too_large"
+	| "transcript_changed"
+	| "user_timestamp_invalid"
+	| "official_inventory_invalid"
+	| "session_updated_at_invalid"
+	| "official_transcript_unavailable";
+
+type ActivityIncompleteReasons = Map<ActivityIncompleteReason, number>;
+
+function recordActivityReason(
+	reasons: ActivityIncompleteReasons | undefined,
+	reason: ActivityIncompleteReason,
+): void {
+	reasons?.set(reason, (reasons.get(reason) ?? 0) + 1);
+}
+
+function mergeActivityReasons(
+	target: ActivityIncompleteReasons,
+	source: ActivityIncompleteReasons,
+): void {
+	for (const [reason, count] of source) target.set(reason, (target.get(reason) ?? 0) + count);
+}
+
+function markActivityIncomplete(
+	activity: SessionUserActivity,
+	reasons: ActivityIncompleteReasons | undefined,
+	reason: ActivityIncompleteReason,
+): void {
+	activity.complete = false;
+	recordActivityReason(reasons, reason);
+}
+
+function classifyUserActivity(
+	records: readonly unknown[],
+	sessionKey: string,
+	metadata: unknown,
+	reasons?: ActivityIncompleteReasons,
+): SessionUserActivity {
+	const activity = computeOpenClawRealUserActivity(records, sessionKey, metadata);
+	if (!activity.complete) recordActivityReason(reasons, "user_timestamp_invalid");
+	return activity;
+}
+
+async function checkActivitySource(
+	activity: SessionUserActivity,
+	source: JsonlSessionSource,
+	reasons?: ActivityIncompleteReasons,
+): Promise<void> {
+	if (!source.complete) {
+		markActivityIncomplete(
+			activity,
+			reasons,
+			source.blockedReason ? "transcript_record_too_large" : "transcript_record_invalid",
+		);
+	} else if (activity.complete && !(await source.unchanged())) {
+		markActivityIncomplete(activity, reasons, "transcript_changed");
+	}
+}
+
+// Runtime-watch can recreate adapters every reconcile; keep warning state across instances.
+const activityReasonSets = new Map<string, string>();
+
+function warnActivityIncompleteOnChange(key: string, reasons: ActivityIncompleteReasons): void {
+	const entries = [...reasons].sort(([left], [right]) => left.localeCompare(right));
+	const signature = entries.map(([reason]) => reason).join(",");
+	if ((activityReasonSets.get(key) ?? "") === signature) return;
+	if (!signature) {
+		activityReasonSets.delete(key);
+		return;
+	}
+	activityReasonSets.set(key, signature);
+	log.warn("engine.user_activity_incomplete", {
+		reasons: entries.map(([reason, count]) => ({ reason, count })),
+	});
+}
+
 function canonicalTranscriptReferences(name: string): string[] {
 	if (
 		!name.endsWith(".jsonl") &&
@@ -243,12 +331,15 @@ async function collectCanonicalOpenClawActivity(
 	officialInventory: OfficialSessionInventory | null,
 	classifiedPaths: ReadonlySet<string>,
 	listing: AgentDirectoryListing,
+	incompleteReasons: ActivityIncompleteReasons,
+	zstdSupport: () => Promise<ZstdRuntimeSupport>,
 	context?: SyncReadContext,
 ): Promise<SessionUserActivity> {
 	let activity: SessionUserActivity = {
 		lastUserInputAt: null,
 		complete: listing.complete,
 	};
+	if (!listing.complete) recordActivityReason(incompleteReasons, "agent_directory_unreadable");
 	const visitedAgentIds = new Set<string>();
 	const officialByAgent = new Map<string, OfficialSessionEntry[]>();
 	for (const entry of officialInventory?.entries ?? []) {
@@ -271,7 +362,7 @@ async function collectCanonicalOpenClawActivity(
 					: [];
 			});
 		} catch {
-			activity.complete = false;
+			markActivityIncomplete(activity, incompleteReasons, "session_directory_unreadable");
 			continue;
 		}
 		const presentReferences = new Set(transcripts.flatMap((transcript) => transcript.references));
@@ -279,7 +370,7 @@ async function collectCanonicalOpenClawActivity(
 		const addReference = (identity: string, entry: SessionEntry, required: boolean): void => {
 			const name = transcriptReferenceName(sessionsRoot, identity, entry);
 			if (!name) {
-				activity.complete = false;
+				markActivityIncomplete(activity, incompleteReasons, "transcript_reference_invalid");
 				return;
 			}
 			const reference = references.get(name) ?? {
@@ -304,7 +395,7 @@ async function collectCanonicalOpenClawActivity(
 					addReference(key, entry, officialInventory === null);
 				}
 			} catch {
-				activity.complete = false;
+				markActivityIncomplete(activity, incompleteReasons, "session_index_unreadable");
 			}
 		}
 		for (const entry of officialByAgent.get(agentId) ?? []) {
@@ -319,7 +410,12 @@ async function collectCanonicalOpenClawActivity(
 			if (matches.length > 0 && matches.every((reference) => reference.internalOnly)) continue;
 			activity = mergeUserActivity(
 				activity,
-				await readOpenClawTranscriptActivity(transcript.path, context),
+				await readOpenClawTranscriptActivity(
+					transcript.path,
+					incompleteReasons,
+					zstdSupport,
+					context,
+				),
 			);
 		}
 		for (const [name, reference] of references) {
@@ -328,7 +424,7 @@ async function collectCanonicalOpenClawActivity(
 				!presentReferences.has(name) &&
 				!classifiedPaths.has(resolve(sessionsRoot, name))
 			) {
-				activity.complete = false;
+				markActivityIncomplete(activity, incompleteReasons, "transcript_missing");
 			}
 		}
 	}
@@ -338,25 +434,111 @@ async function collectCanonicalOpenClawActivity(
 			!visitedAgentIds.has(entry.agentId) &&
 			!isInternalOpenClawSession(entry.key, entry)
 		) {
-			activity.complete = false;
+			markActivityIncomplete(activity, incompleteReasons, "agent_directory_missing");
 		}
 	}
 	return activity;
 }
 
+async function* decodeOpenClawZstd(
+	chunks: AsyncIterable<Buffer> | Iterable<Buffer>,
+	signal?: AbortSignal,
+): AsyncGenerator<Buffer> {
+	const decoder = zlib.createZstdDecompress({
+		chunkSize: 64 * 1024,
+		params: { [zlib.constants.ZSTD_d_windowLogMax]: 23 },
+	});
+	const input = Readable.from(chunks, { objectMode: false, highWaterMark: 64 * 1024 });
+	const completed = pipeline(input, decoder, { signal });
+	// The iterator observes stream errors; handle the promise while it is being consumed.
+	void completed.catch(() => {});
+	try {
+		for await (const bytes of decoder) {
+			if (!Buffer.isBuffer(bytes)) throw new Error("invalid decoded session source chunk");
+			yield bytes;
+		}
+		await completed;
+	} finally {
+		input.destroy();
+		decoder.destroy();
+		await completed.catch(() => {});
+	}
+}
+
+type ZstdRuntimeSupport = "verified" | "unavailable" | "unverified";
+
+// zstdCompressSync(Buffer.from("clawdi zstd probe\n")), with the last byte removed for the bad frame.
+const ZSTD_PROBE_FRAME = Buffer.from(
+	"28b52ffd2012910000636c61776469207a7374642070726f62650a",
+	"hex",
+);
+let zstdRuntimeSupport: Promise<ZstdRuntimeSupport> | undefined;
+
+async function verifyZstdRuntimeSupport(): Promise<ZstdRuntimeSupport> {
+	if (typeof zlib.createZstdDecompress !== "function") return "unavailable";
+	const expected = Buffer.from("clawdi zstd probe\n");
+	try {
+		const parts: Buffer[] = [];
+		let size = 0;
+		for await (const bytes of decodeOpenClawZstd([ZSTD_PROBE_FRAME])) {
+			size += bytes.length;
+			if (size > expected.length) return "unavailable";
+			parts.push(bytes);
+		}
+		if (!Buffer.concat(parts, size).equals(expected)) return "unavailable";
+	} catch {
+		return "unavailable";
+	}
+	try {
+		for await (const _bytes of decodeOpenClawZstd([ZSTD_PROBE_FRAME.subarray(0, -1)])) {
+		}
+	} catch {
+		return "verified";
+	}
+	return "unverified";
+}
+
+function readZstdRuntimeSupport(): Promise<ZstdRuntimeSupport> {
+	zstdRuntimeSupport ??= verifyZstdRuntimeSupport();
+	return zstdRuntimeSupport;
+}
+
 async function readOpenClawTranscriptActivity(
 	path: string,
+	incompleteReasons: ActivityIncompleteReasons,
+	zstdSupport: () => Promise<ZstdRuntimeSupport>,
 	context?: SyncReadContext,
 ): Promise<SessionUserActivity> {
+	const compressed = path.endsWith(".zst");
+	if (compressed) {
+		const support = await zstdSupport();
+		context?.signal.throwIfAborted();
+		if (support !== "verified") {
+			recordActivityReason(
+				incompleteReasons,
+				support === "unavailable"
+					? "transcript_zstd_unavailable"
+					: "transcript_zstd_unverified_runtime",
+			);
+			return { lastUserInputAt: null, complete: false };
+		}
+	}
 	try {
 		const source = await JsonlSessionSource.open(path, context);
 		let activity: SessionUserActivity = { lastUserInputAt: null, complete: true };
-		for await (const record of source.records())
-			activity = mergeUserActivity(activity, computeOpenClawRealUserActivity([record.data], ""));
-		activity.complete &&= source.complete && (await source.unchanged());
+		for await (const record of source.records(compressed ? decodeOpenClawZstd : undefined))
+			activity = mergeUserActivity(
+				activity,
+				classifyUserActivity([record.data], "", undefined, incompleteReasons),
+			);
+		await checkActivitySource(activity, source, incompleteReasons);
 		return activity;
 	} catch {
 		context?.signal.throwIfAborted();
+		recordActivityReason(
+			incompleteReasons,
+			compressed ? "transcript_zstd_read_failed" : "transcript_read_failed",
+		);
 		return { lastUserInputAt: null, complete: false };
 	}
 }
@@ -415,6 +597,7 @@ async function readOfficialSessionInventory(
 	home: string,
 	context?: SyncReadContext,
 	profileAgentId?: string,
+	incompleteReasons?: ActivityIncompleteReasons,
 ): Promise<OfficialSessionInventory | null> {
 	const override = profileAgentId;
 	const payload = await runOpenClawJson(
@@ -437,6 +620,7 @@ async function readOfficialSessionInventory(
 		const key = jsonString(row?.key);
 		if (!row || !agentId || !key) {
 			complete = false;
+			recordActivityReason(incompleteReasons, "official_inventory_invalid");
 			return [];
 		}
 		const sessionId = jsonString(row.sessionId) ?? undefined;
@@ -661,6 +845,7 @@ function officialTranscriptReader(
 	entry: OfficialSessionEntry,
 	home: string,
 	context?: SyncReadContext,
+	incompleteReasons?: ActivityIncompleteReasons,
 ) {
 	const initial = officialReadState(entry);
 	let pinnedCount: number | undefined;
@@ -683,7 +868,7 @@ function officialTranscriptReader(
 			digest.update(encoded).update("\n");
 			state.userActivity = mergeUserActivity(
 				state.userActivity,
-				computeOpenClawRealUserActivity([message], entry.key, entry),
+				classifyUserActivity([message], entry.key, entry, incompleteReasons),
 			);
 			const timestamp = jsonString(message.timestamp) ?? jsonString(message.createdAt);
 			const raw = {
@@ -794,16 +979,23 @@ interface SessionCollection {
 	matchedTranscriptPaths: Set<string>;
 	classifiedTranscriptPaths: Set<string>;
 	userActivity: SessionUserActivity;
+	incompleteReasons: ActivityIncompleteReasons;
 	scanIssues: SessionScanIssue[];
 }
 
-function emptySessionCollection(complete = true): SessionCollection {
+function emptySessionCollection(
+	complete = true,
+	incompleteReasons: ActivityIncompleteReasons = new Map(),
+): SessionCollection {
+	if (!complete && !incompleteReasons.has("official_inventory_invalid"))
+		recordActivityReason(incompleteReasons, "official_inventory_invalid");
 	return {
 		observedLocalSessionIds: [],
 		dedupedCount: 0,
 		matchedTranscriptPaths: new Set(),
 		classifiedTranscriptPaths: new Set(),
 		userActivity: { lastUserInputAt: null, complete },
+		incompleteReasons,
 		scanIssues: [],
 	};
 }
@@ -826,6 +1018,7 @@ function takeSessionBatch(
 interface MaterializedOpenClawSession {
 	session: RawSession | null;
 	userActivity: SessionUserActivity;
+	incompleteReasons: ActivityIncompleteReasons;
 	scanIssue?: SessionScanIssue;
 }
 
@@ -848,12 +1041,15 @@ async function materializeOpenClawJsonlSession(input: {
 		transcriptPath,
 		context,
 	} = input;
+	const incompleteReasons: ActivityIncompleteReasons = new Map();
 	const sessionId = entry.sessionId;
 	const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 	const internalSession = isInternalOpenClawSession(sourceSessionKey, entry);
 	const unavailableActivity = { lastUserInputAt: null, complete: internalSession };
-	if (!sessionId || !updatedAt || !existsSync(transcriptPath))
-		return { session: null, userActivity: unavailableActivity };
+	if (!sessionId || !updatedAt || !existsSync(transcriptPath)) {
+		if (!internalSession) recordActivityReason(incompleteReasons, "transcript_missing");
+		return { session: null, userActivity: unavailableActivity, incompleteReasons };
+	}
 	const source = await JsonlSessionSource.open(transcriptPath, context);
 	let startedAt: Date | null = null;
 	let endedAt: Date | null = null;
@@ -864,7 +1060,7 @@ async function materializeOpenClawJsonlSession(input: {
 	for await (const { data: raw } of source.records()) {
 		userActivity = mergeUserActivity(
 			userActivity,
-			computeOpenClawRealUserActivity([raw], sourceSessionKey, entry),
+			classifyUserActivity([raw], sourceSessionKey, entry, incompleteReasons),
 		);
 		const parsed = raw as TranscriptLine;
 		const timestamp = parsed.timestamp ? new Date(parsed.timestamp) : null;
@@ -877,11 +1073,12 @@ async function materializeOpenClawJsonlSession(input: {
 			currentModel = parsed.modelId;
 		}
 	}
-	if (!internalSession) userActivity.complete &&= source.complete && (await source.unchanged());
+	if (!internalSession) await checkActivitySource(userActivity, source, incompleteReasons);
 	if (source.blockedReason) {
 		return {
 			session: null,
 			userActivity,
+			incompleteReasons,
 			scanIssue: { path: source.path, reason: source.blockedReason },
 		};
 	}
@@ -900,11 +1097,12 @@ async function materializeOpenClawJsonlSession(input: {
 		}
 	};
 	const description = await describeSessionContent(readEvents, source.eager);
-	if (description.messageCount === 0) return { session: null, userActivity };
+	if (description.messageCount === 0) return { session: null, userActivity, incompleteReasons };
 	startedAt ??= new Date(updatedAt);
 	endedAt ??= new Date(updatedAt);
 	return {
 		userActivity,
+		incompleteReasons,
 		session: {
 			localSessionId: sessionId,
 			projectPath,
@@ -938,6 +1136,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		private readonly inventoryReader?: (
 			context?: SyncReadContext,
 		) => Promise<OfficialSessionInventory | null>,
+		private readonly zstdSupport = readZstdRuntimeSupport,
 	) {
 		this.profileAgentId =
 			profileAgentId === null
@@ -1014,9 +1213,15 @@ export class OpenClawAdapter implements AgentAdapterCore {
 	): Promise<SessionBatchScan> {
 		const materializeCanonicalActivity =
 			request.kind === "complete" && knownSourceRevisions.size === 0;
+		const incompleteReasons: ActivityIncompleteReasons = new Map();
 		const inventory = this.inventoryReader
 			? await this.inventoryReader(context)
-			: await readOfficialSessionInventory(this.home, context, this.profileAgentId);
+			: await readOfficialSessionInventory(
+					this.home,
+					context,
+					this.profileAgentId,
+					incompleteReasons,
+				);
 		let coverage: SessionBatchScan["coverage"] = request.kind === "paths" ? "partial" : "complete";
 		let transcriptPaths: ReadonlySet<string> | undefined;
 		if (!inventory && request.kind === "paths") {
@@ -1045,7 +1250,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				}
 			} else coverage = "complete";
 		}
-		const collection = emptySessionCollection(inventory?.complete ?? true);
+		const collection = emptySessionCollection(inventory?.complete ?? true, incompleteReasons);
 		const source = inventory
 			? this.collectOfficialSessionsMatching(
 					inventory,
@@ -1078,9 +1283,18 @@ export class OpenClawAdapter implements AgentAdapterCore {
 								inventory,
 								collection.classifiedTranscriptPaths,
 								adapter.profileAgentDirectoryListing(),
+								incompleteReasons,
+								adapter.zstdSupport,
 								context,
 							),
 						),
+					);
+				}
+				// Successful partial/incremental reads cannot clear a failed canonical baseline.
+				if (incompleteReasons.size > 0 || materializeCanonicalActivity) {
+					warnActivityIncompleteOnChange(
+						JSON.stringify([resolve(adapter.home), adapter.profileAgentId ?? null]),
+						incompleteReasons,
 					);
 				}
 			})(),
@@ -1131,7 +1345,12 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		context?.signal.throwIfAborted();
 		const agentDirectoryListing = this.profileAgentDirectoryListing();
 		const agentDirs = agentDirectoryListing.dirs;
-		collection.userActivity.complete &&= agentDirectoryListing.complete;
+		if (!agentDirectoryListing.complete)
+			markActivityIncomplete(
+				collection.userActivity,
+				collection.incompleteReasons,
+				"agent_directory_unreadable",
+			);
 		if (agentDirs.length === 0) return;
 
 		const { projectFilter } = opts;
@@ -1152,7 +1371,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				index = parsed;
 			} catch {
 				context?.signal.throwIfAborted();
-				userActivity.complete = false;
+				markActivityIncomplete(
+					userActivity,
+					collection.incompleteReasons,
+					"session_index_unreadable",
+				);
 				continue;
 			}
 
@@ -1200,6 +1423,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				});
 				if (existsSync(transcriptPath)) {
 					Object.assign(userActivity, mergeUserActivity(userActivity, materialized.userActivity));
+					mergeActivityReasons(collection.incompleteReasons, materialized.incompleteReasons);
 				}
 				if (materialized.scanIssue) collection.scanIssues.push(materialized.scanIssue);
 				yield takeSessionBatch(collection, materialized.session);
@@ -1226,7 +1450,11 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (!sessionId && isInternalOpenClawSession(entry.key, entry)) continue;
 			const updatedAt = entry.updatedAt;
 			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
-				userActivity.complete = false;
+				markActivityIncomplete(
+					userActivity,
+					collection.incompleteReasons,
+					"session_updated_at_invalid",
+				);
 				continue;
 			}
 			const projectPath = entry.spawnedCwd ?? entry.spawnedWorkspaceDir ?? entry.acp?.cwd ?? null;
@@ -1240,7 +1468,12 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				continue;
 			}
 
-			const reader = officialTranscriptReader(entry, this.home, context);
+			const reader = officialTranscriptReader(
+				entry,
+				this.home,
+				context,
+				collection.incompleteReasons,
+			);
 			const description = await describeSessionContent(reader.readEvents, !context?.streaming);
 			const transcript = reader.initial.available;
 			if (!transcript && entry.sessionFile && sessionId && sourceRevision) {
@@ -1264,15 +1497,17 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				});
 				if (existsSync(transcriptPath)) {
 					Object.assign(userActivity, mergeUserActivity(userActivity, legacy.userActivity));
+					mergeActivityReasons(collection.incompleteReasons, legacy.incompleteReasons);
 				}
 				if (legacy.scanIssue) collection.scanIssues.push(legacy.scanIssue);
 				yield takeSessionBatch(collection, legacy.session);
 				continue;
 			}
 			if (!transcript) {
-				userActivity.complete = false;
-				console.warn(
-					`[openclaw] could not read active transcript for ${sessionId ?? entry.key} through official transcript surfaces`,
+				markActivityIncomplete(
+					userActivity,
+					collection.incompleteReasons,
+					"official_transcript_unavailable",
 				);
 				continue;
 			}
