@@ -80,6 +80,18 @@ filtered. External dashboards and insights were not inspected; this migration
 only renames unmerged PR series and never-emitted definitions. See
 [metric and event definitions](docs/backend-development.md#product-analytics-and-operational-metrics).
 
+### CLI 0.16.25
+
+- **OpenClaw compatibility:** support managed provider sign-in inspection and
+  transcript sync on OpenClaw 2026.10.10+. Read sign-in state asynchronously and
+  prepare runtime configuration before reading transcripts on system Node.
+- **OpenClaw activity:** read zstd-compressed deleted/reset transcript archives
+  to avoid unknown activity and repeated transcript reads on every cycle.
+  Report a reason code when an activity scan remains incomplete.
+- **OpenClaw skills:** resolve the workspace once per daemon reconcile cycle
+  instead of on every skills poll. Recheck the current workspace before skill
+  deletion, removal or ownership changes.
+
 ### CLI 0.16.24
 
 - **Hermes:** recognize fresh, requested restart drains while Hermes finishes
