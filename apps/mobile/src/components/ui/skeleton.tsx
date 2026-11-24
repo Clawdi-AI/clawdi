@@ -8,14 +8,7 @@ import { resolveWebClasses } from "@/lib/web-classes";
 
 const AnimatedView = withUniwind(Animated.View);
 
-/**
- * Tailwind `animate-pulse`: `pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite`.
- *
- * Keep this a CSS animation. Reanimated 4.5 on Android replays every
- * `useAnimatedStyle` view's last props during draw-pass events, including views
- * that were already removed, which floods the UI thread and causes ANRs
- * (software-mansion/react-native-reanimated#10434, fixed in 4.7.1).
- */
+/** Tailwind `animate-pulse`: `pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite`. */
 const styles = css.create({
 	pulse: {
 		animationName: css.keyframes({ "50%": { opacity: 0.5 } }),
