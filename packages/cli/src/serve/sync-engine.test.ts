@@ -1908,6 +1908,7 @@ describe("daemon startup Agent lookup", () => {
 			logs: string[];
 			root: string;
 		}) => Promise<void>,
+		options: { profilesSupported?: boolean } = {},
 	): Promise<void> {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-daemon-startup-"));
 		const originalFetch = globalThis.fetch;
@@ -1929,7 +1930,7 @@ describe("daemon startup Agent lookup", () => {
 			process.exitCode = 0;
 			globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 				const request = input instanceof Request ? input : new Request(input, init);
-				if (new URL(request.url).pathname.endsWith("/profiles"))
+				if (!options.profilesSupported && new URL(request.url).pathname.endsWith("/profiles"))
 					return new Response("Not Found", { status: 404 });
 				requests.push(request);
 				return fetchImpl(request);
@@ -2064,6 +2065,193 @@ describe("daemon startup Agent lookup", () => {
 			},
 		);
 	});
+
+	it.each([
+		{ surface: "SDK", scanFailure: false },
+		{ surface: "Gateway", scanFailure: false },
+		{ surface: "Gateway", scanFailure: true },
+	])(
+		"handles official OpenClaw transcripts from $surface (reader failure: $scanFailure)",
+		async ({ surface, scanFailure }) => {
+			const verified = Promise.withResolvers<void>();
+			const uploaded: string[] = [];
+			const lastSyncErrors = new Set<string | null>();
+			let scansFinished = false;
+			await withStartupCase(
+				async (request) => {
+					const path = new URL(request.url).pathname;
+					if (path === "/v1/agents/agent-openclaw") {
+						return Response.json({ id: "agent-openclaw", default_project_id: "project-1" });
+					}
+					if (path === "/v1/agents/agent-openclaw/profiles") {
+						return Response.json(request.method === "GET" ? [] : {});
+					}
+					if (path === "/v1/sessions/upload-capabilities")
+						return new Response(null, { status: 404 });
+					if (path === "/v1/sessions/batch") {
+						const body = (await request.json()) as {
+							sessions: Array<{ local_session_id: string }>;
+						};
+						return Response.json({
+							needs_content: body.sessions.map((session) => session.local_session_id),
+						});
+					}
+					if (path.startsWith("/v1/sessions/") && path.endsWith("/upload")) {
+						const contentHash = (await request.formData()).get("expected_content_hash");
+						if (typeof contentHash !== "string") return new Response(null, { status: 400 });
+						uploaded.push(path);
+						return Response.json({ status: "uploaded", content_hash: contentHash });
+					}
+					if (path === "/v1/agents/agent-openclaw/sync-heartbeat") {
+						const body = (await request.json()) as { last_sync_error: string | null };
+						if (scansFinished && (scanFailure || uploaded.length > 0)) {
+							lastSyncErrors.add(body.last_sync_error);
+							verified.resolve();
+						}
+						return new Response(null, { status: 204 });
+					}
+					return new Response(`Unexpected request: ${path}`, { status: 500 });
+				},
+				async ({ abortController, root, logs }) => {
+					const stateRoot = join(root, ".openclaw");
+					const bin = join(root, "bin");
+					mkdirSync(bin);
+					mkdirSync(join(stateRoot, "agents", "main", "sessions"), { recursive: true });
+					writeFileSync(
+						join(stateRoot, "inventory.json"),
+						JSON.stringify({
+							sessions: ["affected", "valid"].map((sessionId) => ({
+								sessionId,
+								agentId: "main",
+								key: `agent:main:${sessionId}`,
+								updatedAt: Date.parse("2026-04-20T10:00:00Z"),
+							})),
+						}),
+					);
+					for (const sessionId of ["affected", "valid"]) {
+						const message = {
+							role: "user",
+							timestamp: "2026-04-20T10:00:00Z",
+							content:
+								sessionId === "affected" && !scanFailure
+									? "x".repeat(SESSION_RECORD_MAX_BYTES)
+									: "hello",
+							...(sessionId === "affected" && scanFailure ? { model: "m".repeat(8193) } : {}),
+						};
+						writeFileSync(
+							join(stateRoot, `${sessionId}.json`),
+							JSON.stringify({ messages: [message] }),
+						);
+					}
+					writeFileSync(
+						join(bin, "openclaw"),
+						`#!/bin/sh
+if [ "$1" = "sessions" ]; then cat "$HOME/.openclaw/inventory.json"; exit; fi
+if [ "$1 $2" = "agents list" ]; then printf '[{"id":"main","workspace":"%s"}]' "$HOME"; exit; fi
+if [ "$1 $2 $3" = "gateway call chat.history" ] && [ "${surface}" = Gateway ]; then
+  case "$5" in
+    *agent:main:affected*) cat "$HOME/.openclaw/affected.json"; exit;;
+    *agent:main:valid*) cat "$HOME/.openclaw/valid.json"; exit;;
+  esac
+fi
+exit 1
+`,
+						{ mode: 0o755 },
+					);
+					if (surface === "SDK") {
+						const sdkRoot = join(root, ".local", "lib", "node_modules", "openclaw");
+						mkdirSync(sdkRoot, { recursive: true });
+						writeFileSync(
+							join(sdkRoot, "package.json"),
+							JSON.stringify({
+								name: "openclaw",
+								exports: { "./plugin-sdk/session-transcript-runtime": "./transcript.mjs" },
+							}),
+						);
+						writeFileSync(
+							join(sdkRoot, "transcript.mjs"),
+							`import { readFileSync } from "node:fs";
+export function readVisibleSessionTranscriptMessageEntries({ sessionId }) {
+  const file = new URL("../../../../.openclaw/" + sessionId + ".json", import.meta.url);
+  return JSON.parse(readFileSync(file, "utf8")).messages.map((message) => ({ message }));
+}
+`,
+						);
+					}
+
+					const env = new Map(
+						["HOME", "PATH", "OPENCLAW_STATE_DIR", "OPENCLAW_AGENT_ID", "CLAWDI_RUNTIME_USER"].map(
+							(key) => [key, process.env[key]],
+						),
+					);
+					process.env.HOME = root;
+					process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+					process.env.OPENCLAW_STATE_DIR = stateRoot;
+					delete process.env.OPENCLAW_AGENT_ID;
+					delete process.env.CLAWDI_RUNTIME_USER;
+					const watcher = spyOn(sessionsWatcher, "watchSessions").mockImplementation(
+						async ({ onPathStable }) => {
+							await onPathStable({ kind: "rescan" });
+							scansFinished = true;
+						},
+					);
+					const deadline = setTimeout(() => abortController.abort(), 8_000);
+					try {
+						const openclaw = new OpenClawAdapter();
+						const running = runSyncEngine({
+							environmentId: "agent-openclaw",
+							adapter: {
+								agentType: openclaw.agentType,
+								detect: () => openclaw.detect(),
+								getVersion: () => openclaw.getVersion(),
+								sessions: openclaw.sessions,
+							},
+							abort: abortController.signal,
+							abortController,
+							heartbeatIntervalMs: 10,
+						});
+						try {
+							await Promise.race([running, verified.promise]);
+						} finally {
+							abortController.abort();
+							await running;
+						}
+						if (lastSyncErrors.size === 0) {
+							throw new Error(
+								`No heartbeat after the expected scan result: ${logs.slice(-10).join("")}`,
+							);
+						}
+						expect([...lastSyncErrors]).toEqual([
+							scanFailure ? "session scan: session model metadata exceeds supported bounds" : null,
+						]);
+						expect(uploaded).toEqual(scanFailure ? [] : ["/v1/sessions/valid/upload"]);
+						const warnings = logs
+							.filter((line) => line.includes('"event":"engine.session_source_skipped"'))
+							.map((line) => JSON.parse(line));
+						expect(warnings).toEqual(
+							scanFailure
+								? []
+								: [
+										expect.objectContaining({
+											level: "warn",
+											file: "openclaw-agent.sqlite#affected",
+											reason: `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`,
+										}),
+									],
+						);
+					} finally {
+						clearTimeout(deadline);
+						watcher.mockRestore();
+						for (const [key, value] of env) {
+							if (value === undefined) delete process.env[key];
+							else process.env[key] = value;
+						}
+					}
+				},
+				{ profilesSupported: true },
+			);
+		},
+	);
 
 	it.each([
 		{ name: "hosted", connected: false, failFirstTick: false },
