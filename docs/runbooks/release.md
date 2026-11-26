@@ -179,9 +179,9 @@ before the executable is removed. No root cleanup script is installed.
    Native ownership is separate: installed native executables update only from
    the exact `clawdi-cli-v<version>` manifest and assets. npm/Bun installs use
    exact npm versions. Hosted remains a separate exact-version npm authority and
-   never invokes native self-update. Bun's macOS artifacts are linker ad-hoc
-   signed; this release line does not claim Developer ID signing, notarization,
-   or browser-download Gatekeeper behavior.
+   never invokes native self-update. macOS CLI archives use Developer ID and
+   notarization by default. See the [CLI release instructions](../cli-development.md#to-ship-a-new-version-after-bootstrap)
+   for the temporary manual ad-hoc signing option during an Apple agreement block.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.

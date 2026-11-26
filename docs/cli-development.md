@@ -25,14 +25,15 @@ bun run --cwd packages/cli test:native-linux-lifecycle:internal
 ```
 
 The lifecycle command exercises the Linux x64 release layout. `build:native`
-itself builds the current host target. Release builds sign the macOS binaries
+itself builds the current host target. By default, release builds sign the macOS binaries
 with the Desktop Developer ID identity and Bun's JIT entitlements, then submit
 a zip containing each executable to `notarytool`. The published asset remains a
 tar archive containing the signed executable; bare executables cannot carry a
 stapled notarization ticket, so release verification uses `codesign`,
 the `notarytool` Accepted status and submission log. `spctl` is informational for
-bare executables. The publishing workflow requires all signing and notarization
-credentials; missing or incomplete credentials fail before final artifact upload.
+bare executables. Developer ID signing requires all Apple credentials and fails
+before final artifact upload if any are missing. See [the manual release
+instructions](#to-ship-a-new-version-after-bootstrap) for the temporary ad-hoc mode.
 
 Done: `scripts/test.sh cli tests/cli-publish-workflow.test.ts` exits 0.
 
@@ -1081,9 +1082,16 @@ Stop here for this release workflow. Hosted rollout selects the approved exact
 version through its Cloud manifest. The `beta` tag is publication metadata;
 production and Hosted never resolve an npm dist-tag.
 
-A manual run is available under `workflow_dispatch` if the auto-run needs a
-nudge. If release completion or npm publication failed, rerun that original
-workflow run so `GITHUB_SHA` and the artifact remain identical.
+Pushes and manual runs default to `macos_signing=developer-id`. If an expired
+Apple Developer agreement blocks notarization before release creation, operators
+can temporarily dispatch **Publish Agent v2 CLI** from `main` with
+`macos_signing=adhoc`. The job summary records the choice. This mode signs and
+smoke-tests both Darwin executables and refreshes their manifest hashes. These
+archives ship without Apple notarization, so macOS may block execution after a
+browser download. Return to `developer-id` once Apple notarization is available.
+
+If release completion or npm publication failed, rerun that original workflow
+run with the same signing mode so `GITHUB_SHA` and the artifact remain identical.
 
 ### Smoke checks before bumping the version
 

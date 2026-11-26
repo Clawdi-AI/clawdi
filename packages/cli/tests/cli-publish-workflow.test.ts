@@ -10,11 +10,13 @@ interface WorkflowJob {
 	if?: string;
 	needs?: unknown;
 	"runs-on"?: string;
+	env?: Record<string, string>;
 	permissions?: Record<string, string>;
 	steps?: Array<Record<string, unknown>>;
 }
 
 interface WorkflowDocument {
+	on: { workflow_dispatch: { inputs: Record<string, unknown> } };
 	jobs: Record<string, WorkflowJob>;
 }
 
@@ -34,6 +36,13 @@ const cliPackage = JSON.parse(
 	name: string;
 	version: string;
 	publishConfig?: { access?: string; tag?: unknown };
+};
+const appleCredentials = {
+	CSC_LINK: "fixture",
+	CSC_KEY_PASSWORD: "fixture",
+	APPLE_API_KEY_CONTENT: "fixture",
+	APPLE_API_KEY_ID: "fixture",
+	APPLE_API_ISSUER: "fixture",
 };
 
 describe("CLI pack inventory", () => {
@@ -225,7 +234,50 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("repository: Clawdi-AI/");
 	});
 
-	test("signs macOS archives before refreshing hashes and publishing", () => {
+	test("opts into ad-hoc signing only on explicit dispatch and records the mode", () => {
+		const sign = workflowDocument.jobs["sign-macos-native"];
+		expect(workflowDocument.on.workflow_dispatch.inputs.macos_signing).toMatchObject({
+			type: "choice",
+			default: "developer-id",
+			options: ["developer-id", "adhoc"],
+		});
+		expect(sign.env?.MACOS_SIGNING).toBe(
+			`\${{ github.event_name == 'workflow_dispatch' && inputs.macos_signing == 'adhoc' && 'adhoc' || 'developer-id' }}`,
+		);
+		const steps = sign.steps ?? [];
+		const developer = steps.find(
+			(step) => step.name === "Sign and notarize macOS native CLI archives",
+		);
+		const adhoc = steps.find((step) => step.name === "Ad-hoc sign macOS native CLI archives");
+		expect(developer?.if).toBe("env.MACOS_SIGNING == 'developer-id'");
+		expect(adhoc?.if).toBe("env.MACOS_SIGNING == 'adhoc'");
+		expect(JSON.stringify([sign.env, ...steps.filter((step) => step !== developer)])).not.toContain(
+			"secrets.",
+		);
+		expect(adhoc?.run).not.toMatch(/APPLE_API|CSC_|keychain|notarytool/);
+		expect(adhoc?.run).toContain("codesign --force --sign - --options runtime");
+		expect(adhoc?.run).toContain('--entitlements "$entitlements"');
+		expect(adhoc?.run).toContain('codesign --verify --strict --verbose=2 "$cli"');
+		expect(adhoc?.run).toContain('version="$("$cli" --version)"');
+		expect(adhoc?.run).toContain('test "$version" = "$CLI_VERSION"');
+		const summary = steps.find((step) => step.name === "Record macOS signing mode")?.run;
+		expect(summary).toContain('"$MACOS_SIGNING" >> "$GITHUB_STEP_SUMMARY"');
+		const manifest = steps.find(
+			(step) => step.name === "Refresh and verify native release manifest",
+		);
+		expect(manifest?.if).toBeUndefined();
+		expect(manifest?.run).toMatch(
+			/refresh-native-release-manifest\.mjs[\s\S]*check-native-release\.mjs/,
+		);
+		const manifestIndex = steps.indexOf(manifest ?? {});
+		expect(manifestIndex).toBeGreaterThan(steps.indexOf(developer ?? {}));
+		expect(manifestIndex).toBeGreaterThan(steps.indexOf(adhoc ?? {}));
+		expect(manifestIndex).toBeLessThan(
+			steps.findIndex((step) => step.uses === "actions/upload-artifact@v7"),
+		);
+	});
+
+	test("verifies Developer ID and notarization before repacking macOS archives", () => {
 		const sign = workflowDocument.jobs["sign-macos-native"];
 		const signRun = sign.steps?.find((step) =>
 			String(step.name).startsWith("Sign and notarize"),
@@ -233,13 +285,7 @@ describe("CLI publish workflow contract", () => {
 		expect(sign?.["runs-on"]).toBe("macos-15");
 		expect(typeof signRun).toBe("string");
 		if (typeof signRun !== "string") throw new Error("signing step is missing");
-		for (const secret of [
-			"CSC_LINK",
-			"CSC_KEY_PASSWORD",
-			"APPLE_API_KEY_CONTENT",
-			"APPLE_API_KEY_ID",
-			"APPLE_API_ISSUER",
-		]) {
+		for (const secret of Object.keys(appleCredentials)) {
 			expect(signRun).toContain(secret);
 		}
 		expect(signRun).toContain("with-signing-keychain.sh");
@@ -249,6 +295,8 @@ describe("CLI publish workflow contract", () => {
 		expect(signRun).toContain("codesign --force --options runtime --timestamp");
 		expect(signRun).toContain("--identifier ai.clawdi.cli");
 		expect(signRun).toContain("--entitlements");
+		expect(signRun).toContain("^Authority=Developer ID Application:");
+		expect(signRun).toContain("^TeamIdentifier=[A-Z0-9]{10}$");
 		expect(signRun).toContain("xcrun notarytool submit");
 		expect(signRun).toContain("xcrun notarytool log");
 		expect(signRun).toContain("submission_status");
@@ -272,13 +320,6 @@ describe("CLI publish workflow contract", () => {
 		expect(signRun.indexOf("if ! spctl --assess --type execute")).toBeLessThan(
 			signRun.indexOf("package-native-release.mjs"),
 		);
-		expect(signRun).toContain("refresh-native-release-manifest.mjs");
-		expect(signRun.indexOf("package-native-release.mjs")).toBeLessThan(
-			signRun.indexOf("refresh-native-release-manifest.mjs"),
-		);
-		expect(signRun.indexOf("refresh-native-release-manifest.mjs")).toBeLessThan(
-			signRun.indexOf("check-native-release.mjs"),
-		);
 		const buildScript = readFileSync(
 			resolve(import.meta.dir, "../scripts/build-native-release.mjs"),
 			"utf8",
@@ -292,19 +333,11 @@ describe("CLI publish workflow contract", () => {
 		const signStep = sign.steps?.find((step) => String(step.name).startsWith("Sign and notarize"));
 		const run = signStep?.run;
 		if (typeof run !== "string") throw new Error("signing step is missing");
-		expect(signStep?.if).toBeUndefined();
 		expect(signStep?.["continue-on-error"]).toBeUndefined();
-		const credentials = {
-			CSC_LINK: "fixture",
-			CSC_KEY_PASSWORD: "fixture",
-			APPLE_API_KEY_CONTENT: "fixture",
-			APPLE_API_KEY_ID: "fixture",
-			APPLE_API_ISSUER: "fixture",
-		};
-		for (const missing of Object.keys(credentials)) {
+		for (const missing of Object.keys(appleCredentials)) {
 			const result = spawnSync("bash", ["--noprofile", "--norc", "-c", run], {
 				encoding: "utf8",
-				env: { PATH: process.env.PATH, ...credentials, [missing]: "" },
+				env: { PATH: process.env.PATH, ...appleCredentials, [missing]: "" },
 			});
 			expect(result.status).toBe(1);
 			expect(result.stderr).toContain("credentials are incomplete");
@@ -319,11 +352,17 @@ describe("CLI publish workflow contract", () => {
 		expect(publish.if).toBeUndefined();
 	});
 
-	test("complete credentials sign both Darwin archives and refresh the actual manifest", () => {
-		const run = workflowDocument.jobs["sign-macos-native"].steps?.find((step) =>
-			String(step.name).startsWith("Sign and notarize"),
+	test.each(["developer-id", "adhoc"])("%s refreshes hashes for both signed archives", (mode) => {
+		const steps = workflowDocument.jobs["sign-macos-native"].steps ?? [];
+		const signing = steps.find((step) => step.if === `env.MACOS_SIGNING == '${mode}'`)?.run;
+		const manifestCheck = steps.find(
+			(step) => step.name === "Refresh and verify native release manifest",
 		)?.run;
-		if (typeof run !== "string") throw new Error("signing step is missing");
+		if (typeof signing !== "string" || typeof manifestCheck !== "string")
+			throw new Error("signing or manifest step is missing");
+		const adhoc = mode === "adhoc";
+		const unexpectedAppleTool =
+			"echo 'Unexpected Apple credential or notarization tool' >&2; exit 1";
 		const directory = mkdtempSync(join(tmpdir(), "clawdi-signing-workflow-"));
 		try {
 			const bin = join(directory, "bin");
@@ -338,21 +377,24 @@ describe("CLI publish workflow contract", () => {
 			);
 			writeFileSync(
 				join(directory, "apps/desktop/scripts/with-signing-keychain.sh"),
-				'#!/bin/sh\nexec "$@"\n',
+				adhoc ? unexpectedAppleTool : 'exec "$@"\n',
 			);
 			// Apple tooling is unavailable on Linux. Exercise the real shell gates,
 			// archive repacking and manifest checks with only the OS tools replaced.
 			const tools: Record<string, string> = {
 				codesign: `case "$1" in
   --force) for cli do :; done; printf '\n# signed fixture\n' >> "$cli" ;;
-  -dv) printf 'Authority=Developer ID Application: Fixture\nTeamIdentifier=ABCDE12345\n' >&2 ;;
+  -dv) printf '%s\n' '${adhoc ? "Signature=adhoc" : "Authority=Developer ID Application: Fixture\nTeamIdentifier=ABCDE12345"}' >&2 ;;
 esac`,
-				xcrun: `case "$2" in
+				xcrun: adhoc
+					? unexpectedAppleTool
+					: `case "$2" in
   submit) printf '{"id":"fixture-submission","status":"Accepted"}\n' ;;
   *) printf '{}\n' ;;
 esac`,
-				ditto: "exit 0",
-				spctl: "exit 1",
+				ditto: adhoc ? unexpectedAppleTool : "exit 0",
+				spctl: adhoc ? unexpectedAppleTool : "exit 1",
+				security: unexpectedAppleTool,
 			};
 			for (const [name, script] of Object.entries(tools))
 				writeFileSync(join(bin, name), `#!/bin/sh\nset -eu\n${script}\n`, { mode: 0o755 });
@@ -376,7 +418,11 @@ esac`,
 					"skills/hosted-versions/1/clawdi/SKILL.md",
 				]) {
 					mkdirSync(resolve(stage, file, ".."), { recursive: true });
-					writeFileSync(join(stage, file), "fixture payload", { mode: 0o755 });
+					const payload =
+						file === "clawdi" && target.startsWith("darwin")
+							? '#!/bin/sh\n[ "$1" = "--version" ] || exit 1\nprintf "%s\\n" "$CLI_VERSION"\n'
+							: "fixture payload";
+					writeFileSync(join(stage, file), payload, { mode: 0o755 });
 				}
 				const pack = spawnSync(
 					process.execPath,
@@ -391,22 +437,21 @@ esac`,
 						.digest("hex"),
 				);
 			}
-			const result = spawnSync("bash", ["--noprofile", "--norc", "-c", run], {
-				cwd: directory,
-				encoding: "utf8",
-				env: {
-					...process.env,
-					PATH: `${bin}:${process.env.PATH ?? ""}`,
-					RUNNER_TEMP: runnerTemp,
-					CLI_VERSION: cliPackage.version,
-					CSC_LINK: "fixture",
-					CSC_KEY_PASSWORD: "fixture",
-					APPLE_API_KEY_CONTENT: "fixture",
-					APPLE_API_KEY_ID: "fixture",
-					APPLE_API_ISSUER: "fixture",
-				},
-			});
-			expect(result.stderr).not.toContain("Error");
+			const run = (script: string) =>
+				spawnSync("bash", ["--noprofile", "--norc", "-ec", script], {
+					cwd: directory,
+					encoding: "utf8",
+					env: {
+						PATH: `${bin}:${process.env.PATH ?? ""}`,
+						RUNNER_TEMP: runnerTemp,
+						CLI_VERSION: cliPackage.version,
+						...(!adhoc ? appleCredentials : {}),
+					},
+				});
+			const signed = run(signing);
+			expect(signed.stderr).not.toContain("Unexpected Apple");
+			expect(signed.status).toBe(0);
+			const result = run(manifestCheck);
 			expect(result.status).toBe(0);
 			expect(result.stdout).toContain("v2: 8 targets");
 			const manifest = readFileSync(join(release, "clawdi-cli-manifest-v2.txt"), "utf8");
