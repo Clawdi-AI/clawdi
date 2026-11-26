@@ -3,18 +3,20 @@ import { join } from "node:path";
 import type { AgentType } from "../adapters/agent-types";
 import type { SessionUserActivity } from "../adapters/base";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { RECENT_USER_INPUT_WINDOW_MS } from "../lib/session-activity";
 import { getServeStateDir } from "../serve/paths";
 
-export const RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION = 1;
+export const RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION = 2;
 
 type SupportedRuntime = "hermes" | "openclaw";
 
 export interface RuntimeUserActivityState {
 	schemaVersion: "clawdi.runtimeUserActivity.v1";
 	agentType: SupportedRuntime;
-	classifierVersion: 1;
+	classifierVersion: typeof RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION;
 	classification: "known_last_user_input" | "known_no_user_input" | "unknown";
 	lastUserInputAt: string | null;
+	recentUserInputCount: number | null;
 	observedAt: string;
 	completeAt: string | null;
 	error?: string;
@@ -41,6 +43,7 @@ export function readRuntimeUserActivityState(path: string): RuntimeUserActivityS
 			!isIsoTimestamp(row.observedAt) ||
 			!(row.completeAt === null || isIsoTimestamp(row.completeAt)) ||
 			!(row.lastUserInputAt === null || isIsoTimestamp(row.lastUserInputAt)) ||
+			!(row.recentUserInputCount === null || isUserInputCount(row.recentUserInputCount)) ||
 			!(row.error === undefined || typeof row.error === "string")
 		) {
 			return null;
@@ -51,6 +54,7 @@ export function readRuntimeUserActivityState(path: string): RuntimeUserActivityS
 		if (row.classification === "known_no_user_input" && row.lastUserInputAt !== null) return null;
 		if (row.classification !== "unknown" && row.completeAt === null) return null;
 		if (row.classification === "unknown" ? !row.error : row.error !== undefined) return null;
+		if (row.classification === "unknown" && row.recentUserInputCount !== null) return null;
 		const observedAt = new Date(row.observedAt).getTime();
 		if (row.completeAt !== null && new Date(row.completeAt).getTime() > observedAt) return null;
 		if (row.lastUserInputAt !== null && new Date(row.lastUserInputAt).getTime() > observedAt)
@@ -61,6 +65,7 @@ export function readRuntimeUserActivityState(path: string): RuntimeUserActivityS
 			classifierVersion: RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION,
 			classification: row.classification,
 			lastUserInputAt: row.lastUserInputAt,
+			recentUserInputCount: row.recentUserInputCount,
 			observedAt: row.observedAt,
 			completeAt: row.completeAt,
 			...(typeof row.error === "string" ? { error: row.error } : {}),
@@ -85,25 +90,45 @@ export function recordRuntimeUserActivityScan(input: {
 	agentType: AgentType;
 	userActivity: SessionUserActivity;
 	complete: boolean;
+	materialize?: boolean;
+	refresh?: boolean;
 	observedAt?: Date;
 }): void {
 	if (!supportsRuntimeUserActivity(input.agentType)) return;
 	const path = runtimeUserActivityStatePath(input.agentType);
 	const stored = readRuntimeUserActivityState(path);
 	const previous = stored?.agentType === input.agentType ? stored : null;
-	const observedAt = maxTimestamp(
-		previous?.observedAt ?? null,
-		(input.observedAt ?? new Date()).toISOString(),
-	) as string;
-	const latest = maxTimestamp(
-		previous?.lastUserInputAt ?? null,
-		input.userActivity.lastUserInputAt,
-	);
+	const observationTime = input.observedAt ?? new Date();
+	const observedAtMs = observationTime.getTime();
+	const observedAt = observationTime.toISOString();
+	if (previous && observedAtMs < Date.parse(previous.observedAt)) return;
+	const scanLatest = maxTimestamp(input.userActivity.lastUserInputAt);
+	const previousLatest = maxTimestamp(previous?.lastUserInputAt ?? null);
+	const latest = maxTimestamp(previousLatest, scanLatest);
 	const priorBaselineKnown =
 		previous !== null && previous.classification !== "unknown" && previous.completeAt !== null;
 	const known = input.userActivity.complete && (input.complete || priorBaselineKnown);
-	const timestampIsValid =
-		latest === null || new Date(latest).getTime() <= new Date(observedAt).getTime();
+	const timestampIsValid = latest === null || Date.parse(latest) <= observedAtMs;
+	const count = input.userActivity.recentUserInputCount;
+	if (input.refresh && priorBaselineKnown && (!input.complete || !known || !timestampIsValid)) {
+		writeState(path, { ...previous, recentUserInputCount: null });
+		return;
+	}
+	// An incremental scan can retain the previous snapshot when it adds no newer evidence.
+	if (
+		known &&
+		priorBaselineKnown &&
+		!input.materialize &&
+		count === null &&
+		previous.recentUserInputCount !== null &&
+		latest === previousLatest
+	)
+		return;
+	// A retained message inside this window may be absent from the newly scanned sources.
+	const retainedRecentInput =
+		latest !== null &&
+		latest !== scanLatest &&
+		Date.parse(latest) >= observedAtMs - RECENT_USER_INPUT_WINDOW_MS;
 	writeState(path, {
 		schemaVersion: "clawdi.runtimeUserActivity.v1",
 		agentType: input.agentType,
@@ -115,6 +140,7 @@ export function recordRuntimeUserActivityScan(input: {
 					: "known_no_user_input"
 				: "unknown",
 		lastUserInputAt: timestampIsValid ? latest : (previous?.lastUserInputAt ?? null),
+		recentUserInputCount: known && timestampIsValid && !retainedRecentInput ? count : null,
 		observedAt,
 		completeAt: known && timestampIsValid ? observedAt : (previous?.completeAt ?? null),
 		...(known && timestampIsValid
@@ -128,18 +154,25 @@ export function recordRuntimeUserActivityScan(input: {
 export function markRuntimeUserActivityUnknown(
 	agentType: AgentType,
 	error = "activity_scan_failed",
+	preserveBaseline = false,
 ): void {
 	if (!supportsRuntimeUserActivity(agentType)) return;
 	const path = runtimeUserActivityStatePath(agentType);
 	const stored = readRuntimeUserActivityState(path);
 	const previous = stored?.agentType === agentType ? stored : null;
+	if (preserveBaseline && previous && previous.classification !== "unknown") {
+		writeState(path, { ...previous, recentUserInputCount: null });
+		return;
+	}
+	const failedAt = new Date().toISOString();
 	writeState(path, {
 		schemaVersion: "clawdi.runtimeUserActivity.v1",
 		agentType,
 		classifierVersion: RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION,
 		classification: "unknown",
 		lastUserInputAt: previous?.lastUserInputAt ?? null,
-		observedAt: new Date().toISOString(),
+		recentUserInputCount: null,
+		observedAt: maxTimestamp(previous?.observedAt ?? null, failedAt) ?? failedAt,
 		completeAt: previous?.completeAt ?? null,
 		error,
 	});
@@ -164,6 +197,10 @@ function isClassification(value: unknown): value is RuntimeUserActivityState["cl
 
 function isIsoTimestamp(value: unknown): value is string {
 	return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
+}
+
+function isUserInputCount(value: unknown): value is number {
+	return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function maxTimestamp(...values: Array<string | null>): string | null {

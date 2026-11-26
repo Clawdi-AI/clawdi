@@ -6,6 +6,7 @@ import type { components } from "@clawdi/shared/api";
 import JSON5 from "json5";
 import { parse as parseYaml } from "yaml";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
+import { USER_ACTIVITY_COUNT_MAX_SKEW_MS } from "../lib/session-activity";
 import { getCliVersion } from "../lib/version";
 import { toErrorMessage } from "../serve/log";
 import {
@@ -45,7 +46,11 @@ import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import { managedRuntimeSystemdUnitEntries, parseSystemctlShow, systemctlPath } from "./systemd";
 import { runtimeUserName } from "./systemd-user";
-import { readRuntimeUserActivityState, runtimeUserActivityStatePath } from "./user-activity-state";
+import {
+	RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION,
+	readRuntimeUserActivityState,
+	runtimeUserActivityStatePath,
+} from "./user-activity-state";
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
@@ -315,6 +320,19 @@ function observedUserActivity(
 	const lastUserInputAt = maxIso(states.map((state) => state?.lastUserInputAt ?? null));
 	const observedAt = maxIso(states.map((state) => state?.observedAt ?? reportedAt)) ?? reportedAt;
 	const completeAt = minIso(states.map((state) => state?.completeAt ?? null));
+	const countCutoff = Date.parse(observedAt) - USER_ACTIVITY_COUNT_MAX_SKEW_MS;
+	let recentUserInputCount: number | null = 0;
+	for (const state of states) {
+		if (
+			!state ||
+			Date.parse(state.observedAt) < countCutoff ||
+			state.recentUserInputCount === null
+		) {
+			recentUserInputCount = null;
+			break;
+		}
+		recentUserInputCount += state.recentUserInputCount;
+	}
 	const classification = known
 		? lastUserInputAt
 			? "known_last_user_input"
@@ -325,9 +343,10 @@ function observedUserActivity(
 		: (unknown?.error ?? (missing ? "activity_cache_missing" : "activity_scan_incomplete"));
 	return {
 		schemaVersion: 1,
-		classifierVersion: 1,
+		classifierVersion: RUNTIME_USER_ACTIVITY_CLASSIFIER_VERSION,
 		classification,
 		lastUserInputAt,
+		recentUserInputCount,
 		observedAt,
 		completeAt,
 		enabledRuntimes,

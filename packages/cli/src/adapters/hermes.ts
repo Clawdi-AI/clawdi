@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
+import { RECENT_USER_INPUT_WINDOW_MS } from "../lib/session-activity";
 import { durationSecondsBetween } from "../lib/session-duration";
 import {
 	projectEventsToMessages,
@@ -92,7 +93,14 @@ interface SessionSizeRow {
 
 interface UserActivityRow {
 	last_user_input_at: number | string | null;
+	recent_user_input_count: number;
 }
+
+// Hermes context compression uses these reserved user-role placeholders for turns with no human input.
+const HERMES_COMPRESSION_CONTINUATIONS = [
+	"Continue from the compressed conversation context above. This marker exists because no human user turn was available.",
+	"Continue from the compressed conversation context above. This marker exists because the compacted transcript contained no preserved user turn.",
+] as const;
 
 const MODERN_MESSAGE_CORE_COLUMNS = ["session_id", "role", "content", "timestamp"] as const;
 
@@ -196,7 +204,7 @@ async function sessionSourceRevision(
 	return hash.digest("hex");
 }
 
-function hermesUserActivity(db: ReadonlySqliteDatabase): SessionUserActivity {
+function hermesUserActivity(db: ReadonlySqliteDatabase, observedAt: number): SessionUserActivity {
 	const sessionColumns = new Set(
 		(db.prepare("PRAGMA table_info(sessions)").all() as TableInfoRow[]).map(
 			(column) => column.name,
@@ -207,33 +215,48 @@ function hermesUserActivity(db: ReadonlySqliteDatabase): SessionUserActivity {
 		!["id", "source"].every((column) => sessionColumns.has(column)) ||
 		!["session_id", "role", "timestamp"].every((column) => messageColumns.has(column))
 	) {
-		return { lastUserInputAt: null, complete: false };
+		return { lastUserInputAt: null, recentUserInputCount: null, complete: false };
 	}
 	// parent_session_id chains are compression splits of the same conversation, so they
 	// count. Delegated subagents are tagged by source or by model_config._delegate_from.
 	const delegated = sessionColumns.has("model_config")
 		? "AND NOT (json_valid(s.model_config) AND json_extract(s.model_config, '$._delegate_from') IS NOT NULL)"
 		: "";
+	const continuationMarkers = messageColumns.has("content") ? HERMES_COMPRESSION_CONTINUATIONS : [];
+	const humanContent = continuationMarkers.length
+		? "AND trim(coalesce(m.content, '')) NOT IN (?, ?)"
+		: "";
 	try {
 		const row = db
 			.prepare(`
-				SELECT MAX(m.timestamp) AS last_user_input_at
+				SELECT MAX(m.timestamp) AS last_user_input_at,
+				       COUNT(CASE WHEN m.timestamp BETWEEN ? AND ? THEN 1 END) AS recent_user_input_count
 				FROM messages AS m
 				JOIN sessions AS s ON s.id = m.session_id
 				WHERE lower(m.role) = 'user'
-				  AND lower(coalesce(s.source, '')) NOT IN ('cron', 'subagent', 'curator', 'kanban')
+				  AND lower(coalesce(s.source, '')) NOT IN ('cron', 'subagent', 'curator', 'kanban', 'tool')
 				  ${delegated}
+				  ${humanContent}
 			`)
-			.get() as UserActivityRow | undefined;
-		const timestamp = row?.last_user_input_at ?? null;
-		if (timestamp === null) return { lastUserInputAt: null, complete: true };
-		const lastUserInputAt = timestampIso(Number(timestamp));
-		return lastUserInputAt
-			? { lastUserInputAt, complete: true }
-			: { lastUserInputAt: null, complete: false };
+			.get(
+				(observedAt - RECENT_USER_INPUT_WINDOW_MS) / 1000,
+				observedAt / 1000,
+				...continuationMarkers,
+			) as UserActivityRow | undefined;
+		if (row) {
+			const lastUserInputAt =
+				row.last_user_input_at === null ? null : timestampIso(Number(row.last_user_input_at));
+			if (lastUserInputAt !== undefined)
+				return {
+					lastUserInputAt,
+					recentUserInputCount: row.recent_user_input_count,
+					complete: true,
+				};
+		}
 	} catch {
-		return { lastUserInputAt: null, complete: false };
+		// Missing or unreadable activity data cannot establish a count.
 	}
+	return { lastUserInputAt: null, recentUserInputCount: null, complete: false };
 }
 
 function decodeHermesContent(content: string | null): unknown {
@@ -585,14 +608,14 @@ export class HermesAdapter implements AgentAdapterCore {
 		if (!existsSync(this.stateDbPath())) {
 			return {
 				coverage: "complete",
-				userActivity: { lastUserInputAt: null, complete: false },
+				userActivity: { lastUserInputAt: null, recentUserInputCount: null, complete: false },
 				batches: (async function* () {})(),
 			};
 		}
 		const db = await openReadonlySqlite(this.stateDbPath());
 		try {
 			context?.signal.throwIfAborted();
-			const activity = hermesUserActivity(db);
+			const activity = hermesUserActivity(db, context?.userActivityObservedAt ?? Date.now());
 			return {
 				coverage: "complete",
 				userActivity: activity,

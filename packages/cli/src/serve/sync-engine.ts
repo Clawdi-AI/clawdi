@@ -60,7 +60,7 @@ import {
 } from "../lib/environment-registration";
 import { createProfileSync } from "../lib/profile-sessions";
 import { normalizeProject } from "../lib/project-path";
-import { computeLastActivityIso } from "../lib/session-activity";
+import { computeLastActivityIso, openClawUserActivityRefresh } from "../lib/session-activity";
 import {
 	negotiateSessionProtocol,
 	persistSuppressedSession,
@@ -589,6 +589,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 							sessions,
 							attemptCommon(scope),
 							profileSync.refresh,
+							runtimeMode === "hosted",
 						)
 				: null,
 		});
@@ -1148,6 +1149,7 @@ async function prepareSessionSync(
 	sessions: SessionModule,
 	common: CommonSyncRuntime,
 	refreshProfiles: (context?: SyncReadContext) => Promise<void>,
+	refreshHostedActivity: boolean,
 ): Promise<PreparedSessionSync> {
 	const { api, queue, health, inFlightSessionHash } = common;
 	const protocol = await negotiateSessionProtocol(api, sessions, { signal: opts.abort });
@@ -1165,22 +1167,36 @@ async function prepareSessionSync(
 	let activeScan: Promise<void> | null = null;
 	const sessionScanIssues = new Map<string, string>();
 
-	const executeScan = async (request: SessionScanRequest): Promise<void> => {
+	const executeScan = async (
+		request: SessionScanRequest,
+		refreshActivity: boolean,
+	): Promise<void> => {
 		if (opts.abort.aborted) return;
+		const needsBaseline =
+			request.kind === "complete" &&
+			runtimeUserActivityNeedsMaterialization(opts.adapter.agentType);
+		const refreshRecentActivity =
+			refreshActivity && opts.adapter.agentType === "openclaw" && !needsBaseline;
+		const materializeActivity = needsBaseline || refreshRecentActivity;
 		try {
 			const excluded = new Set(getConfig().excludeProjects ?? []);
 			lastPushedSessionHash.clear();
 			for (const [key, hash] of loadFencedSessionHashes(api, opts)) {
 				lastPushedSessionHash.set(key, hash);
 			}
-			const materializeActivity =
-				request.kind === "complete" &&
-				runtimeUserActivityNeedsMaterialization(opts.adapter.agentType);
+			const observedAt = new Date();
 			const scan = await scanSessionModule(
 				sessions,
 				request,
-				materializeActivity ? new Map() : loadFencedSessionSourceRevisions(api, opts, protocol),
-				{ signal: opts.abort },
+				loadFencedSessionSourceRevisions(api, opts, protocol),
+				{
+					signal: opts.abort,
+					userActivityObservedAt: observedAt.getTime(),
+					materializeUserActivity: materializeActivity,
+					userActivityRefresh: refreshRecentActivity
+						? openClawUserActivityRefresh(opts.abort)
+						: undefined,
+				},
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
@@ -1226,8 +1242,15 @@ async function prepareSessionSync(
 			opts.abort.throwIfAborted();
 			recordRuntimeUserActivityScan({
 				agentType: opts.adapter.agentType,
-				userActivity: scan.userActivity ?? { lastUserInputAt: null, complete: false },
+				userActivity: scan.userActivity ?? {
+					lastUserInputAt: null,
+					recentUserInputCount: null,
+					complete: false,
+				},
 				complete: scan.coverage === "complete",
+				materialize: materializeActivity,
+				refresh: refreshRecentActivity,
+				observedAt,
 			});
 			persistFencedSessionSourceRevisions(confirmedSourceRevisions);
 			if (scan.coverage === "complete") {
@@ -1262,7 +1285,7 @@ async function prepareSessionSync(
 			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
 		} catch (error) {
 			if (opts.abort.aborted) return;
-			markRuntimeUserActivityUnknown(opts.adapter.agentType);
+			markRuntimeUserActivityUnknown(opts.adapter.agentType, undefined, refreshRecentActivity);
 			health.set("push", "session_scan", `session scan: ${toErrorMessage(error)}`);
 			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(error) });
 		}
@@ -1277,15 +1300,19 @@ async function prepareSessionSync(
 		}
 		return { kind: "paths", paths: [...new Set([...current.paths, ...next.paths])] };
 	};
+	let pendingActivityRefresh = false;
 	const requestScan = (event?: SessionWatchEvent): Promise<void> => {
 		const request: SessionScanRequest = event?.kind === "paths" ? event : { kind: "complete" };
 		pendingScan = mergeScanRequest(pendingScan, request);
+		pendingActivityRefresh ||= refreshHostedActivity && event === undefined;
 		if (!activeScan) {
 			activeScan = (async () => {
 				while (pendingScan && !opts.abort.aborted) {
 					const next = pendingScan;
+					const refreshActivity = pendingActivityRefresh;
 					pendingScan = null;
-					await executeScan(next);
+					pendingActivityRefresh = false;
+					await executeScan(next, refreshActivity);
 				}
 			})().finally(() => {
 				activeScan = null;

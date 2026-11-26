@@ -1,4 +1,28 @@
-import type { RawSession, SessionMessage, SessionUserActivity } from "../adapters/base";
+import type {
+	RawSession,
+	SessionMessage,
+	SessionUserActivity,
+	SyncReadContext,
+} from "../adapters/base";
+
+export const RECENT_USER_INPUT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// Allow one five-minute reconcile interval plus a minute for separate daemon scans to finish.
+export const USER_ACTIVITY_COUNT_MAX_SKEW_MS = 6 * 60_000;
+
+/** One shared budget covers the optional reads across all OpenClaw profiles and archives. */
+export function openClawUserActivityRefresh(
+	signal: AbortSignal,
+): NonNullable<SyncReadContext["userActivityRefresh"]> {
+	const deadline = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+	let remaining = 64;
+	return {
+		claimTranscript() {
+			if (deadline.aborted || remaining === 0) return null;
+			remaining--;
+			return deadline;
+		},
+	};
+}
 
 /**
  * Compute the "user actually used the session last" timestamp for
@@ -31,11 +55,14 @@ export function computeOpenClawRealUserActivity(
 	records: readonly unknown[],
 	sessionKey: string,
 	sessionMetadata?: unknown,
+	observedAt = Date.now(),
 ): SessionUserActivity {
 	if (isInternalOpenClawSession(sessionKey, sessionMetadata))
-		return { lastUserInputAt: null, complete: true };
+		return { lastUserInputAt: null, recentUserInputCount: 0, complete: true };
 	let best: number | null = null;
+	let recentUserInputCount = 0;
 	let complete = true;
+	const cutoff = observedAt - RECENT_USER_INPUT_WINDOW_MS;
 	for (const value of records) {
 		const record = objectRecord(value);
 		if (!record) continue;
@@ -52,9 +79,11 @@ export function computeOpenClawRealUserActivity(
 			continue;
 		}
 		if (best === null || timestamp > best) best = timestamp;
+		if (timestamp >= cutoff && timestamp <= observedAt) recentUserInputCount++;
 	}
 	return {
 		lastUserInputAt: best === null ? null : new Date(best).toISOString(),
+		recentUserInputCount: complete ? recentUserInputCount : null,
 		complete,
 	};
 }

@@ -537,6 +537,7 @@ esac
 			agentType: "hermes",
 			userActivity: {
 				lastUserInputAt: "2026-08-19T01:00:00.000Z",
+				recentUserInputCount: 3,
 				complete: true,
 			},
 			complete: true,
@@ -548,14 +549,48 @@ esac
 			(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
 		).toEqual({
 			schemaVersion: 1,
-			classifierVersion: 1,
+			classifierVersion: 2,
 			classification: "known_last_user_input",
 			lastUserInputAt: "2026-08-19T01:00:00.000Z",
+			recentUserInputCount: 3,
 			observedAt: "2026-08-19T02:00:00.000Z",
 			completeAt: "2026-08-19T02:00:00.000Z",
 			enabledRuntimes: ["hermes"],
 		});
 	});
+
+	test.each([
+		["2026-08-19T01:55:00.000Z", 5],
+		["2026-08-19T01:53:59.000Z", null],
+	])(
+		"combines counts from a Hermes scan at %s only within the allowed skew",
+		async (hermesObservedAt, count) => {
+			const paths = healthyAppliedRuntimePaths(["hermes", "openclaw"]);
+			process.env.CLAWDI_STATE_DIR = join(paths.serviceStateRoot, "activity");
+			for (const [agentType, observedAt, recentUserInputCount] of [
+				["hermes", hermesObservedAt, 2],
+				["openclaw", "2026-08-19T02:00:00.000Z", 3],
+			] as const) {
+				recordRuntimeUserActivityScan({
+					agentType,
+					userActivity: {
+						lastUserInputAt: "2026-08-19T01:50:00.000Z",
+						recentUserInputCount,
+						complete: true,
+					},
+					complete: true,
+					observedAt: new Date(observedAt),
+				});
+			}
+			expect(
+				(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
+			).toMatchObject({
+				classification: "known_last_user_input",
+				recentUserInputCount: count,
+				observedAt: "2026-08-19T02:00:00.000Z",
+			});
+		},
+	);
 
 	test("reports an untyped watch apply failure as unhealthy", async () => {
 		const paths = healthyAppliedRuntimePaths();

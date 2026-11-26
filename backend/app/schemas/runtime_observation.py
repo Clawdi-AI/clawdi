@@ -379,9 +379,12 @@ class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
 
     schema_version: Literal[1] = Field(alias="schemaVersion")
-    classifier_version: Literal[1] = Field(alias="classifierVersion")
+    classifier_version: Literal[1, 2] = Field(alias="classifierVersion")
     classification: RuntimeUserActivityClassification
     last_user_input_at: datetime | None = Field(alias="lastUserInputAt")
+    recent_user_input_count: StrictInt | None = Field(
+        default=None, alias="recentUserInputCount", ge=0, exclude_if=lambda count: count is None
+    )
     observed_at: datetime = Field(alias="observedAt")
     complete_at: datetime | None = Field(alias="completeAt")
     enabled_runtimes: list[Literal["hermes", "openclaw"]] = Field(
@@ -411,6 +414,8 @@ class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
 
     @model_validator(mode="after")
     def validate_activity_state(self) -> HostedRuntimeObservedUserActivityV1:
+        if self.classifier_version == 1 and self.recent_user_input_count is not None:
+            raise ValueError("recentUserInputCount requires classifierVersion 2")
         if len(self.enabled_runtimes) != len(set(self.enabled_runtimes)):
             raise ValueError("enabledRuntimes must be unique")
         if self.enabled_runtimes != sorted(self.enabled_runtimes):

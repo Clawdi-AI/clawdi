@@ -230,7 +230,7 @@ describe("CLI publish workflow contract", () => {
 		const signRun = sign.steps?.find((step) =>
 			String(step.name).startsWith("Sign and notarize"),
 		)?.run;
-		expect(sign?.["runs-on"]).toBe("macos-14");
+		expect(sign?.["runs-on"]).toBe("macos-15");
 		expect(typeof signRun).toBe("string");
 		if (typeof signRun !== "string") throw new Error("signing step is missing");
 		for (const secret of [

@@ -708,7 +708,7 @@ describe("HermesAdapter.collectSessions", () => {
 		await expect(new HermesAdapter().sessions.resolve("oversized")).rejects.toThrow("source bytes");
 	});
 
-	it("classifies user rows from Hermes conversations, including compression splits", async () => {
+	it("counts recent Hermes user rows, including compression splits and excluding internal sources", async () => {
 		const db = new Database(join(tmpHome, ".hermes", "state.db"));
 		for (const [id, source, parentSessionId, modelConfig, timestamp] of [
 			["activity-root", "telegram", null, null, 2_000_000_000],
@@ -716,6 +716,7 @@ describe("HermesAdapter.collectSessions", () => {
 			["activity-subagent", "subagent", null, null, 2_000_000_700],
 			["activity-curator", "curator", null, null, 2_000_000_800],
 			["activity-kanban", "kanban", null, null, 2_000_000_900],
+			["activity-tool", "tool", null, null, 2_000_001_100],
 			[
 				"activity-delegate",
 				"telegram",
@@ -725,6 +726,7 @@ describe("HermesAdapter.collectSessions", () => {
 			],
 			// A compression split continues the same conversation under a new session row.
 			["activity-split", "telegram", "activity-root", null, 2_000_000_400],
+			["activity-old", "telegram", null, null, 1_999_999_999],
 		] as const) {
 			db.run(
 				"INSERT INTO sessions (id, source, parent_session_id, model_config, title, started_at, message_count) VALUES (?, ?, ?, ?, ?, ?, 1)",
@@ -741,12 +743,29 @@ describe("HermesAdapter.collectSessions", () => {
 				timestamp,
 			);
 		}
+		db.run(
+			"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES (?, 'user', ?, ?, 1, 0)",
+			"activity-split",
+			"Continue from the compressed conversation context above. This marker exists because no human user turn was available.",
+			2_000_001_200,
+		);
 		db.close();
 
-		const scan = await scanSessionModule(new HermesAdapter().sessions, { kind: "complete" });
+		const scan = await scanSessionModule(
+			new HermesAdapter().sessions,
+			{ kind: "complete" },
+			new Map(),
+			{
+				signal: new AbortController().signal,
+				userActivityObservedAt: (2_000_000_000 + 7 * 24 * 60 * 60) * 1000,
+			},
+		);
+		for await (const _batch of scan.batches) {
+		}
 
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: new Date(2_000_000_400 * 1000).toISOString(),
+			recentUserInputCount: 2,
 			complete: true,
 		});
 	});
@@ -759,7 +778,11 @@ describe("HermesAdapter.collectSessions", () => {
 		db.close();
 
 		const scan = await scanSessionModule(new HermesAdapter().sessions, { kind: "complete" });
-		expect(scan.userActivity).toEqual({ lastUserInputAt: null, complete: false });
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: null,
+			recentUserInputCount: null,
+			complete: false,
+		});
 		// Session batches need the same column; draining them surfaces the schema error.
 		await expect(
 			(async () => {

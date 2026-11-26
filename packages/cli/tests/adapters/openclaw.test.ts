@@ -6,6 +6,7 @@ import {
 	readFileSync,
 	renameSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -18,12 +19,17 @@ import {
 	assertSessionGolden,
 } from "../../src/adapters/session-golden.test-support";
 import { SESSION_RECORD_MAX_BYTES } from "../../src/adapters/session-source";
+import { openClawUserActivityRefresh } from "../../src/lib/session-activity";
 import { projectEventsToMessages } from "../../src/lib/session-events";
 import { tarSkillDir } from "../../src/lib/tar";
 import { log } from "../../src/serve/log";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
+
+function activityScanContext(observedAt: string) {
+	return { signal: new AbortController().signal, userActivityObservedAt: Date.parse(observedAt) };
+}
 let origHome: string | undefined;
 let origStateDir: string | undefined;
 let origAgentId: string | undefined;
@@ -895,13 +901,19 @@ describe("OpenClawAdapter.collectSessions", () => {
 		mkdirSync(sessionsRoot, { recursive: true });
 		writeFileSync(join(tmpHome, ".openclaw", "session-key-only-test"), "enabled");
 
-		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		const scan = await scanSessionModule(
+			new OpenClawAdapter().sessions,
+			{ kind: "complete" },
+			new Map(),
+			activityScanContext("2026-04-16T00:00:00Z"),
+		);
 		const sessions = [];
 		for await (const batch of scan.batches) sessions.push(...batch.sessions);
 
 		expect(sessions).toEqual([]);
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			recentUserInputCount: 1,
 			complete: true,
 		});
 	});
@@ -931,7 +943,12 @@ describe("OpenClawAdapter.collectSessions", () => {
 			`${JSON.stringify({ role: "user", content: "archived input", timestamp: "2026-08-19T00:00:00Z" })}\n`,
 		);
 
-		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		const scan = await scanSessionModule(
+			new OpenClawAdapter().sessions,
+			{ kind: "complete" },
+			new Map(),
+			activityScanContext("2026-08-20T00:00:00Z"),
+		);
 		const sessions = [];
 		for await (const batch of scan.batches) sessions.push(...batch.sessions);
 
@@ -944,11 +961,12 @@ describe("OpenClawAdapter.collectSessions", () => {
 		});
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-19T00:00:00.000Z",
+			recentUserInputCount: 1,
 			complete: true,
 		});
 	});
 
-	it("uses official current activity and only inventories archives during baseline", async () => {
+	it("refreshes canonical activity across revision-matched official transcripts and archives", async () => {
 		const stateRoot = join(tmpHome, ".openclaw");
 		const sessionsRoot = join(stateRoot, "agents", "main", "sessions");
 		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
@@ -980,63 +998,199 @@ describe("OpenClawAdapter.collectSessions", () => {
 export async function readVisibleSessionTranscriptMessageEntries() {
   appendFileSync(${JSON.stringify(readLog)}, "read\\n");
   return [
-    { entryId: "sdk-user", createdAt: "2026-04-15T10:00:00.000Z", message: { role: "user", content: "question" } },
-    { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-04-15T10:00:05.000Z", message: { role: "assistant", content: "answer" } },
+    { entryId: "sdk-user", createdAt: "2026-08-14T10:00:00.000Z", message: { role: "user", content: "question" } },
+    { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-08-14T10:00:05.000Z", message: { role: "assistant", content: "answer" } },
   ];
 }
 `,
 		);
 
-		const adapter = new OpenClawAdapter();
-		const first = await scanSessionModule(adapter.sessions, { kind: "complete" });
+		const currentEntry = {
+			agentId: "main",
+			key: "agent:main:main",
+			sessionId: "sqlite-session-001",
+			sessionFile: currentPath,
+			updatedAt: Date.parse("2026-08-14T10:00:05Z"),
+		};
+		const entries = [currentEntry];
+		const adapter = new OpenClawAdapter(undefined, stateRoot, async () => ({
+			complete: true,
+			entries,
+			storePaths: new Map(),
+		}));
+		const scanContext = activityScanContext("2026-08-19T00:00:00Z");
+		const first = await scanSessionModule(
+			adapter.sessions,
+			{ kind: "complete" },
+			new Map(),
+			scanContext,
+		);
 		const firstBatches: SessionScanBatch[] = [];
 		for await (const batch of first.batches) firstBatches.push(batch);
 		const revision = firstBatches[0]?.sessions[0]?.sourceRevision;
-		expect(revision).toBe(`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247205000`);
+		expect(revision).toBe(
+			`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:${currentEntry.updatedAt}`,
+		);
 		expect(first.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
+			recentUserInputCount: 2,
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\n");
 		rmSync(currentPath);
-		const missingCurrent = await scanSessionModule(adapter.sessions, { kind: "complete" });
-		for await (const _batch of missingCurrent.batches) {
+		const revisions = new Map([["sqlite-session-001", revision ?? ""]]);
+		const oldUpdatedAt = Date.parse("2026-08-01T00:00:00Z");
+		for (let index = 0; index < 50; index++) {
+			const sessionId = `older-${index}`;
+			entries.push({
+				...currentEntry,
+				key: `agent:main:${sessionId}`,
+				sessionId,
+				sessionFile: join(sessionsRoot, `${sessionId}.jsonl`),
+				updatedAt: oldUpdatedAt,
+			});
+			revisions.set(sessionId, `p${SESSION_PROJECTION_REVISION}:${sessionId}:${oldUpdatedAt}`);
 		}
-		expect(missingCurrent.userActivity).toEqual({
+		const refreshed = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions, {
+			...scanContext,
+			materializeUserActivity: true,
+			userActivityRefresh: openClawUserActivityRefresh(scanContext.signal),
+		});
+		const refreshedBatches: SessionScanBatch[] = [];
+		for await (const batch of refreshed.batches) refreshedBatches.push(batch);
+		expect(refreshedBatches.flatMap((batch) => batch.sessions)).toEqual([]);
+		expect(refreshed.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
+			recentUserInputCount: 2,
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
 		writeFileSync(archivePath, "{");
 
-		const unchanged = await scanSessionModule(
-			adapter.sessions,
-			{ kind: "complete" },
-			new Map([["sqlite-session-001", revision ?? ""]]),
-		);
+		const unchanged = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
 		const unchangedBatches: SessionScanBatch[] = [];
 		for await (const batch of unchanged.batches) unchangedBatches.push(batch);
-		expect(unchangedBatches[0]?.sessions).toEqual([]);
-		expect(unchangedBatches[0]?.observedLocalSessionIds).toEqual(["sqlite-session-001"]);
-		expect(unchanged.userActivity).toEqual({ lastUserInputAt: null, complete: true });
+		expect(unchangedBatches.flatMap((batch) => batch.sessions)).toEqual([]);
+		expect(unchangedBatches.flatMap((batch) => batch.observedLocalSessionIds)).toEqual([
+			...revisions.keys(),
+		]);
+		expect(unchanged.userActivity).toEqual({
+			lastUserInputAt: null,
+			recentUserInputCount: null,
+			complete: true,
+		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
 
-		writeFileSync(join(stateRoot, "sqlite-session-updated-at"), "1776247206000");
-		const changed = await scanSessionModule(
-			adapter.sessions,
-			{ kind: "complete" },
-			new Map([["sqlite-session-001", revision ?? ""]]),
-		);
+		currentEntry.updatedAt += 1000;
+		const changed = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
 		const changedBatches: SessionScanBatch[] = [];
 		for await (const batch of changed.batches) changedBatches.push(batch);
 		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe(
-			`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247206000`,
+			`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:${currentEntry.updatedAt}`,
 		);
 		expect(changed.userActivity).toEqual({
-			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			lastUserInputAt: "2026-08-14T10:00:00.000Z",
+			recentUserInputCount: null,
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\nread\n");
+	});
+
+	it("refreshes each recent legacy transcript once and skips old indexed and archived files", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sessionsDir = join(stateRoot, "agents", "main", "sessions");
+		rmSync(sessionsDir, { recursive: true });
+		mkdirSync(sessionsDir);
+		const currentPath = join(sessionsDir, "current.jsonl");
+		const oldPath = join(sessionsDir, "old.jsonl");
+		const oldArchivePath = join(sessionsDir, "orphan.jsonl.deleted.fixture.zst");
+		const recentArchivePath = join(sessionsDir, "orphan.jsonl.reset.fixture");
+		const updatedAt = Date.parse("2026-08-13T00:00:00Z");
+		const old = new Date("2026-08-01T00:00:00Z");
+		const currentEntry = { sessionId: "current", sessionFile: "current.jsonl", updatedAt };
+		writeFileSync(
+			join(sessionsDir, "sessions.json"),
+			JSON.stringify({
+				"agent:main:main": currentEntry,
+				"agent:main:alias": { ...currentEntry, sessionFile: currentPath },
+				"agent:main:old": { sessionId: "old", sessionFile: "old.jsonl", updatedAt: old.getTime() },
+			}),
+		);
+		writeFileSync(
+			currentPath,
+			JSON.stringify({ role: "user", content: "current", timestamp: updatedAt }),
+		);
+		writeFileSync(
+			recentArchivePath,
+			JSON.stringify({ role: "user", content: "archived", timestamp: "2026-08-14T00:00:00Z" }),
+		);
+		for (const path of [oldPath, oldArchivePath]) {
+			writeFileSync(path, "{");
+			utimesSync(path, old, old);
+		}
+		const revisions = new Map([
+			["current", `p${SESSION_PROJECTION_REVISION}:current:${updatedAt}`],
+			["old", `p${SESSION_PROJECTION_REVISION}:old:${old.getTime()}`],
+		]);
+		const context = activityScanContext("2026-08-16T00:00:00Z");
+		const claim = spyOn(openClawUserActivityRefresh(context.signal), "claimTranscript");
+		const scan = await scanSessionModule(
+			new OpenClawAdapter(undefined, stateRoot, async () => null).sessions,
+			{ kind: "complete" },
+			revisions,
+			{
+				...context,
+				materializeUserActivity: true,
+				userActivityRefresh: { claimTranscript: claim },
+			},
+		);
+		for await (const batch of scan.batches) expect(batch.sessions).toEqual([]);
+		expect(claim).toHaveBeenCalledTimes(2);
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-08-14T00:00:00.000Z",
+			recentUserInputCount: 2,
+			complete: true,
+		});
+	});
+
+	it("stops reading recent archives when the shared refresh budget is exhausted", async () => {
+		const stateRoot = join(tmpHome, ".openclaw");
+		const sessionsDir = join(stateRoot, "agents", "main", "sessions");
+		rmSync(sessionsDir, { recursive: true });
+		mkdirSync(sessionsDir);
+		const archive = zstdCompressSync(
+			JSON.stringify({
+				role: "user",
+				content: "archived input",
+				timestamp: "2026-08-14T00:00:00Z",
+			}),
+		);
+		for (let index = 0; index < 65; index++)
+			writeFileSync(join(sessionsDir, `archive-${index}.jsonl.deleted.fixture.zst`), archive);
+		let archivesRead = 0;
+		const reader = new OpenClawAdapter(
+			undefined,
+			stateRoot,
+			async () => null,
+			async () => {
+				archivesRead++;
+				return "verified";
+			},
+		).sessions;
+		const context = activityScanContext("2026-08-16T00:00:00Z");
+		const scan = await scanSessionModule(reader, { kind: "complete" }, new Map(), {
+			...context,
+			materializeUserActivity: true,
+			userActivityRefresh: openClawUserActivityRefresh(context.signal),
+		});
+		for await (const _batch of scan.batches) {
+		}
+		expect(archivesRead).toBe(64);
+		expect(scan.userActivity).toEqual({
+			lastUserInputAt: "2026-08-14T00:00:00.000Z",
+			recentUserInputCount: null,
+			complete: true,
+		});
 	});
 
 	it("bounds loaded content across many transcripts without changing inventory or activity", async () => {
@@ -1066,7 +1220,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			undefined,
 			join(tmpHome, ".openclaw"),
 			async () => null,
-		).sessions.scan({ kind: "complete" }, new Map());
+		).sessions.scan({ kind: "complete" }, new Map(), activityScanContext("2026-04-16T00:00:00Z"));
 		let batches = 0;
 		const observed: string[] = [];
 		const sessions = [];
@@ -1087,6 +1241,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		expect(sessions).toHaveLength(40);
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			recentUserInputCount: 40,
 			complete: true,
 		});
 	});
@@ -1213,12 +1368,18 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			}),
 		);
 
-		const scan = await scanSessionModule(new OpenClawAdapter().sessions, { kind: "complete" });
+		const scan = await scanSessionModule(
+			new OpenClawAdapter().sessions,
+			{ kind: "complete" },
+			new Map(),
+			activityScanContext("2026-08-25T00:00:00Z"),
+		);
 		for await (const _batch of scan.batches) {
 		}
 
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-24T00:00:00.000Z",
+			recentUserInputCount: 3,
 			complete: true,
 		});
 	});
@@ -1253,11 +1414,12 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			stateRoot,
 			async () => null,
 			async () => "verified",
-		).sessions.scan({ kind: "complete" }, new Map());
+		).sessions.scan({ kind: "complete" }, new Map(), activityScanContext("2026-08-25T00:00:00Z"));
 		for await (const _batch of scan.batches) {
 		}
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-23T00:00:00.000Z",
+			recentUserInputCount: 1,
 			complete: true,
 		});
 		expect(readFileSync(archivePath)).toEqual(bytes);
@@ -1294,7 +1456,11 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			return result.userActivity;
 		};
 		try {
-			expect(await scan()).toEqual({ lastUserInputAt: null, complete: false });
+			expect(await scan()).toEqual({
+				lastUserInputAt: null,
+				recentUserInputCount: null,
+				complete: false,
+			});
 			expect(warning.mock.calls).toEqual([
 				[
 					"engine.user_activity_incomplete",
@@ -1356,7 +1522,11 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			).sessions.scan({ kind: "complete" }, new Map());
 			for await (const _batch of scan.batches) {
 			}
-			expect(scan.userActivity).toEqual({ lastUserInputAt: null, complete: false });
+			expect(scan.userActivity).toEqual({
+				lastUserInputAt: null,
+				recentUserInputCount: null,
+				complete: false,
+			});
 			expect(warning.mock.calls).toEqual([
 				[
 					"engine.user_activity_incomplete",
@@ -1382,6 +1552,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-23T00:00:00.000Z",
+			recentUserInputCount: null,
 			complete: false,
 		});
 	});
