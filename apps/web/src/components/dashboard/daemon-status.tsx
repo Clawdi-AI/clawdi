@@ -178,6 +178,13 @@ function SyncHelpDialog({
 	const ts = env.last_sync_at ? new Date(env.last_sync_at).getTime() : null;
 	const isStale = ts !== null && Number.isFinite(ts) && Date.now() - ts > FRESH_WINDOW_MS;
 	const isErroredAndStale = status === "errored" && isStale;
+	const syncError = env.last_sync_error;
+	const needsCliUpdate =
+		!isHosted &&
+		syncError &&
+		isPermanentError(syncError) &&
+		(syncError.includes("session_origin_required") ||
+			(/\b(?:API error|HTTP) 422\b/.test(syncError) && syncError.includes("Invalid skill_key")));
 
 	const title =
 		status === "live"
@@ -232,7 +239,7 @@ function SyncHelpDialog({
 								</p>
 							) : null}
 
-							{status === "errored" && env.last_sync_error ? (
+							{status === "errored" && syncError ? (
 								<div className="space-y-2">
 									<p className="text-sm font-medium text-destructive">What went wrong</p>
 									{isHosted ? (
@@ -241,10 +248,17 @@ function SyncHelpDialog({
 										</p>
 									) : (
 										<code className="block rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive/90">
-											{formatErrorForDisplay(env.last_sync_error)}
+											{formatErrorForDisplay(syncError)}
 										</code>
 									)}
-									{isErroredAndStale ? (
+									{needsCliUpdate ? (
+										<>
+											<p className="text-xs text-muted-foreground">
+												Upgrade Clawdi CLI on the machine running this agent.
+											</p>
+											<CommandLine command="clawdi update" />
+										</>
+									) : isErroredAndStale ? (
 										isHosted ? (
 											<>
 												<p className="text-xs text-muted-foreground">
@@ -261,7 +275,7 @@ function SyncHelpDialog({
 												<AuthLoginHint />
 											</>
 										)
-									) : isPermanentError(env.last_sync_error) ? (
+									) : isPermanentError(syncError) ? (
 										// Same product story on both sides: permanent drop means the
 										// daemon is still healthy and will pick up the next edit.
 										// Self-managed offers `clawdi daemon status` as a sanity check;
@@ -275,7 +289,7 @@ function SyncHelpDialog({
 											</p>
 											{isHosted ? null : <CommandLine command="clawdi daemon status" />}
 										</>
-									) : isRetryExhaustedError(env.last_sync_error) ? (
+									) : isRetryExhaustedError(syncError) ? (
 										<>
 											<p className="text-xs text-muted-foreground">
 												Sync will resume automatically when the connection recovers.

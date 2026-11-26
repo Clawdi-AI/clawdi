@@ -762,6 +762,48 @@ test("connected primary Project navigation stays hidden until scope resolves", a
 	).not.toContain("Smoke Project");
 });
 
+for (const { theme, width, error } of [
+	{
+		theme: "light",
+		width: 1280,
+		error: "API error 409: session_origin_required",
+	},
+	{
+		theme: "dark",
+		width: 390,
+		error: "API error 422: Invalid skill_key (reason=invalid_component_start)",
+	},
+] as const) {
+	test(`connected sync error shows the CLI upgrade command in ${theme} mode`, async ({ page }) => {
+		await page.clock.setFixedTime(now);
+		await page.emulateMedia({ colorScheme: theme });
+		await page.setViewportSize({ width, height: 844 });
+		await stubDashboardApi(page);
+		const affectedAgent = { ...agents[0], last_sync_error: `permanent: ${error}` };
+		await page.route("**/v1/agents", (route) => fulfillJson(route, [affectedAgent, agents[1]]));
+		await page.route(`**/v1/agents/${affectedAgent.id}`, (route) =>
+			fulfillJson(route, affectedAgent),
+		);
+
+		await page.goto(`/agents/${affectedAgent.id}`);
+		if (width < 768) await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+		await page
+			.getByTestId("app-sidebar-agent-status")
+			.getByRole("button", { name: "Error", exact: true })
+			.click();
+
+		const dialog = page.getByRole("dialog", { name: "Sync hit an error" });
+		await expect(dialog.getByText(error, { exact: true })).toBeVisible();
+		await expect(
+			dialog.getByText("Upgrade Clawdi CLI on the machine running this agent."),
+		).toBeVisible();
+		await expect(dialog.getByRole("button", { name: "clawdi update Copy" })).toBeVisible();
+		expect(await page.locator("html").evaluate((html) => html.classList.contains("dark"))).toBe(
+			theme === "dark",
+		);
+	});
+}
+
 test("connected agent settings protects an unsaved display name", async ({ page }) => {
 	await stubDashboardApi(page);
 	await page.goto("/agents/11111111-1111-4111-8111-111111111111/settings");
