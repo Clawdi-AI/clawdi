@@ -2,6 +2,14 @@ name: Publish Agent v2 CLI
 
 on:
   workflow_dispatch:
+    inputs:
+      macos_signing:
+        description: macOS native CLI signing mode
+        type: choice
+        default: developer-id
+        options:
+          - developer-id
+          - adhoc
   push:
     branches: [main]
     paths:
@@ -194,7 +202,14 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      MACOS_SIGNING: ${{ github.event_name == 'workflow_dispatch' && inputs.macos_signing == 'adhoc' && 'adhoc' || 'developer-id' }}
+      CLI_VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
     steps:
+      - name: Record macOS signing mode
+        run: |
+          printf 'macOS native CLI signing mode: `%s`\n' "$MACOS_SIGNING" >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/checkout@v7
 
       - uses: oven-sh/setup-bun@v2
@@ -211,8 +226,8 @@ jobs:
           path: release
 
       - name: Sign and notarize macOS native CLI archives
+        if: env.MACOS_SIGNING == 'developer-id'
         env:
-          CLI_VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}
@@ -310,12 +325,40 @@ jobs:
               "$stage" "$PWD/release"
             rm -rf "$stage" "$zip"
           done
+          SIGN
 
+      - name: Ad-hoc sign macOS native CLI archives
+        if: env.MACOS_SIGNING == 'adhoc'
+        run: |
+          set -euo pipefail
+          entitlements="$PWD/packages/cli/scripts/macos-cli-entitlements.plist"
+          for target in darwin-x64 darwin-arm64; do
+            archive="$PWD/release/clawdi-cli-$target.tar.gz"
+            stage="$RUNNER_TEMP/clawdi-cli-$target"
+            mkdir -p "$stage"
+            tar -xpzf "$archive" -C "$stage"
+            cli="$stage/clawdi"
+
+            codesign --force --sign - --options runtime \
+              --identifier ai.clawdi.cli --entitlements "$entitlements" "$cli"
+            codesign --verify --strict --verbose=2 "$cli"
+            signature="$(codesign -dv --verbose=4 "$cli" 2>&1)"
+            printf '%s\n' "$signature" | grep -qx 'Signature=adhoc'
+            # The macos-15 arm64 image includes Rosetta for the Intel executable.
+            version="$("$cli" --version)"
+            test "$version" = "$CLI_VERSION"
+
+            CLAWDI_NATIVE_TARGET="$target" bun run packages/cli/scripts/package-native-release.mjs \
+              "$stage" "$PWD/release"
+            rm -rf "$stage"
+          done
+
+      - name: Refresh and verify native release manifest
+        run: |
           # Recompute archive hashes only after signing. These are the hashes
           # consumed by installers, attestations, and release verification.
           bun run packages/cli/scripts/refresh-native-release-manifest.mjs release "$CLI_VERSION"
           bun run packages/cli/scripts/check-native-release.mjs release "$CLI_VERSION"
-          SIGN
 
       - name: Upload final CLI release artifact
         uses: actions/upload-artifact@v7
