@@ -96,6 +96,12 @@ interface UserActivityRow {
 	recent_user_input_count: number;
 }
 
+// Hermes context compression uses these reserved user-role placeholders for turns with no human input.
+const HERMES_COMPRESSION_CONTINUATIONS = [
+	"Continue from the compressed conversation context above. This marker exists because no human user turn was available.",
+	"Continue from the compressed conversation context above. This marker exists because the compacted transcript contained no preserved user turn.",
+] as const;
+
 const MODERN_MESSAGE_CORE_COLUMNS = ["session_id", "role", "content", "timestamp"] as const;
 
 const MODERN_MESSAGE_OPTIONAL_COLUMNS = [
@@ -216,6 +222,10 @@ function hermesUserActivity(db: ReadonlySqliteDatabase, observedAt: number): Ses
 	const delegated = sessionColumns.has("model_config")
 		? "AND NOT (json_valid(s.model_config) AND json_extract(s.model_config, '$._delegate_from') IS NOT NULL)"
 		: "";
+	const continuationMarkers = messageColumns.has("content") ? HERMES_COMPRESSION_CONTINUATIONS : [];
+	const humanContent = continuationMarkers.length
+		? "AND trim(coalesce(m.content, '')) NOT IN (?, ?)"
+		: "";
 	try {
 		const row = db
 			.prepare(`
@@ -226,10 +236,13 @@ function hermesUserActivity(db: ReadonlySqliteDatabase, observedAt: number): Ses
 				WHERE lower(m.role) = 'user'
 				  AND lower(coalesce(s.source, '')) NOT IN ('cron', 'subagent', 'curator', 'kanban', 'tool')
 				  ${delegated}
+				  ${humanContent}
 			`)
-			.get((observedAt - RECENT_USER_INPUT_WINDOW_MS) / 1000, observedAt / 1000) as
-			| UserActivityRow
-			| undefined;
+			.get(
+				(observedAt - RECENT_USER_INPUT_WINDOW_MS) / 1000,
+				observedAt / 1000,
+				...continuationMarkers,
+			) as UserActivityRow | undefined;
 		if (row) {
 			const lastUserInputAt =
 				row.last_user_input_at === null ? null : timestampIso(Number(row.last_user_input_at));

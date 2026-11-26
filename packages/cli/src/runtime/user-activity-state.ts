@@ -91,6 +91,7 @@ export function recordRuntimeUserActivityScan(input: {
 	userActivity: SessionUserActivity;
 	complete: boolean;
 	materialize?: boolean;
+	refresh?: boolean;
 	observedAt?: Date;
 }): void {
 	if (!supportsRuntimeUserActivity(input.agentType)) return;
@@ -109,6 +110,10 @@ export function recordRuntimeUserActivityScan(input: {
 	const known = input.userActivity.complete && (input.complete || priorBaselineKnown);
 	const timestampIsValid = latest === null || Date.parse(latest) <= observedAtMs;
 	const count = input.userActivity.recentUserInputCount;
+	if (input.refresh && priorBaselineKnown && (!input.complete || !known || !timestampIsValid)) {
+		writeState(path, { ...previous, recentUserInputCount: null });
+		return;
+	}
 	// An incremental scan can retain the previous snapshot when it adds no newer evidence.
 	if (
 		known &&
@@ -149,11 +154,16 @@ export function recordRuntimeUserActivityScan(input: {
 export function markRuntimeUserActivityUnknown(
 	agentType: AgentType,
 	error = "activity_scan_failed",
+	preserveBaseline = false,
 ): void {
 	if (!supportsRuntimeUserActivity(agentType)) return;
 	const path = runtimeUserActivityStatePath(agentType);
 	const stored = readRuntimeUserActivityState(path);
 	const previous = stored?.agentType === agentType ? stored : null;
+	if (preserveBaseline && previous && previous.classification !== "unknown") {
+		writeState(path, { ...previous, recentUserInputCount: null });
+		return;
+	}
 	const failedAt = new Date().toISOString();
 	writeState(path, {
 		schemaVersion: "clawdi.runtimeUserActivity.v1",

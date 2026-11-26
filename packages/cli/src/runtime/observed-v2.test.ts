@@ -559,28 +559,38 @@ esac
 		});
 	});
 
-	test("reports a null count when enabled runtimes were scanned at different times", async () => {
-		const paths = healthyAppliedRuntimePaths(["hermes", "openclaw"]);
-		process.env.CLAWDI_STATE_DIR = join(paths.serviceStateRoot, "activity");
-		for (const [agentType, observedAt] of [
-			["hermes", "2026-08-19T01:00:00.000Z"],
-			["openclaw", "2026-08-19T02:00:00.000Z"],
-		] as const) {
-			recordRuntimeUserActivityScan({
-				agentType,
-				userActivity: { lastUserInputAt: null, recentUserInputCount: 0, complete: true },
-				complete: true,
-				observedAt: new Date(observedAt),
+	test.each([
+		["2026-08-19T01:55:00.000Z", 5],
+		["2026-08-19T01:53:59.000Z", null],
+	])(
+		"combines counts from a Hermes scan at %s only within the allowed skew",
+		async (hermesObservedAt, count) => {
+			const paths = healthyAppliedRuntimePaths(["hermes", "openclaw"]);
+			process.env.CLAWDI_STATE_DIR = join(paths.serviceStateRoot, "activity");
+			for (const [agentType, observedAt, recentUserInputCount] of [
+				["hermes", hermesObservedAt, 2],
+				["openclaw", "2026-08-19T02:00:00.000Z", 3],
+			] as const) {
+				recordRuntimeUserActivityScan({
+					agentType,
+					userActivity: {
+						lastUserInputAt: "2026-08-19T01:50:00.000Z",
+						recentUserInputCount,
+						complete: true,
+					},
+					complete: true,
+					observedAt: new Date(observedAt),
+				});
+			}
+			expect(
+				(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
+			).toMatchObject({
+				classification: "known_last_user_input",
+				recentUserInputCount: count,
+				observedAt: "2026-08-19T02:00:00.000Z",
 			});
-		}
-		expect(
-			(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
-		).toMatchObject({
-			classification: "known_no_user_input",
-			recentUserInputCount: null,
-			observedAt: "2026-08-19T02:00:00.000Z",
-		});
-	});
+		},
+	);
 
 	test("reports an untyped watch apply failure as unhealthy", async () => {
 		const paths = healthyAppliedRuntimePaths();

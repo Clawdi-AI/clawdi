@@ -60,7 +60,7 @@ import {
 } from "../lib/environment-registration";
 import { createProfileSync } from "../lib/profile-sessions";
 import { normalizeProject } from "../lib/project-path";
-import { computeLastActivityIso } from "../lib/session-activity";
+import { computeLastActivityIso, openClawUserActivityRefresh } from "../lib/session-activity";
 import {
 	negotiateSessionProtocol,
 	persistSuppressedSession,
@@ -1172,15 +1172,18 @@ async function prepareSessionSync(
 		refreshActivity: boolean,
 	): Promise<void> => {
 		if (opts.abort.aborted) return;
+		const needsBaseline =
+			request.kind === "complete" &&
+			runtimeUserActivityNeedsMaterialization(opts.adapter.agentType);
+		const refreshRecentActivity =
+			refreshActivity && opts.adapter.agentType === "openclaw" && !needsBaseline;
+		const materializeActivity = needsBaseline || refreshRecentActivity;
 		try {
 			const excluded = new Set(getConfig().excludeProjects ?? []);
 			lastPushedSessionHash.clear();
 			for (const [key, hash] of loadFencedSessionHashes(api, opts)) {
 				lastPushedSessionHash.set(key, hash);
 			}
-			const materializeActivity =
-				request.kind === "complete" &&
-				(refreshActivity || runtimeUserActivityNeedsMaterialization(opts.adapter.agentType));
 			const observedAt = new Date();
 			const scan = await scanSessionModule(
 				sessions,
@@ -1190,6 +1193,9 @@ async function prepareSessionSync(
 					signal: opts.abort,
 					userActivityObservedAt: observedAt.getTime(),
 					materializeUserActivity: materializeActivity,
+					userActivityRefresh: refreshRecentActivity
+						? openClawUserActivityRefresh(opts.abort)
+						: undefined,
 				},
 			);
 			const observedResources = new Set<string>();
@@ -1243,6 +1249,7 @@ async function prepareSessionSync(
 				},
 				complete: scan.coverage === "complete",
 				materialize: materializeActivity,
+				refresh: refreshRecentActivity,
 				observedAt,
 			});
 			persistFencedSessionSourceRevisions(confirmedSourceRevisions);
@@ -1278,7 +1285,7 @@ async function prepareSessionSync(
 			if (enqueued > 0) log.info("engine.sessions_enqueued", { count: enqueued });
 		} catch (error) {
 			if (opts.abort.aborted) return;
-			markRuntimeUserActivityUnknown(opts.adapter.agentType);
+			markRuntimeUserActivityUnknown(opts.adapter.agentType, undefined, refreshRecentActivity);
 			health.set("push", "session_scan", `session scan: ${toErrorMessage(error)}`);
 			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(error) });
 		}

@@ -1144,11 +1144,15 @@ else exit 1; fi`,
 		readOnly: true,
 	}).sessions;
 	if (!sessions) throw new Error("missing session module");
-	const scan = await scanSessionModule(sessions, { kind: "complete" });
+	const scan = await scanSessionModule(sessions, { kind: "complete" }, new Map(), {
+		signal: new AbortController().signal,
+		userActivityObservedAt: Date.parse("2026-04-16T00:00:00Z"),
+	});
 	for await (const _batch of scan.batches) {
 	}
-	expect(scan.userActivity).toMatchObject({
+	expect(scan.userActivity).toEqual({
 		complete: true,
 		lastUserInputAt: "2026-04-15T10:00:00.000Z",
+		recentUserInputCount: 1,
 	});
 });

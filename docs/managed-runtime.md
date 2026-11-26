@@ -176,9 +176,13 @@ persisted diagnostics and database failures fail the request, not a partial batc
 
 `userActivity` keeps schema version 1. Classifier version 2 adds
 `recentUserInputCount`, the number of classified human inputs in the seven days
-ending at `observedAt`. The count is null when the sources cannot establish it
-for that window. Hermes excludes tool sessions along with other internal
-sources. Cloud continues to accept classifier version 1 observations.
+ending at `observedAt`. When both runtimes are enabled, the count combines
+observations up to six minutes apart using the later timestamp. OpenClaw
+limits additional reads during refresh to recent sessions and archives, with
+a shared budget of 64 transcripts and 20 seconds. An incomplete refresh
+preserves the last known activity timestamp and yields an unavailable count.
+Hermes excludes tool sessions and synthetic compression continuations. Cloud
+accepts both classifiers and omits an unavailable count from drift summaries.
 
 Verification: `scripts/test.sh backend tests/test_runtime_drift_summary.py`.
 Done: the focused contracts pass against the runner's throwaway PostgreSQL.

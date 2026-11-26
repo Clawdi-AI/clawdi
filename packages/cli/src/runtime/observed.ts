@@ -6,6 +6,7 @@ import type { components } from "@clawdi/shared/api";
 import JSON5 from "json5";
 import { parse as parseYaml } from "yaml";
 import { safeTruncate, sanitizeMetadata } from "../lib/sanitize";
+import { USER_ACTIVITY_COUNT_MAX_SKEW_MS } from "../lib/session-activity";
 import { getCliVersion } from "../lib/version";
 import { toErrorMessage } from "../serve/log";
 import {
@@ -319,9 +320,14 @@ function observedUserActivity(
 	const lastUserInputAt = maxIso(states.map((state) => state?.lastUserInputAt ?? null));
 	const observedAt = maxIso(states.map((state) => state?.observedAt ?? reportedAt)) ?? reportedAt;
 	const completeAt = minIso(states.map((state) => state?.completeAt ?? null));
+	const countCutoff = Date.parse(observedAt) - USER_ACTIVITY_COUNT_MAX_SKEW_MS;
 	let recentUserInputCount: number | null = 0;
 	for (const state of states) {
-		if (state?.observedAt !== observedAt || state.recentUserInputCount === null) {
+		if (
+			!state ||
+			Date.parse(state.observedAt) < countCutoff ||
+			state.recentUserInputCount === null
+		) {
 			recentUserInputCount = null;
 			break;
 		}

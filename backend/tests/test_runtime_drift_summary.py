@@ -16,6 +16,7 @@ from app.main import app
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.runtime_observation import V2RuntimeObservationInbox
 from app.schemas.runtime_observation import (
+    HostedRuntimeObservedUserActivityV1,
     RuntimeDriftObservationHead,
     RuntimeDriftSourceAuthority,
     RuntimeObservationEventV2,
@@ -281,9 +282,29 @@ async def test_order_binding_source_and_read_only_batch(
     assert all("consumer_cursors" not in query for query in statements)
 
 
-@pytest.mark.parametrize("classifier_version", [1, 2])
+@pytest.mark.parametrize(
+    ("classifier_version", "count", "error"),
+    [(2, -1, "greater than or equal to 0"), (1, 0, "requires classifierVersion 2")],
+)
+def test_user_activity_rejects_invalid_counts(classifier_version, count, error):
+    with pytest.raises(ValidationError, match=error):
+        HostedRuntimeObservedUserActivityV1.model_validate(
+            {
+                "schemaVersion": 1,
+                "classifierVersion": classifier_version,
+                "classification": "known_no_user_input",
+                "lastUserInputAt": None,
+                "recentUserInputCount": count,
+                "observedAt": "2026-08-02T00:00:00Z",
+                "completeAt": "2026-08-02T00:00:00Z",
+                "enabledRuntimes": ["openclaw"],
+            }
+        )
+
+
+@pytest.mark.parametrize(("classifier_version", "count"), [(1, None), (2, None), (2, 0)])
 async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
-    summary_client, runtime, db_session, classifier_version
+    summary_client, runtime, db_session, classifier_version, count
 ):
     now = datetime.now(UTC) - timedelta(seconds=2)
     old = now - timedelta(seconds=settings.runtime_observation_freshness_seconds + 10)
@@ -304,7 +325,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         "error": None,
     }
     if classifier_version == 2:
-        activity["recentUserInputCount"] = 0
+        activity["recentUserInputCount"] = count
     skills = {
         "schemaVersion": 1,
         "entries": [
@@ -476,12 +497,14 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     assert diagnostics["agentPlugins"] == {"schemaVersion": 1, "installations": []}
     assert diagnostics["applied"]["sourceRevision"] == REVISION
     assert diagnostics["applied"]["instanceId"] == f"instance-{fresh['environmentId']}"
-    assert diagnostics["userActivity"] == {
-        **activity,
-        "recentUserInputCount": 0 if classifier_version == 2 else None,
+    expected_activity = {
+        **{key: value for key, value in activity.items() if key != "recentUserInputCount"},
         "observedAt": old.isoformat().replace("+00:00", "Z"),
         "completeAt": old.isoformat().replace("+00:00", "Z"),
     }
+    if count is not None:
+        expected_activity["recentUserInputCount"] = count
+    assert diagnostics["userActivity"] == expected_activity
     assert observations[3]["head"]["runtimeIdentity"]["bootSessionId"] == "boot-current"
     legacy = await summary_client.post(ENDPOINT, json={"bindings": [selected]})
     assert legacy.status_code == 200, legacy.text

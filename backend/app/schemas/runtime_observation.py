@@ -383,7 +383,7 @@ class HostedRuntimeObservedUserActivityV1(RuntimeObservationRequestModel):
     classification: RuntimeUserActivityClassification
     last_user_input_at: datetime | None = Field(alias="lastUserInputAt")
     recent_user_input_count: StrictInt | None = Field(
-        default=None, alias="recentUserInputCount", ge=0
+        default=None, alias="recentUserInputCount", ge=0, exclude_if=lambda count: count is None
     )
     observed_at: datetime = Field(alias="observedAt")
     complete_at: datetime | None = Field(alias="completeAt")

@@ -358,7 +358,7 @@ export function createProfileSync(
 				}
 			}
 			const userActivity: SessionUserActivity = {
-				complete: readers.length > 0,
+				complete: readers.length > 0 && (!context.userActivityRefresh || failed.size === 0),
 				lastUserInputAt: null,
 				recentUserInputCount: readers.length > 0 && failed.size === 0 ? 0 : null,
 			};

@@ -1,6 +1,28 @@
-import type { RawSession, SessionMessage, SessionUserActivity } from "../adapters/base";
+import type {
+	RawSession,
+	SessionMessage,
+	SessionUserActivity,
+	SyncReadContext,
+} from "../adapters/base";
 
 export const RECENT_USER_INPUT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// Allow one five-minute reconcile interval plus a minute for separate daemon scans to finish.
+export const USER_ACTIVITY_COUNT_MAX_SKEW_MS = 6 * 60_000;
+
+/** One shared budget covers the optional reads across all OpenClaw profiles and archives. */
+export function openClawUserActivityRefresh(
+	signal: AbortSignal,
+): NonNullable<SyncReadContext["userActivityRefresh"]> {
+	const deadline = AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+	let remaining = 64;
+	return {
+		claimTranscript() {
+			if (deadline.aborted || remaining === 0) return null;
+			remaining--;
+			return deadline;
+		},
+	};
+}
 
 /**
  * Compute the "user actually used the session last" timestamp for

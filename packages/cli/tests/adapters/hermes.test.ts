@@ -743,6 +743,12 @@ describe("HermesAdapter.collectSessions", () => {
 				timestamp,
 			);
 		}
+		db.run(
+			"INSERT INTO messages (session_id, role, content, timestamp, active, compacted) VALUES (?, 'user', ?, ?, 1, 0)",
+			"activity-split",
+			"Continue from the compressed conversation context above. This marker exists because no human user turn was available.",
+			2_000_001_200,
+		);
 		db.close();
 
 		const scan = await scanSessionModule(

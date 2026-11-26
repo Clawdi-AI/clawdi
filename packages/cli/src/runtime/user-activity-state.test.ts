@@ -100,7 +100,43 @@ describe("runtime user activity state", () => {
 		});
 	});
 
-	test("requires another complete scan after any failed scan", () => {
+	test.each(["partial", "timeout"] as const)(
+		"preserves the baseline after a %s count refresh",
+		(failure) => {
+			const path = statePath();
+			const observedAt = new Date("2026-08-02T00:00:00Z");
+			recordRuntimeUserActivityScan({
+				agentType: "openclaw",
+				userActivity: {
+					lastUserInputAt: "2026-08-01T00:00:00.000Z",
+					recentUserInputCount: 3,
+					complete: true,
+				},
+				complete: true,
+				observedAt,
+			});
+			const baseline = readRuntimeUserActivityState(path);
+			if (!baseline) throw new Error("expected an activity baseline");
+			if (failure === "timeout") {
+				markRuntimeUserActivityUnknown("openclaw", "fixture_timeout", true);
+			} else {
+				recordRuntimeUserActivityScan({
+					agentType: "openclaw",
+					userActivity: { lastUserInputAt: null, recentUserInputCount: null, complete: false },
+					complete: true,
+					refresh: true,
+					materialize: true,
+					observedAt: new Date("2026-08-02T00:05:00Z"),
+				});
+			}
+			expect(readRuntimeUserActivityState(path)).toEqual({
+				...baseline,
+				recentUserInputCount: null,
+			});
+		},
+	);
+
+	test("requires another complete scan after a failed baseline scan", () => {
 		const path = statePath();
 		recordRuntimeUserActivityScan({
 			agentType: "openclaw",
