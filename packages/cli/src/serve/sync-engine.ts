@@ -46,11 +46,13 @@ import type {
 	AgentAdapter,
 	RawSession,
 	SessionModule,
+	SessionScanIssue,
 	SessionScanRequest,
 	SkillModule,
 } from "../adapters/base";
 import { type SyncReadContext, scanSessionModule } from "../adapters/base";
 import { profileSessionKey } from "../adapters/profiles";
+import { SessionSourceBlockedError } from "../adapters/session-source";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { canonicalApiOrigin } from "../lib/api-origin";
 import { getAuth, getConfig } from "../lib/config";
@@ -293,7 +295,7 @@ interface StableSessionEnqueueOptions {
 	protocol: SelectedSessionProtocol;
 	fenceFor(session: RawSession): SessionFence;
 	onBlocked?(session: RawSession, message: string, hash: string): void;
-	onScanIssue?(session: RawSession, reason: string): void;
+	onScanIssue?(issue: SessionScanIssue): void;
 }
 
 interface StableSessionEnqueueResult {
@@ -316,7 +318,11 @@ export async function enqueueChangedSessionsAfterStability(
 		} catch (error) {
 			if (opts.abort.aborted) return { enqueued, confirmedSourceRevisions };
 			if (!opts.onScanIssue) throw error;
-			opts.onScanIssue(session, toErrorMessage(error));
+			opts.onScanIssue(
+				error instanceof SessionSourceBlockedError
+					? error.toScanIssue()
+					: { path: session.rawFilePath, reason: toErrorMessage(error) },
+			);
 			continue;
 		}
 		const hash = plan.localHash;
@@ -1166,6 +1172,7 @@ async function prepareSessionSync(
 	let pendingScan: SessionScanRequest | null = null;
 	let activeScan: Promise<void> | null = null;
 	const sessionScanIssues = new Map<string, string>();
+	const skippedSessionSources = new Map<string, string>();
 
 	const executeScan = async (
 		request: SessionScanRequest,
@@ -1200,7 +1207,7 @@ async function prepareSessionSync(
 			);
 			const observedResources = new Set<string>();
 			const confirmedSourceRevisions: FencedSessionSourceRevisionUpdate[] = [];
-			const scanIssues: Array<{ path: string; reason: string }> = [];
+			const scanIssues: SessionScanIssue[] = [];
 			let enqueued = 0;
 			for await (const batch of scan.batches) {
 				// Profile rename/attribution may have moved receipts during this scan.
@@ -1226,7 +1233,7 @@ async function prepareSessionSync(
 							sourceSessionKey: profileSessionKey(session.profileKey, session.localSessionId),
 							profileKey: session.profileKey,
 						}),
-					onScanIssue: (session, reason) => scanIssues.push({ path: session.rawFilePath, reason }),
+					onScanIssue: (issue) => scanIssues.push(issue),
 					onBlocked: (session, message) => {
 						health.set(
 							"push",
@@ -1256,21 +1263,33 @@ async function prepareSessionSync(
 			if (scan.coverage === "complete") {
 				health.clearAbsent("push", "session:", observedResources);
 			}
-			if (scan.coverage === "complete") {
-				sessionScanIssues.clear();
-			} else {
-				for (const issuePath of sessionScanIssues.keys()) {
-					if (
-						request.kind === "paths" &&
-						request.paths.some((path) => {
-							const scannedPath = resolve(path);
-							return issuePath === scannedPath || issuePath.startsWith(`${scannedPath}/`);
-						})
-					)
-						sessionScanIssues.delete(issuePath);
-				}
+			const coveredPath = (issuePath: string) =>
+				scan.coverage === "complete" ||
+				(request.kind === "paths" &&
+					request.paths.some((path) => {
+						const scannedPath = resolve(path);
+						return issuePath === scannedPath || issuePath.startsWith(`${scannedPath}/`);
+					}));
+			for (const path of sessionScanIssues.keys()) {
+				if (coveredPath(path)) sessionScanIssues.delete(path);
 			}
-			for (const issue of scanIssues) sessionScanIssues.set(issue.path, issue.reason);
+			const skippedPaths = new Set<string>();
+			for (const issue of scanIssues) {
+				if (issue.kind !== "permanent_skip") {
+					sessionScanIssues.set(issue.path, issue.reason);
+					continue;
+				}
+				skippedPaths.add(issue.path);
+				if (skippedSessionSources.get(issue.path) === issue.reason) continue;
+				skippedSessionSources.set(issue.path, issue.reason);
+				log.warn("engine.session_source_skipped", {
+					file: basename(issue.path),
+					reason: issue.reason,
+				});
+			}
+			for (const path of skippedSessionSources.keys()) {
+				if (!skippedPaths.has(path) && coveredPath(path)) skippedSessionSources.delete(path);
+			}
 			if (sessionScanIssues.size === 0) {
 				health.clear("push", "session_scan");
 			} else {

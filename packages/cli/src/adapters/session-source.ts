@@ -4,7 +4,13 @@ import { type FileHandle, open, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 import { safeTruncate } from "../lib/sanitize";
 import { projectEventsToMessages } from "../lib/session-events";
-import type { RawSession, SessionEvent, SessionMessage, SyncReadContext } from "./base";
+import type {
+	RawSession,
+	SessionEvent,
+	SessionMessage,
+	SessionScanIssue,
+	SyncReadContext,
+} from "./base";
 import { type JsonObject, jsonObject, SESSION_PROJECTION_REVISION } from "./rich-event-mapping";
 
 export const SESSION_RECORD_MAX_BYTES = 8 * 1024 * 1024;
@@ -55,11 +61,19 @@ export type SessionSourceDecoder = (
 const SESSION_SOURCE_BLOCK_REASON = `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`;
 
 export class SessionSourceBlockedError extends Error {
-	readonly reason = SESSION_SOURCE_BLOCK_REASON;
+	readonly reason: string;
 
-	constructor(readonly path: string) {
-		super(`${path}: ${SESSION_SOURCE_BLOCK_REASON}`);
+	constructor(
+		readonly path: string,
+		reason?: string,
+	) {
+		super(reason ?? `${path}: ${SESSION_SOURCE_BLOCK_REASON}`);
 		this.name = "SessionSourceBlockedError";
+		this.reason = reason ?? SESSION_SOURCE_BLOCK_REASON;
+	}
+
+	toScanIssue(): SessionScanIssue {
+		return { path: this.path, reason: this.reason, kind: "permanent_skip" };
 	}
 }
 

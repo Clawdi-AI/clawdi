@@ -74,6 +74,7 @@ import {
 	JsonlSessionSource,
 	readBoundedJsonFile,
 	SESSION_RECORD_MAX_BYTES,
+	SessionSourceBlockedError,
 } from "./session-source";
 import { collectSkillsFromDir, enumerateSkillDirs, flatSkillModule } from "./skill-dir";
 import { openSessionIndex } from "./sqlite";
@@ -804,6 +805,7 @@ async function* readOfficialSessionMessagesFromGateway(
 	entry: OfficialSessionEntry,
 	state: OfficialReadState,
 	home: string,
+	sourcePath: string,
 	context?: SyncReadContext,
 ): AsyncGenerator<JsonObject> {
 	const index = await openSessionIndex();
@@ -841,7 +843,7 @@ async function* readOfficialSessionMessagesFromGateway(
 				if (!message) continue;
 				const encoded = JSON.stringify(message);
 				if (Buffer.byteLength(encoded) > SESSION_RECORD_MAX_BYTES)
-					throw new Error("OpenClaw gateway record exceeds supported source size");
+					throw new SessionSourceBlockedError(sourcePath);
 				insert.run(page, position++, encoded);
 			}
 			index.exec("COMMIT");
@@ -888,6 +890,7 @@ function officialReadState(entry: OfficialSessionEntry): OfficialReadState {
 function officialTranscriptReader(
 	entry: OfficialSessionEntry,
 	home: string,
+	sourcePath: string,
 	context?: SyncReadContext,
 	incompleteReasons?: ActivityIncompleteReasons,
 ) {
@@ -899,7 +902,9 @@ function officialTranscriptReader(
 		const state = officialReadState(entry);
 		const sdk = await readOfficialSessionMessagesFromSdk(entry, home, context);
 		const transcript =
-			sdk === null ? readOfficialSessionMessagesFromGateway(entry, state, home, context) : sdk;
+			sdk === null
+				? readOfficialSessionMessagesFromGateway(entry, state, home, sourcePath, context)
+				: sdk;
 		if (sdk !== null) state.available = true;
 		const digest = createHash("sha256");
 		let count = 0;
@@ -909,7 +914,7 @@ function officialTranscriptReader(
 			if (pinnedCount !== undefined && count >= pinnedCount) continue;
 			const encoded = JSON.stringify(message);
 			if (Buffer.byteLength(encoded) > SESSION_RECORD_MAX_BYTES)
-				throw new Error("OpenClaw transcript record exceeds supported source size");
+				throw new SessionSourceBlockedError(sourcePath);
 			digest.update(encoded).update("\n");
 			state.userActivity = mergeUserActivity(
 				state.userActivity,
@@ -1133,7 +1138,7 @@ async function materializeOpenClawJsonlSession(input: {
 			session: null,
 			userActivity,
 			incompleteReasons,
-			scanIssue: { path: source.path, reason: source.blockedReason },
+			scanIssue: { path: source.path, reason: source.blockedReason, kind: "permanent_skip" },
 		};
 	}
 	const readEvents = async function* () {
@@ -1601,9 +1606,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				}
 				readContext = { ...context, signal };
 			}
+			const storePath =
+				inventory.storePaths.get(entry.agentId) ??
+				join(agentsRoot(this.home), entry.agentId, "agent", "openclaw-agent.sqlite");
+			const sourcePath =
+				transcriptPath ??
+				`${storePath}#${sessionId ?? createHash("sha256").update(entry.key).digest("hex")}`;
 			const reader = officialTranscriptReader(
 				entry,
 				this.home,
+				sourcePath,
 				readContext,
 				collection.incompleteReasons,
 			);
@@ -1611,8 +1623,22 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			try {
 				description = await describeSessionContent(reader.readEvents, !context?.streaming);
 			} catch (error) {
-				if (!refresh) throw error;
 				context?.signal.throwIfAborted();
+				if (error instanceof SessionSourceBlockedError) {
+					if (!internalSession) {
+						const markUnavailable = refresh ? markActivityCountUnavailable : markActivityIncomplete;
+						markUnavailable(
+							userActivity,
+							collection.incompleteReasons,
+							"transcript_record_too_large",
+						);
+						if (transcriptPath) classifiedTranscriptPaths.add(transcriptPath);
+					}
+					collection.scanIssues.push(error.toScanIssue());
+					yield takeSessionBatch(collection);
+					continue;
+				}
+				if (!refresh) throw error;
 				markActivityCountUnavailable(
 					userActivity,
 					collection.incompleteReasons,
@@ -1694,9 +1720,6 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (description.messageCount === 0) continue;
 			const startedAt = reader.initial.startedAt ?? new Date(entry.sessionStartedAt ?? updatedAt);
 			const endedAt = reader.initial.endedAt ?? new Date(updatedAt);
-			const storePath =
-				inventory.storePaths.get(entry.agentId) ??
-				join(agentsRoot(this.home), entry.agentId, "agent", "openclaw-agent.sqlite");
 			yield takeSessionBatch(collection, {
 				localSessionId: sessionId,
 				projectPath,

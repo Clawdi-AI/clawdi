@@ -500,7 +500,7 @@ export class ClaudeCodeAdapter implements AgentAdapterCore {
 					} catch (error) {
 						context?.signal.throwIfAborted();
 						if (error instanceof SessionSourceBlockedError) {
-							scanIssues.push({ path: error.path, reason: error.reason });
+							scanIssues.push(error.toScanIssue());
 							continue;
 						}
 						if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
