@@ -90,6 +90,10 @@ await check("streamed zstd activity and truncated-frame rejection", async () => 
 		const scan = await new OpenClawAdapter(null, activityHome, async () => null).sessions.scan(
 			{ kind: "complete" },
 			new Map(),
+			{
+				signal: new AbortController().signal,
+				userActivityObservedAt: Date.parse("2026-09-03T00:00:00Z"),
+			},
 		);
 		for await (const _batch of scan.batches) {
 		}
@@ -97,7 +101,11 @@ await check("streamed zstd activity and truncated-frame rejection", async () => 
 	};
 	try {
 		writeFileSync(archive, bytes);
-		assert.deepEqual(await read(), { lastUserInputAt: "2026-08-23T00:00:00.000Z", complete: true });
+		assert.deepEqual(await read(), {
+			lastUserInputAt: "2026-08-23T00:00:00.000Z",
+			recentUserInputCount: 0,
+			complete: true,
+		});
 		writeFileSync(archive, bytes.subarray(0, -1));
 		assert.equal((await read())?.complete, false);
 	} finally {
