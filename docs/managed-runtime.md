@@ -174,6 +174,12 @@ Freshness is not health, and activity classification, coverage and
 its own timestamps still require consumer-side idle-reclaim checks. Invalid
 persisted diagnostics and database failures fail the request, not a partial batch.
 
+`userActivity` keeps schema version 1. Classifier version 2 adds
+`recentUserInputCount`, the number of classified human inputs in the seven days
+ending at `observedAt`. The count is null when the sources cannot establish it
+for that window. Hermes excludes tool sessions along with other internal
+sources. Cloud continues to accept classifier version 1 observations.
+
 Verification: `scripts/test.sh backend tests/test_runtime_drift_summary.py`.
 Done: the focused contracts pass against the runner's throwaway PostgreSQL.
 

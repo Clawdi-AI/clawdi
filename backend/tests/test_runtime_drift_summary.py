@@ -281,8 +281,9 @@ async def test_order_binding_source_and_read_only_batch(
     assert all("consumer_cursors" not in query for query in statements)
 
 
+@pytest.mark.parametrize("classifier_version", [1, 2])
 async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
-    summary_client, runtime, db_session
+    summary_client, runtime, db_session, classifier_version
 ):
     now = datetime.now(UTC) - timedelta(seconds=2)
     old = now - timedelta(seconds=settings.runtime_observation_freshness_seconds + 10)
@@ -294,7 +295,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     )
     activity = {
         "schemaVersion": 1,
-        "classifierVersion": 1,
+        "classifierVersion": classifier_version,
         "classification": "known_no_user_input",
         "lastUserInputAt": None,
         "observedAt": old.isoformat(),
@@ -302,6 +303,8 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
         "enabledRuntimes": ["openclaw"],
         "error": None,
     }
+    if classifier_version == 2:
+        activity["recentUserInputCount"] = 0
     skills = {
         "schemaVersion": 1,
         "entries": [
@@ -475,6 +478,7 @@ async def test_fresh_expired_ambiguous_heads_and_coalesced_user_activity(
     assert diagnostics["applied"]["instanceId"] == f"instance-{fresh['environmentId']}"
     assert diagnostics["userActivity"] == {
         **activity,
+        "recentUserInputCount": 0 if classifier_version == 2 else None,
         "observedAt": old.isoformat().replace("+00:00", "Z"),
         "completeAt": old.isoformat().replace("+00:00", "Z"),
     }

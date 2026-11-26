@@ -900,7 +900,7 @@ describe("OpenClawAdapter.collectSessions", () => {
 		for await (const batch of scan.batches) sessions.push(...batch.sessions);
 
 		expect(sessions).toEqual([]);
-		expect(scan.userActivity).toEqual({
+		expect(scan.userActivity).toMatchObject({
 			lastUserInputAt: "2026-04-15T10:00:00.000Z",
 			complete: true,
 		});
@@ -942,13 +942,13 @@ describe("OpenClawAdapter.collectSessions", () => {
 			messageCount: 2,
 			sourceRevision: `p${SESSION_PROJECTION_REVISION}:oc-session-001:1776247205000`,
 		});
-		expect(scan.userActivity).toEqual({
+		expect(scan.userActivity).toMatchObject({
 			lastUserInputAt: "2026-08-19T00:00:00.000Z",
 			complete: true,
 		});
 	});
 
-	it("uses official current activity and only inventories archives during baseline", async () => {
+	it("refreshes canonical activity across revision-matched official transcripts and archives", async () => {
 		const stateRoot = join(tmpHome, ".openclaw");
 		const sessionsRoot = join(stateRoot, "agents", "main", "sessions");
 		const packageRoot = join(tmpHome, ".local", "lib", "node_modules", "openclaw");
@@ -980,60 +980,73 @@ describe("OpenClawAdapter.collectSessions", () => {
 export async function readVisibleSessionTranscriptMessageEntries() {
   appendFileSync(${JSON.stringify(readLog)}, "read\\n");
   return [
-    { entryId: "sdk-user", createdAt: "2026-04-15T10:00:00.000Z", message: { role: "user", content: "question" } },
-    { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-04-15T10:00:05.000Z", message: { role: "assistant", content: "answer" } },
+    { entryId: "sdk-user", createdAt: "2026-08-14T10:00:00.000Z", message: { role: "user", content: "question" } },
+    { entryId: "sdk-assistant", parentId: "sdk-user", createdAt: "2026-08-14T10:00:05.000Z", message: { role: "assistant", content: "answer" } },
   ];
 }
 `,
 		);
 
 		const adapter = new OpenClawAdapter();
-		const first = await scanSessionModule(adapter.sessions, { kind: "complete" });
+		const scanContext = {
+			signal: new AbortController().signal,
+			userActivityObservedAt: Date.parse("2026-08-19T00:00:00Z"),
+		};
+		const first = await scanSessionModule(
+			adapter.sessions,
+			{ kind: "complete" },
+			new Map(),
+			scanContext,
+		);
 		const firstBatches: SessionScanBatch[] = [];
 		for await (const batch of first.batches) firstBatches.push(batch);
 		const revision = firstBatches[0]?.sessions[0]?.sourceRevision;
 		expect(revision).toBe(`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247205000`);
 		expect(first.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
+			recentUserInputCount: 2,
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\n");
 		rmSync(currentPath);
-		const missingCurrent = await scanSessionModule(adapter.sessions, { kind: "complete" });
-		for await (const _batch of missingCurrent.batches) {
-		}
-		expect(missingCurrent.userActivity).toEqual({
+		const revisions = new Map([["sqlite-session-001", revision ?? ""]]);
+		const refreshed = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions, {
+			...scanContext,
+			materializeUserActivity: true,
+		});
+		const refreshedBatches: SessionScanBatch[] = [];
+		for await (const batch of refreshed.batches) refreshedBatches.push(batch);
+		expect(refreshedBatches.flatMap((batch) => batch.sessions)).toEqual([]);
+		expect(refreshed.userActivity).toEqual({
 			lastUserInputAt: "2026-08-16T10:00:00.000Z",
+			recentUserInputCount: 2,
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
 		writeFileSync(archivePath, "{");
 
-		const unchanged = await scanSessionModule(
-			adapter.sessions,
-			{ kind: "complete" },
-			new Map([["sqlite-session-001", revision ?? ""]]),
-		);
+		const unchanged = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
 		const unchangedBatches: SessionScanBatch[] = [];
 		for await (const batch of unchanged.batches) unchangedBatches.push(batch);
 		expect(unchangedBatches[0]?.sessions).toEqual([]);
 		expect(unchangedBatches[0]?.observedLocalSessionIds).toEqual(["sqlite-session-001"]);
-		expect(unchanged.userActivity).toEqual({ lastUserInputAt: null, complete: true });
+		expect(unchanged.userActivity).toEqual({
+			lastUserInputAt: null,
+			recentUserInputCount: null,
+			complete: true,
+		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\n");
 
 		writeFileSync(join(stateRoot, "sqlite-session-updated-at"), "1776247206000");
-		const changed = await scanSessionModule(
-			adapter.sessions,
-			{ kind: "complete" },
-			new Map([["sqlite-session-001", revision ?? ""]]),
-		);
+		const changed = await scanSessionModule(adapter.sessions, { kind: "complete" }, revisions);
 		const changedBatches: SessionScanBatch[] = [];
 		for await (const batch of changed.batches) changedBatches.push(batch);
 		expect(changedBatches[0]?.sessions[0]?.sourceRevision).toBe(
 			`p${SESSION_PROJECTION_REVISION}:sqlite-session-001:1776247206000`,
 		);
 		expect(changed.userActivity).toEqual({
-			lastUserInputAt: "2026-04-15T10:00:00.000Z",
+			lastUserInputAt: "2026-08-14T10:00:00.000Z",
+			recentUserInputCount: null,
 			complete: true,
 		});
 		expect(readFileSync(readLog, "utf8")).toBe("read\nread\nread\n");
@@ -1085,7 +1098,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		expect(batches).toBeGreaterThan(1);
 		expect(new Set(observed).size).toBe(40);
 		expect(sessions).toHaveLength(40);
-		expect(scan.userActivity).toEqual({
+		expect(scan.userActivity).toMatchObject({
 			lastUserInputAt: "2026-04-15T10:00:00.000Z",
 			complete: true,
 		});
@@ -1217,7 +1230,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		for await (const _batch of scan.batches) {
 		}
 
-		expect(scan.userActivity).toEqual({
+		expect(scan.userActivity).toMatchObject({
 			lastUserInputAt: "2026-08-24T00:00:00.000Z",
 			complete: true,
 		});
@@ -1256,7 +1269,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 		).sessions.scan({ kind: "complete" }, new Map());
 		for await (const _batch of scan.batches) {
 		}
-		expect(scan.userActivity).toEqual({
+		expect(scan.userActivity).toMatchObject({
 			lastUserInputAt: "2026-08-23T00:00:00.000Z",
 			complete: true,
 		});
@@ -1294,7 +1307,11 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			return result.userActivity;
 		};
 		try {
-			expect(await scan()).toEqual({ lastUserInputAt: null, complete: false });
+			expect(await scan()).toEqual({
+				lastUserInputAt: null,
+				recentUserInputCount: null,
+				complete: false,
+			});
 			expect(warning.mock.calls).toEqual([
 				[
 					"engine.user_activity_incomplete",
@@ -1356,7 +1373,11 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 			).sessions.scan({ kind: "complete" }, new Map());
 			for await (const _batch of scan.batches) {
 			}
-			expect(scan.userActivity).toEqual({ lastUserInputAt: null, complete: false });
+			expect(scan.userActivity).toEqual({
+				lastUserInputAt: null,
+				recentUserInputCount: null,
+				complete: false,
+			});
 			expect(warning.mock.calls).toEqual([
 				[
 					"engine.user_activity_incomplete",
@@ -1382,6 +1403,7 @@ export async function readVisibleSessionTranscriptMessageEntries() {
 
 		expect(scan.userActivity).toEqual({
 			lastUserInputAt: "2026-08-23T00:00:00.000Z",
+			recentUserInputCount: null,
 			complete: false,
 		});
 	});

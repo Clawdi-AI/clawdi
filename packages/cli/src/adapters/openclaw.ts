@@ -238,6 +238,7 @@ function markActivityIncomplete(
 	reason: ActivityIncompleteReason,
 ): void {
 	activity.complete = false;
+	activity.recentUserInputCount = null;
 	recordActivityReason(reasons, reason);
 }
 
@@ -245,9 +246,10 @@ function classifyUserActivity(
 	records: readonly unknown[],
 	sessionKey: string,
 	metadata: unknown,
+	observedAt: number,
 	reasons?: ActivityIncompleteReasons,
 ): SessionUserActivity {
-	const activity = computeOpenClawRealUserActivity(records, sessionKey, metadata);
+	const activity = computeOpenClawRealUserActivity(records, sessionKey, metadata, observedAt);
 	if (!activity.complete) recordActivityReason(reasons, "user_timestamp_invalid");
 	return activity;
 }
@@ -338,6 +340,7 @@ async function collectCanonicalOpenClawActivity(
 ): Promise<SessionUserActivity> {
 	let activity: SessionUserActivity = {
 		lastUserInputAt: null,
+		recentUserInputCount: listing.complete ? 0 : null,
 		complete: listing.complete,
 	};
 	if (!listing.complete) recordActivityReason(incompleteReasons, "agent_directory_unreadable");
@@ -521,16 +524,21 @@ async function readOpenClawTranscriptActivity(
 					? "transcript_zstd_unavailable"
 					: "transcript_zstd_unverified_runtime",
 			);
-			return { lastUserInputAt: null, complete: false };
+			return { lastUserInputAt: null, recentUserInputCount: null, complete: false };
 		}
 	}
 	try {
 		const source = await JsonlSessionSource.open(path, context);
-		let activity: SessionUserActivity = { lastUserInputAt: null, complete: true };
+		const observedAt = context?.userActivityObservedAt ?? Date.now();
+		let activity: SessionUserActivity = {
+			lastUserInputAt: null,
+			recentUserInputCount: 0,
+			complete: true,
+		};
 		for await (const record of source.records(compressed ? decodeOpenClawZstd : undefined))
 			activity = mergeUserActivity(
 				activity,
-				classifyUserActivity([record.data], "", undefined, incompleteReasons),
+				classifyUserActivity([record.data], "", undefined, observedAt, incompleteReasons),
 			);
 		await checkActivitySource(activity, source, incompleteReasons);
 		return activity;
@@ -540,7 +548,7 @@ async function readOpenClawTranscriptActivity(
 			incompleteReasons,
 			compressed ? "transcript_zstd_read_failed" : "transcript_read_failed",
 		);
-		return { lastUserInputAt: null, complete: false };
+		return { lastUserInputAt: null, recentUserInputCount: null, complete: false };
 	}
 }
 
@@ -556,6 +564,10 @@ function mergeUserActivity(
 ): SessionUserActivity {
 	return {
 		lastUserInputAt: maxActivityTimestamp(left.lastUserInputAt, right.lastUserInputAt),
+		recentUserInputCount:
+			left.recentUserInputCount === null || right.recentUserInputCount === null
+				? null
+				: left.recentUserInputCount + right.recentUserInputCount,
 		complete: left.complete && right.complete,
 	};
 }
@@ -834,7 +846,7 @@ function officialReadState(entry: OfficialSessionEntry): OfficialReadState {
 	if (entry.model) addSessionModel(modelsUsed, entry.model);
 	return {
 		available: false,
-		userActivity: { lastUserInputAt: null, complete: true },
+		userActivity: { lastUserInputAt: null, recentUserInputCount: 0, complete: true },
 		modelsUsed,
 		model: entry.model ?? null,
 		startedAt: null,
@@ -849,6 +861,7 @@ function officialTranscriptReader(
 	incompleteReasons?: ActivityIncompleteReasons,
 ) {
 	const initial = officialReadState(entry);
+	const observedAt = context?.userActivityObservedAt ?? Date.now();
 	let pinnedCount: number | undefined;
 	let pinnedHash: string | undefined;
 	const readEvents = async function* (): AsyncGenerator<SessionEvent> {
@@ -869,7 +882,7 @@ function officialTranscriptReader(
 			digest.update(encoded).update("\n");
 			state.userActivity = mergeUserActivity(
 				state.userActivity,
-				classifyUserActivity([message], entry.key, entry, incompleteReasons),
+				classifyUserActivity([message], entry.key, entry, observedAt, incompleteReasons),
 			);
 			const timestamp = jsonString(message.timestamp) ?? jsonString(message.createdAt);
 			const raw = {
@@ -995,7 +1008,7 @@ function emptySessionCollection(
 		dedupedCount: 0,
 		matchedTranscriptPaths: new Set(),
 		classifiedTranscriptPaths: new Set(),
-		userActivity: { lastUserInputAt: null, complete },
+		userActivity: { lastUserInputAt: null, recentUserInputCount: complete ? 0 : null, complete },
 		incompleteReasons,
 		scanIssues: [],
 	};
@@ -1046,7 +1059,11 @@ async function materializeOpenClawJsonlSession(input: {
 	const sessionId = entry.sessionId;
 	const updatedAt = entry.updatedAt ?? entry.acp?.lastActivityAt;
 	const internalSession = isInternalOpenClawSession(sourceSessionKey, entry);
-	const unavailableActivity = { lastUserInputAt: null, complete: internalSession };
+	const unavailableActivity = {
+		lastUserInputAt: null,
+		recentUserInputCount: internalSession ? 0 : null,
+		complete: internalSession,
+	};
 	if (!sessionId || !updatedAt || !existsSync(transcriptPath)) {
 		if (!internalSession) recordActivityReason(incompleteReasons, "transcript_missing");
 		return { session: null, userActivity: unavailableActivity, incompleteReasons };
@@ -1057,11 +1074,16 @@ async function materializeOpenClawJsonlSession(input: {
 	const modelsUsed = new Set<string>();
 	if (entry.model) addSessionModel(modelsUsed, entry.model);
 	let currentModel = entry.model ?? null;
-	let userActivity: SessionUserActivity = { lastUserInputAt: null, complete: true };
+	const observedAt = context?.userActivityObservedAt ?? Date.now();
+	let userActivity: SessionUserActivity = {
+		lastUserInputAt: null,
+		recentUserInputCount: 0,
+		complete: true,
+	};
 	for await (const { data: raw } of source.records()) {
 		userActivity = mergeUserActivity(
 			userActivity,
-			classifyUserActivity([raw], sourceSessionKey, entry, incompleteReasons),
+			classifyUserActivity([raw], sourceSessionKey, entry, observedAt, incompleteReasons),
 		);
 		const parsed = raw as TranscriptLine;
 		const timestamp = parsed.timestamp ? new Date(parsed.timestamp) : null;
@@ -1217,10 +1239,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		knownSourceRevisions: ReadonlyMap<string, string>,
 		context?: SyncReadContext,
 	): Promise<SessionBatchScan> {
+		context = {
+			...context,
+			signal: context?.signal ?? new AbortController().signal,
+			userActivityObservedAt: context?.userActivityObservedAt ?? Date.now(),
+		};
 		const materializeCanonicalActivity =
-			request.kind === "complete" && knownSourceRevisions.size === 0;
+			request.kind === "complete" &&
+			(context.materializeUserActivity || knownSourceRevisions.size === 0);
 		const incompleteReasons: ActivityIncompleteReasons = new Map();
-		const inventory = this.inventoryReader
+		const sharedInventory = this.inventoryReader
 			? await this.inventoryReader(context)
 			: await readOfficialSessionInventory(
 					this.home,
@@ -1228,6 +1256,15 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					this.profileAgentId,
 					incompleteReasons,
 				);
+		const inventory =
+			sharedInventory && this.profileAgentId
+				? {
+						...sharedInventory,
+						entries: sharedInventory.entries.filter(
+							(entry) => entry.agentId === this.profileAgentId,
+						),
+					}
+				: sharedInventory;
 		let coverage: SessionBatchScan["coverage"] = request.kind === "paths" ? "partial" : "complete";
 		let transcriptPaths: ReadonlySet<string> | undefined;
 		if (!inventory && request.kind === "paths") {
@@ -1265,6 +1302,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					undefined,
 					knownSourceRevisions,
 					context,
+					materializeCanonicalActivity,
 				)
 			: this.collectLegacySessionsMatching(
 					request,
@@ -1296,6 +1334,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 						),
 					);
 				}
+				if (!materializeCanonicalActivity || request.projectFilter)
+					collection.userActivity.recentUserInputCount = null;
 				// Successful partial/incremental reads cannot clear a failed canonical baseline.
 				if (incompleteReasons.size > 0 || materializeCanonicalActivity) {
 					warnActivityIncompleteOnChange(
@@ -1408,11 +1448,29 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				matchedTranscriptPaths.add(normalizedTranscriptPath);
 				collection.observedLocalSessionIds.push(sessionId);
 				const sourceRevision = `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`;
-				const externalSession = !isInternalOpenClawSession(indexKey, entry);
-				if (externalSession && existsSync(transcriptPath)) {
-					classifiedTranscriptPaths.add(normalizedTranscriptPath);
-				}
-				if (metadataOnly || knownSourceRevisions.get(sessionId) === sourceRevision) {
+				const revisionMatched = knownSourceRevisions.get(sessionId) === sourceRevision;
+				if (metadataOnly || revisionMatched) {
+					if (
+						!metadataOnly &&
+						context?.materializeUserActivity &&
+						!isInternalOpenClawSession(indexKey, entry) &&
+						!classifiedTranscriptPaths.has(normalizedTranscriptPath) &&
+						existsSync(transcriptPath)
+					) {
+						classifiedTranscriptPaths.add(normalizedTranscriptPath);
+						Object.assign(
+							userActivity,
+							mergeUserActivity(
+								userActivity,
+								await readOpenClawTranscriptActivity(
+									transcriptPath,
+									collection.incompleteReasons,
+									this.zstdSupport,
+									context,
+								),
+							),
+						);
+					}
 					yield takeSessionBatch(collection);
 					continue;
 				}
@@ -1427,9 +1485,14 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					sourceRevision,
 					transcriptPath,
 				});
-				if (existsSync(transcriptPath)) {
+				if (
+					existsSync(transcriptPath) &&
+					!classifiedTranscriptPaths.has(normalizedTranscriptPath)
+				) {
 					Object.assign(userActivity, mergeUserActivity(userActivity, materialized.userActivity));
 					mergeActivityReasons(collection.incompleteReasons, materialized.incompleteReasons);
+					if (!isInternalOpenClawSession(indexKey, entry))
+						classifiedTranscriptPaths.add(normalizedTranscriptPath);
 				}
 				if (materialized.scanIssue) collection.scanIssues.push(materialized.scanIssue);
 				yield takeSessionBatch(collection, materialized.session);
@@ -1444,6 +1507,7 @@ export class OpenClawAdapter implements AgentAdapterCore {
 		localSessionId?: string,
 		knownSourceRevisions: ReadonlyMap<string, string> = new Map(),
 		context?: SyncReadContext,
+		materializeActivity = false,
 	): AsyncGenerator<SessionScanBatch> {
 		const absFilter = opts.projectFilter ? resolve(opts.projectFilter) : null;
 		const { classifiedTranscriptPaths, userActivity } = collection;
@@ -1453,7 +1517,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			if (context) await setImmediate(undefined, { signal: context.signal });
 			const sessionId = entry.sessionId;
 			if (localSessionId !== undefined && sessionId !== localSessionId) continue;
-			if (!sessionId && isInternalOpenClawSession(entry.key, entry)) continue;
+			const internalSession = isInternalOpenClawSession(entry.key, entry);
+			if (!sessionId && internalSession) continue;
 			const updatedAt = entry.updatedAt;
 			if (typeof updatedAt !== "number" || !Number.isFinite(updatedAt)) {
 				markActivityIncomplete(
@@ -1469,7 +1534,8 @@ export class OpenClawAdapter implements AgentAdapterCore {
 			const sourceRevision = sessionId
 				? `p${SESSION_PROJECTION_REVISION}:${sessionId}:${updatedAt}`
 				: null;
-			if (sessionId && knownSourceRevisions.get(sessionId) === sourceRevision) {
+			const revisionMatched = sessionId && knownSourceRevisions.get(sessionId) === sourceRevision;
+			if (revisionMatched && (!materializeActivity || internalSession)) {
 				yield takeSessionBatch(collection);
 				continue;
 			}
@@ -1488,9 +1554,6 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					? entry.sessionFile
 					: join(sessionsDirForAgent, entry.sessionFile);
 				const normalizedTranscriptPath = resolve(transcriptPath);
-				if (!isInternalOpenClawSession(entry.key, entry) && existsSync(transcriptPath)) {
-					classifiedTranscriptPaths.add(normalizedTranscriptPath);
-				}
 				const legacy = await materializeOpenClawJsonlSession({
 					entry,
 					indexPath: join(sessionsDirForAgent, "sessions.json"),
@@ -1501,12 +1564,16 @@ export class OpenClawAdapter implements AgentAdapterCore {
 					sourceRevision,
 					transcriptPath,
 				});
-				if (existsSync(transcriptPath)) {
+				if (
+					existsSync(transcriptPath) &&
+					!classifiedTranscriptPaths.has(normalizedTranscriptPath)
+				) {
 					Object.assign(userActivity, mergeUserActivity(userActivity, legacy.userActivity));
 					mergeActivityReasons(collection.incompleteReasons, legacy.incompleteReasons);
+					if (!internalSession) classifiedTranscriptPaths.add(normalizedTranscriptPath);
 				}
 				if (legacy.scanIssue) collection.scanIssues.push(legacy.scanIssue);
-				yield takeSessionBatch(collection, legacy.session);
+				yield takeSessionBatch(collection, revisionMatched ? null : legacy.session);
 				continue;
 			}
 			if (!transcript) {
@@ -1518,13 +1585,21 @@ export class OpenClawAdapter implements AgentAdapterCore {
 				continue;
 			}
 			const sessionUserActivity = reader.initial.userActivity;
-			Object.assign(userActivity, mergeUserActivity(userActivity, sessionUserActivity));
-			if (entry.sessionFile && !isInternalOpenClawSession(entry.key, entry)) {
+			let alreadyClassified = false;
+			if (entry.sessionFile && !internalSession) {
 				const sessionsDirForAgent = join(agentsRoot(this.home), entry.agentId, "sessions");
 				const transcriptPath = isAbsolute(entry.sessionFile)
 					? entry.sessionFile
 					: join(sessionsDirForAgent, entry.sessionFile);
-				classifiedTranscriptPaths.add(resolve(transcriptPath));
+				const normalizedTranscriptPath = resolve(transcriptPath);
+				alreadyClassified = classifiedTranscriptPaths.has(normalizedTranscriptPath);
+				classifiedTranscriptPaths.add(normalizedTranscriptPath);
+			}
+			if (!alreadyClassified)
+				Object.assign(userActivity, mergeUserActivity(userActivity, sessionUserActivity));
+			if (revisionMatched) {
+				yield takeSessionBatch(collection);
+				continue;
 			}
 			if (!sessionId || !sourceRevision) continue;
 

@@ -1,5 +1,7 @@
 import type { RawSession, SessionMessage, SessionUserActivity } from "../adapters/base";
 
+export const RECENT_USER_INPUT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Compute the "user actually used the session last" timestamp for
  * upload to the backend's `last_activity_at` column.
@@ -31,11 +33,14 @@ export function computeOpenClawRealUserActivity(
 	records: readonly unknown[],
 	sessionKey: string,
 	sessionMetadata?: unknown,
+	observedAt = Date.now(),
 ): SessionUserActivity {
 	if (isInternalOpenClawSession(sessionKey, sessionMetadata))
-		return { lastUserInputAt: null, complete: true };
+		return { lastUserInputAt: null, recentUserInputCount: 0, complete: true };
 	let best: number | null = null;
+	let recentUserInputCount = 0;
 	let complete = true;
+	const cutoff = observedAt - RECENT_USER_INPUT_WINDOW_MS;
 	for (const value of records) {
 		const record = objectRecord(value);
 		if (!record) continue;
@@ -52,9 +57,11 @@ export function computeOpenClawRealUserActivity(
 			continue;
 		}
 		if (best === null || timestamp > best) best = timestamp;
+		if (timestamp >= cutoff && timestamp <= observedAt) recentUserInputCount++;
 	}
 	return {
 		lastUserInputAt: best === null ? null : new Date(best).toISOString(),
+		recentUserInputCount: complete ? recentUserInputCount : null,
 		complete,
 	};
 }

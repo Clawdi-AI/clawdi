@@ -537,6 +537,7 @@ esac
 			agentType: "hermes",
 			userActivity: {
 				lastUserInputAt: "2026-08-19T01:00:00.000Z",
+				recentUserInputCount: 3,
 				complete: true,
 			},
 			complete: true,
@@ -548,12 +549,36 @@ esac
 			(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
 		).toEqual({
 			schemaVersion: 1,
-			classifierVersion: 1,
+			classifierVersion: 2,
 			classification: "known_last_user_input",
 			lastUserInputAt: "2026-08-19T01:00:00.000Z",
+			recentUserInputCount: 3,
 			observedAt: "2026-08-19T02:00:00.000Z",
 			completeAt: "2026-08-19T02:00:00.000Z",
 			enabledRuntimes: ["hermes"],
+		});
+	});
+
+	test("reports a null count when enabled runtimes were scanned at different times", async () => {
+		const paths = healthyAppliedRuntimePaths(["hermes", "openclaw"]);
+		process.env.CLAWDI_STATE_DIR = join(paths.serviceStateRoot, "activity");
+		for (const [agentType, observedAt] of [
+			["hermes", "2026-08-19T01:00:00.000Z"],
+			["openclaw", "2026-08-19T02:00:00.000Z"],
+		] as const) {
+			recordRuntimeUserActivityScan({
+				agentType,
+				userActivity: { lastUserInputAt: null, recentUserInputCount: 0, complete: true },
+				complete: true,
+				observedAt: new Date(observedAt),
+			});
+		}
+		expect(
+			(await readHostedRuntimeObserved(paths, { includeUserActivity: true }))?.userActivity,
+		).toMatchObject({
+			classification: "known_no_user_input",
+			recentUserInputCount: null,
+			observedAt: "2026-08-19T02:00:00.000Z",
 		});
 	});
 

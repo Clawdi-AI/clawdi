@@ -172,6 +172,7 @@ export interface SessionScanBatch {
 
 export interface SessionUserActivity {
 	lastUserInputAt: string | null;
+	recentUserInputCount: number | null;
 	complete: boolean;
 }
 
@@ -184,6 +185,10 @@ export interface SessionBatchScan {
 
 export interface SyncReadContext {
 	signal: AbortSignal;
+	/** Time shared by per-profile user activity scans. */
+	userActivityObservedAt?: number;
+	/** Refresh canonical activity during reconciliation, including revision-matched sessions. */
+	materializeUserActivity?: boolean;
 	/** Keep content lazy even for small sessions during whole-inventory synchronization. */
 	streaming?: boolean;
 	/** Shared inventory lifetime for one multi-profile scan. */

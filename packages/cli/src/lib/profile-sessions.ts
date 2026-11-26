@@ -269,6 +269,7 @@ export function createProfileSync(
 				...context,
 				signal: context?.signal ?? new AbortController().signal,
 				profileScanToken: {},
+				userActivityObservedAt: context?.userActivityObservedAt ?? Date.now(),
 			};
 			const readers = profiles.filter(
 				(profile): profile is LocalAgentProfile & { reader: SessionModule } =>
@@ -335,6 +336,11 @@ export function createProfileSync(
 							};
 						}
 						userActivity.complete &&= scan.userActivity?.complete ?? false;
+						const count = scan.userActivity?.recentUserInputCount ?? null;
+						userActivity.recentUserInputCount =
+							count === null || userActivity.recentUserInputCount === null
+								? null
+								: userActivity.recentUserInputCount + count;
 						const lastInput = scan.userActivity?.lastUserInputAt;
 						if (
 							lastInput &&
@@ -346,6 +352,7 @@ export function createProfileSync(
 						if (profile.isDefault) throw error;
 						result.coverage = "partial";
 						userActivity.complete = false;
+						userActivity.recentUserInputCount = null;
 						failProfile(profile.profileKey);
 					}
 				}
@@ -353,6 +360,7 @@ export function createProfileSync(
 			const userActivity: SessionUserActivity = {
 				complete: readers.length > 0,
 				lastUserInputAt: null,
+				recentUserInputCount: readers.length > 0 && failed.size === 0 ? 0 : null,
 			};
 			const result: SessionBatchScan = {
 				coverage: request.kind === "complete" ? "complete" : "partial",

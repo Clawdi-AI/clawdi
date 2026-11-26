@@ -6879,9 +6879,9 @@ export interface components {
             schemaVersion: 1;
             /**
              * Classifierversion
-             * @constant
+             * @enum {integer}
              */
-            classifierVersion: 1;
+            classifierVersion: 1 | 2;
             /**
              * Classification
              * @enum {string}
@@ -6889,6 +6889,8 @@ export interface components {
             classification: "known_last_user_input" | "known_no_user_input" | "unknown";
             /** Lastuserinputat */
             lastUserInputAt: string | null;
+            /** Recentuserinputcount */
+            recentUserInputCount?: number | null;
             /**
              * Observedat
              * Format: date-time

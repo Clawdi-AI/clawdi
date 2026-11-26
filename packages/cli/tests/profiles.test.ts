@@ -1147,7 +1147,7 @@ else exit 1; fi`,
 	const scan = await scanSessionModule(sessions, { kind: "complete" });
 	for await (const _batch of scan.batches) {
 	}
-	expect(scan.userActivity).toEqual({
+	expect(scan.userActivity).toMatchObject({
 		complete: true,
 		lastUserInputAt: "2026-04-15T10:00:00.000Z",
 	});
