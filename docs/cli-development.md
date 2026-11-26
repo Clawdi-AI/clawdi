@@ -852,6 +852,9 @@ trusting cached upload plans. Canonical activity remains unknown when its own
 scan is incomplete, including unreadable OpenClaw transcripts. Isolated session
 planning failures and Hermes content failures use the session scan issue report
 without invalidating independently collected activity or other sessions' receipts.
+Permanent source skips such as oversized records emit
+`engine.session_source_skipped` warnings without setting the daemon's
+`last_sync_error`.
 
 OpenClaw baseline activity scans also read retained `.jsonl.deleted.*.zst` and
 `.jsonl.reset.*.zst` archives with the built-in `node:zlib` streaming decoder,

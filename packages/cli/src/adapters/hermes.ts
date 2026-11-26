@@ -38,7 +38,11 @@ import {
 	visibleContentParts,
 } from "./rich-event-mapping";
 import { byteBoundedSessionBatches } from "./session-batches";
-import { EAGER_SESSION_MAX_BYTES, SESSION_RECORD_MAX_BYTES } from "./session-source";
+import {
+	EAGER_SESSION_MAX_BYTES,
+	SESSION_RECORD_MAX_BYTES,
+	SessionSourceBlockedError,
+} from "./session-source";
 import { flatSkillModule } from "./skill-dir";
 import { openReadonlySqlite, type ReadonlySqliteDatabase } from "./sqlite";
 import { readCommandVersion } from "./version";
@@ -685,10 +689,12 @@ export class HermesAdapter implements AgentAdapterCore {
 					} catch (error) {
 						context?.signal.throwIfAborted();
 						batch.scanIssues = [
-							{
-								path: `${this.stateDbPath()}#${row.id}`,
-								reason: error instanceof Error ? error.message : String(error),
-							},
+							error instanceof SessionSourceBlockedError
+								? error.toScanIssue()
+								: {
+										path: `${this.stateDbPath()}#${row.id}`,
+										reason: error instanceof Error ? error.message : String(error),
+									},
 						];
 					}
 					yield batch;
@@ -839,7 +845,8 @@ export class HermesAdapter implements AgentAdapterCore {
 			context?.signal.throwIfAborted();
 			const row = value as ModernMessageRow;
 			if (row.source_bytes > SESSION_RECORD_MAX_BYTES)
-				throw new Error(
+				throw new SessionSourceBlockedError(
+					`${this.stateDbPath()}#${sessionId}`,
 					`Hermes message ${row.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
 				);
 			const decodedCalls = decodeOptionalJson(row.tool_calls);
@@ -903,7 +910,10 @@ export class HermesAdapter implements AgentAdapterCore {
 				>);
 		for (const message of messageRows) {
 			if ("source_bytes" in message && message.source_bytes > SESSION_RECORD_MAX_BYTES)
-				throw new Error(`Hermes message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
+				throw new SessionSourceBlockedError(
+					`${path}#${row.id}`,
+					`Hermes message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
+				);
 		}
 		const hiddenRows = stream
 			? new Set<number>()
@@ -996,7 +1006,10 @@ export class HermesAdapter implements AgentAdapterCore {
 				context?.signal.throwIfAborted();
 				const message = value as MessageRow & { source_bytes: number };
 				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
-					throw new Error(`Hermes legacy message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`);
+					throw new SessionSourceBlockedError(
+						`${path}#${row.id}`,
+						`Hermes legacy message exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
+					);
 				yield {
 					role: message.role as "user" | "assistant",
 					content: message.content ?? "",
@@ -1053,7 +1066,8 @@ export class HermesAdapter implements AgentAdapterCore {
 				context?.signal.throwIfAborted();
 				const message = value as ModernMessageRow;
 				if (message.source_bytes > SESSION_RECORD_MAX_BYTES)
-					throw new Error(
+					throw new SessionSourceBlockedError(
+						`${path}#${row.id}`,
 						`Hermes message ${message.id} exceeds ${SESSION_RECORD_MAX_BYTES} source bytes`,
 					);
 				const events = sequenceSessionEvents(

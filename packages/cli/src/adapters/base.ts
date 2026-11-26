@@ -143,6 +143,7 @@ export type SessionScanRequest =
 export interface SessionScanIssue {
 	path: string;
 	reason: string;
+	kind?: "permanent_skip";
 }
 
 /**

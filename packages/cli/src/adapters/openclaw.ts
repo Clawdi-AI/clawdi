@@ -1133,7 +1133,7 @@ async function materializeOpenClawJsonlSession(input: {
 			session: null,
 			userActivity,
 			incompleteReasons,
-			scanIssue: { path: source.path, reason: source.blockedReason },
+			scanIssue: { path: source.path, reason: source.blockedReason, kind: "permanent_skip" },
 		};
 	}
 	const readEvents = async function* () {

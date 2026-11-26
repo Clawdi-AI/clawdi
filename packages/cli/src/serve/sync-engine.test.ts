@@ -14,8 +14,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter, RawSession, SkillModule } from "../adapters/base";
+import { CodexAdapter } from "../adapters/codex";
 import { OpenClawAdapter } from "../adapters/openclaw";
 import { adapterRegistry } from "../adapters/registry";
+import { SESSION_RECORD_MAX_BYTES } from "../adapters/session-source";
 import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
 import { setAuth } from "../lib/config";
 import { sequenceSessionEvents } from "../lib/session-events";
@@ -36,6 +38,7 @@ import { computeSkillArchiveHash } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
 import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
 import { RetryQueue } from "./queue";
+import * as sessionsWatcher from "./sessions-watcher";
 import type { ServerEvent } from "./sse-client";
 import {
 	classifyHeartbeatFailure,
@@ -348,9 +351,9 @@ describe("stable session enqueue abort fence", () => {
 				adapter: "hermes",
 				sourceSessionKey: session.localSessionId,
 			}),
-			onScanIssue: (session, reason) => issues.push(`${session.localSessionId}: ${reason}`),
+			onScanIssue: ({ path, reason }) => issues.push(`${path}: ${reason}`),
 		});
-		expect(issues).toEqual(["broken: source changed"]);
+		expect(issues).toEqual(["/sessions/broken: source changed"]);
 		expect(result.confirmedSourceRevisions.map((update) => update.sourceRevision)).toEqual([
 			"revision-good",
 		]);
@@ -1953,6 +1956,114 @@ describe("daemon startup Agent lookup", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	}
+
+	it.each([
+		{ name: "an oversized source", scanFailure: false, expectedError: null },
+		{ name: "a failed scan", scanFailure: true, expectedError: "session scan: source unavailable" },
+	])("reports sync health after $name", async ({ scanFailure, expectedError }) => {
+		let scansFinished = false;
+		const lastSyncErrors: Array<string | null> = [];
+		const queuedSessionIds: string[] = [];
+		const verified = Promise.withResolvers<void>();
+		await withStartupCase(
+			async (request) => {
+				const path = new URL(request.url).pathname;
+				if (path === "/v1/agents/agent-codex") {
+					return Response.json({ id: "agent-codex", default_project_id: "project-1" });
+				}
+				if (path === "/v1/sessions/upload-capabilities") {
+					return new Response(null, { status: 404 });
+				}
+				if (path === "/v1/sessions/batch") {
+					const body = (await request.json()) as { sessions: Array<{ local_session_id: string }> };
+					queuedSessionIds.push(...body.sessions.map((session) => session.local_session_id));
+					return Response.json({ rejected: [], needs_content: [], suppressed: [] });
+				}
+				if (path === "/v1/agents/agent-codex/sync-heartbeat") {
+					const body = (await request.json()) as { last_sync_error: string | null };
+					if (scansFinished) {
+						lastSyncErrors.push(body.last_sync_error);
+						if (scanFailure || queuedSessionIds.length > 0) verified.resolve();
+					}
+					return Response.json({ status: "ok" });
+				}
+				return new Response(`Unexpected request: ${path}`, { status: 500 });
+			},
+			async ({ abortController, logs, root }) => {
+				const codexHome = process.env.CODEX_HOME;
+				process.env.CODEX_HOME = join(root, "codex");
+				const directory = join(process.env.CODEX_HOME, "sessions");
+				const codex = new CodexAdapter();
+				const scan = spyOn(codex.sessions, "scan");
+				const watcher = spyOn(sessionsWatcher, "watchSessions").mockImplementation(
+					async ({ onPathStable }) => {
+						await onPathStable({ kind: "rescan" });
+						scansFinished = true;
+					},
+				);
+				const deadline = setTimeout(() => abortController.abort(), 3_000);
+				try {
+					if (scanFailure) {
+						scan.mockRejectedValue(new Error("source unavailable"));
+					} else {
+						mkdirSync(directory, { recursive: true });
+						writeFileSync(
+							join(directory, "oversized.jsonl"),
+							`{"type":"session_meta","payload":{"id":"oversized"}}\n{"text":"${"x".repeat(SESSION_RECORD_MAX_BYTES)}"}`,
+						);
+						writeFileSync(
+							join(directory, "valid.jsonl"),
+							[
+								'{"type":"session_meta","payload":{"id":"valid","timestamp":"2026-04-20T10:00:00Z"}}',
+								'{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}',
+							].join("\n"),
+						);
+					}
+					const running = runSyncEngine({
+						environmentId: "agent-codex",
+						adapter: {
+							agentType: codex.agentType,
+							detect: () => codex.detect(),
+							getVersion: () => codex.getVersion(),
+							sessions: codex.sessions,
+						},
+						abort: abortController.signal,
+						abortController,
+						heartbeatIntervalMs: 10,
+					});
+					try {
+						await Promise.race([running, verified.promise]);
+					} finally {
+						abortController.abort();
+						await running;
+					}
+					expect(scan).toHaveBeenCalledTimes(2);
+					expect([...new Set(lastSyncErrors)]).toEqual([expectedError]);
+					expect(queuedSessionIds).toEqual(scanFailure ? [] : ["valid"]);
+					const warnings = logs
+						.filter((line) => line.includes('"event":"engine.session_source_skipped"'))
+						.map((line) => JSON.parse(line));
+					expect(warnings).toEqual(
+						scanFailure
+							? []
+							: [
+									expect.objectContaining({
+										level: "warn",
+										file: "oversized.jsonl",
+										reason: `session source record exceeds ${SESSION_RECORD_MAX_BYTES} bytes`,
+									}),
+								],
+					);
+				} finally {
+					clearTimeout(deadline);
+					scan.mockRestore();
+					watcher.mockRestore();
+					if (codexHome === undefined) delete process.env.CODEX_HOME;
+					else process.env.CODEX_HOME = codexHome;
+				}
+			},
+		);
+	});
 
 	it.each([
 		{ name: "hosted", connected: false, failFirstTick: false },
